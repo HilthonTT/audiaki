@@ -22,7 +22,7 @@ jobs:
       matrix:
         cc: [gcc, clang]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install ALSA headers
         run: |
@@ -52,7 +52,7 @@ jobs:
     name: unit tests (no ALSA installed)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The ALSA-free modules must keep building on their own; this is what
       # keeps libasound confined to src/device.c.
@@ -63,7 +63,7 @@ jobs:
     name: ASan + UBSan
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install ALSA headers
         run: |
@@ -81,7 +81,7 @@ jobs:
     name: clang-format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install clang-format
         run: |
@@ -95,7 +95,7 @@ jobs:
     name: cppcheck + shellcheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install analysers
         run: |
