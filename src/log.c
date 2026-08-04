@@ -20,6 +20,12 @@ aud_log_level aud_log_get_level(void)
   return g_level;
 }
 
+/*
+ * The format(printf, N, 0) annotation marks this as a vprintf-style helper.
+ * Without it clang's -Wformat-nonliteral rejects forwarding `fmt` to vfprintf.
+ */
+static void emit(const char *prefix, const char *fmt, va_list ap) AUD_PRINTF(2, 0);
+
 static void emit(const char *prefix, const char *fmt, va_list ap)
 {
   fputs(AUDIAKI_NAME ": ", stderr);
