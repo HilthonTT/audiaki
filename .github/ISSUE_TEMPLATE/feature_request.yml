@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a capability audiaki should have
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        audiaki deliberately stays small: capture a device, write a WAV, show
+        the level. Suggestions that fit that scope are the easiest to land.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe the situation you hit, not just the feature.
+      placeholder: I want to keep recording past the 4 GB WAV limit for long sessions.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behaviour
+      description: What should the flag or output look like?
+      placeholder: "--split 30:00 starts a new numbered file every 30 minutes."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Existing flags, other tools, shell workarounds.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope
+      options:
+        - label: This keeps audiaki a single-purpose ALSA recorder
+        - label: I would be willing to work on a pull request

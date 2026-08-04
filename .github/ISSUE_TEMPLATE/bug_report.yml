@@ -1,0 +1,74 @@
+name: Bug report
+description: Something does not work as documented
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. Audio bugs are usually device specific, so the
+        `--probe` output below is the single most useful thing you can include.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you expect, and what did you get instead?
+      placeholder: 'Recording stops after two seconds with "capture failed: ..."'
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Command that reproduces it
+      description: The exact invocation, plus anything printed to the terminal.
+      render: shell
+      placeholder: |
+        $ audiaki -D hw:CARD=Box,DEV=0 -r 48000 take.wav
+        audiaki: error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: probe
+    attributes:
+      label: Device details
+      description: "Output of `audiaki --list` and `audiaki --probe -D <your device>`."
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: audiaki version
+      description: Output of `audiaki --version`, or the commit you built from.
+      placeholder: audiaki 0.2.0
+    validations:
+      required: true
+
+  - type: input
+    id: system
+    attributes:
+      label: Distribution and kernel
+      placeholder: "Ubuntu 24.04, kernel 6.8.0-45-generic"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: sound-server
+    attributes:
+      label: Sound server in use
+      options:
+        - PipeWire
+        - PulseAudio
+        - Bare ALSA
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Hardware, cabling, whether it ever worked before.

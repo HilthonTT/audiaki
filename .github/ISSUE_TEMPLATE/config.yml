@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Question or usage help
+    url: https://github.com/HilthonTT/audiaki/discussions
+    about: Ask about device setup, levels or build problems here.
+  - name: Security report
+    url: https://github.com/HilthonTT/audiaki/security/advisories/new
+    about: Report a vulnerability privately instead of opening an issue.

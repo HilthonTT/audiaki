@@ -1,0 +1,138 @@
+.\" SPDX-License-Identifier: MIT
+.TH AUDIAKI 1 "2026-08-04" "audiaki 0.2.0" "User Commands"
+.SH NAME
+audiaki \- record an ALSA capture device to a WAV file
+.SH SYNOPSIS
+.B audiaki
+[\fIOPTION\fR]... \fIOUTPUT.WAV\fR
+.br
+.B audiaki
+\fB\-\-probe\fR [\fB\-D\fR \fIDEVICE\fR]
+.br
+.B audiaki
+\fB\-\-list\fR
+.SH DESCRIPTION
+.B audiaki
+opens an ALSA capture device, negotiates the widest sample format the hardware
+supports, and streams the audio into a canonical PCM WAV file while drawing a
+live peak meter on standard error.
+.PP
+The WAV header is written with placeholder sizes and patched when recording
+stops, including when it is stopped with
+.BR SIGINT " or " SIGTERM ,
+so interrupted recordings are still valid files.
+.SH OPTIONS
+.TP
+.BR \-D ", " \-\-device " " \fINAME\fR
+ALSA device to capture from. Defaults to the value of
+.B AUDIAKI_DEVICE
+or, when that is unset,
+.BR default .
+.TP
+.BR \-r ", " \-\-rate " " \fIHZ\fR
+Sample rate in Hz (default 44100). If the device cannot provide it, the nearest
+supported rate is used and a warning is printed.
+.TP
+.BR \-c ", " \-\-channels " " \fIN\fR
+Channel count (default 2).
+.TP
+.BR \-f ", " \-\-format " " \fINAME\fR
+Force a capture format:
+.BR s16_le ", " s24_3le ", " s24_le " or " s32_le .
+By default the best format the device offers is chosen, preferring
+.B s32_le
+then
+.BR s24_3le ", " s24_le " and " s16_le .
+.TP
+.BR \-t ", " \-\-duration " " \fISPEC\fR
+Stop after the given time, written as
+.IR SS ", " MM:SS " or " HH:MM:SS .
+Fractional seconds are accepted. Recording stops on an exact frame count.
+.TP
+.BR \-p ", " \-\-period " " \fIFRAMES\fR
+Period size in frames (default 1024). Larger values are more robust against
+overruns at the cost of latency in the meter display.
+.TP
+.BR \-n ", " \-\-periods " " \fIN\fR
+Periods per buffer (default 4).
+.TP
+.BR \-y ", " \-\-force
+Overwrite the output file if it already exists. Without this flag an existing
+file is an error.
+.TP
+.B \-\-no\-meter
+Do not draw the peak meter. The meter is suppressed automatically when standard
+error is not a terminal.
+.TP
+.BR \-q ", " \-\-quiet
+Report errors only, and disable the meter.
+.TP
+.BR \-v ", " \-\-verbose
+Also report device negotiation details.
+.TP
+.BR \-l ", " \-\-list
+List capture-capable PCM devices on standard output and exit.
+.TP
+.BR \-P ", " \-\-probe
+Print the formats, channel counts, rates and buffer sizes the device supports,
+then exit.
+.TP
+.BR \-h ", " \-\-help
+Show a usage summary and exit.
+.TP
+.BR \-V ", " \-\-version
+Show the version and exit.
+.SH METER
+.PP
+.nf
+ 00:12 [##################|          ]  \-8.4 dBFS  xruns:0
+.fi
+.PP
+The bar spans \-60 dBFS to 0 dBFS. The
+.B |
+marker holds the highest peak seen so far.
+.B CLIP
+appears once a sample reaches full scale.
+.B xruns
+counts buffer overruns; a rising count means the machine could not keep up with
+the device.
+.SH ENVIRONMENT
+.TP
+.B AUDIAKI_DEVICE
+Default ALSA device, used when
+.B \-D
+is not given.
+.SH EXIT STATUS
+.TP
+.B 0
+Recording completed, or the requested information was printed.
+.TP
+.B 1
+The device could not be opened or configured, or the file could not be written.
+.TP
+.B 2
+The command line was malformed.
+.SH EXAMPLES
+Record until interrupted:
+.PP
+.nf
+.RS
+audiaki take01.wav
+.RE
+.fi
+.PP
+Record 90 seconds from a specific device at 48 kHz:
+.PP
+.nf
+.RS
+audiaki \-D plughw:CARD=Box,DEV=0 \-r 48000 \-t 1:30 take02.wav
+.RE
+.fi
+.SH NOTES
+Little-endian hosts only. Output is plain 44-byte-header PCM WAV, so a
+recording stops at the 4 GB RIFF size limit.
+.SH SEE ALSO
+.BR arecord (1),
+.BR alsamixer (1)
+.SH BUGS
+Report issues at https://github.com/HilthonTT/audiaki/issues

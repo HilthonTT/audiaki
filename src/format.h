@@ -1,0 +1,64 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * format.h - sample formats, peak detection and repacking.
+ *
+ * Deliberately free of any ALSA dependency so the numeric code can be unit
+ * tested on any host. device.c owns the mapping to snd_pcm_format_t.
+ */
+#ifndef AUDIAKI_FORMAT_H
+#define AUDIAKI_FORMAT_H
+
+#include <stddef.h>
+
+typedef enum
+{
+  AUD_FORMAT_UNKNOWN = 0,
+  AUD_FORMAT_S16_LE,  /* 16 bit, 2 byte container      */
+  AUD_FORMAT_S24_3LE, /* 24 bit, 3 byte container      */
+  AUD_FORMAT_S24_LE,  /* 24 valid bits, 4 byte container */
+  AUD_FORMAT_S32_LE,  /* 32 bit, 4 byte container      */
+} aud_format;
+
+/* Bytes per sample as delivered by the capture device. 0 if unknown. */
+unsigned aud_format_hw_bytes(aud_format fmt);
+
+/* Bits per sample once written to the WAV file. 0 if unknown. */
+unsigned aud_format_wav_bits(aud_format fmt);
+
+/* Bytes per sample once written to the WAV file. 0 if unknown. */
+unsigned aud_format_wav_bytes(aud_format fmt);
+
+/*
+ * Non-zero when the captured layout differs from the WAV layout and the
+ * frames must go through aud_format_repack() before being written.
+ */
+int aud_format_needs_repack(aud_format fmt);
+
+/* Canonical lower-case name, e.g. "s24_3le". "unknown" if unrecognised. */
+const char *aud_format_name(aud_format fmt);
+
+/* Parse a canonical name (case insensitive). AUD_FORMAT_UNKNOWN on failure. */
+aud_format aud_format_from_name(const char *name);
+
+/*
+ * Repack `samples` samples from the capture layout into the WAV layout.
+ * Only meaningful when aud_format_needs_repack() is true; a no-op copy is
+ * not performed for other formats, so callers must check first.
+ *
+ * dst must hold samples * aud_format_wav_bytes(fmt) bytes.
+ * src must hold samples * aud_format_hw_bytes(fmt) bytes.
+ * The buffers must not overlap.
+ */
+void aud_format_repack(void *dst, const void *src, size_t samples, aud_format fmt);
+
+/*
+ * Absolute peak of an interleaved buffer, normalised to [0.0, 1.0].
+ * Returns 0.0 for unknown formats or empty buffers.
+ */
+double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_format fmt);
+
+/* Convert a normalised peak to dBFS, clamped at AUD_DBFS_FLOOR. */
+#define AUD_DBFS_FLOOR (-99.0)
+double aud_format_dbfs(double peak);
+
+#endif /* AUDIAKI_FORMAT_H */

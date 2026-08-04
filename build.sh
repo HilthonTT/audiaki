@@ -1,1 +1,0 @@
-gcc -O2 -Wall -Wextra -o audiaki src/main.c -lasound -lm

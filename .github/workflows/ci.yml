@@ -1,0 +1,115 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: build (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build with warnings as errors
+        run: make STRICT=1 CC=${{ matrix.cc }}
+
+      - name: Run unit tests
+        run: make STRICT=1 CC=${{ matrix.cc }} test
+
+      - name: Smoke test the binary
+        run: |
+          ./build/audiaki --version
+          ./build/audiaki --help
+          # a malformed invocation must exit 2 rather than crash or record
+          status=0
+          ./build/audiaki --rate not-a-number out.wav || status=$?
+          if [ "$status" -ne 2 ]; then
+            echo "expected exit status 2 for a bad --rate, got $status" >&2
+            exit 1
+          fi
+          test ! -e out.wav
+
+  tests-without-alsa:
+    name: unit tests (no ALSA installed)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The ALSA-free modules must keep building on their own; this is what
+      # keeps libasound confined to src/device.c.
+      - name: Run unit tests
+        run: make STRICT=1 test
+
+  sanitizers:
+    name: ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build and test with sanitizers
+        run: |
+          make STRICT=1 \
+               OPTFLAGS="-O1 -g" \
+               SANITIZE="-fsanitize=address,undefined -fno-sanitize-recover=all" \
+               all test
+
+  style:
+    name: clang-format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format
+
+      - name: Check formatting
+        run: make format-check
+
+  static-analysis:
+    name: cppcheck + shellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install analysers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cppcheck shellcheck libasound2-dev
+
+      - name: cppcheck
+        run: |
+          cppcheck --error-exitcode=1 --std=c11 --quiet \
+                   --enable=warning,performance,portability \
+                   --inline-suppr \
+                   --suppress=missingIncludeSystem \
+                   --suppress=unmatchedSuppression \
+                   -I src src tests
+
+      - name: shellcheck
+        run: shellcheck scripts/*.sh

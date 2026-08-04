@@ -1,55 +1,50 @@
-# Prerequisites
-*.d
+# Build output
+build/
+audiaki
 
-# Object files
+# Recordings
+*.wav
+
+# Object and dependency files
 *.o
-*.ko
 *.obj
-*.elf
-
-# Linker output
-*.ilk
-*.map
-*.exp
-
-# Precompiled Headers
+*.d
 *.gch
 *.pch
 
-# Libraries
-*.lib
+# Libraries and shared objects
 *.a
 *.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
-*.dll
 *.so
 *.so.*
 *.dylib
+*.dll
 
 # Executables
 *.exe
 *.out
 *.app
-*.i*86
-*.x86_64
-*.hex
 
-# Debug files
+# Debug information
 *.dSYM/
 *.su
 *.idb
 *.pdb
-
-# Kernel Module Compile Results
-*.mod*
-*.cmd
-.tmp_versions/
-modules.order
-Module.symvers
-Mkfile.old
-dkms.conf
-
-# debug information files
 *.dwo
+
+# Sanitizer and profiling output
+*.gcda
+*.gcno
+*.gcov
+core
+vgcore.*
+perf.data*
+
+# Editors and tools
+.cache/
+compile_commands.json
+.vscode/
+.idea/
+*.swp
+*~

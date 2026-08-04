@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release (e.g. v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      - name: Build
+        run: make STRICT=1 release
+
+      - name: Verify the tag matches src/version.h
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          version="$(./build/audiaki --version | awk '{print $2}')"
+          if [ "$tag" != "v$version" ]; then
+            echo "tag $tag does not match version $version in src/version.h" >&2
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          dir="audiaki-${tag#v}-linux-x86_64"
+          mkdir -p "dist/$dir"
+          cp build/audiaki "dist/$dir/"
+          cp README.md LICENSE CHANGELOG.md "dist/$dir/"
+          cp docs/audiaki.1 "dist/$dir/"
+          tar -czf "dist/$dir.tar.gz" -C dist "$dir"
+          (cd dist && sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256")
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${{ github.event.inputs.tag || github.ref_name }}"
+          gh release create "$tag" \
+            --title "audiaki $tag" \
+            --notes "See [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/$tag/CHANGELOG.md)." \
+            dist/*.tar.gz dist/*.sha256
