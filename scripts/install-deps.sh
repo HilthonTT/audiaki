@@ -4,14 +4,26 @@
 # Install the build dependencies for audiaki: a C compiler, make, pkg-config
 # and the ALSA development headers.
 #
-# Usage: ./scripts/install-deps.sh [--dry-run]
+# Also installs ffmpeg, which `audiaki --visualize` runs to encode a video.
+# It is not needed to build audiaki or to record with it; pass --no-ffmpeg to
+# leave it out.
+#
+# Usage: ./scripts/install-deps.sh [--dry-run] [--no-ffmpeg]
 
 set -eu
 
 DRY_RUN=0
-if [ "${1:-}" = "--dry-run" ]; then
-  DRY_RUN=1
-fi
+WANT_FFMPEG=1
+for arg in "$@"; do
+  case "$arg" in
+    --dry-run) DRY_RUN=1 ;;
+    --no-ffmpeg) WANT_FFMPEG=0 ;;
+    *)
+      echo "usage: $0 [--dry-run] [--no-ffmpeg]" >&2
+      exit 2
+      ;;
+  esac
+done
 
 SUDO=""
 if [ "$(id -u)" -ne 0 ]; then
@@ -31,17 +43,28 @@ run() {
   fi
 }
 
+# ffmpeg is the same package name everywhere audiaki supports.
+FFMPEG=""
+if [ "$WANT_FFMPEG" -eq 1 ]; then
+  FFMPEG="ffmpeg"
+fi
+
 if command -v apt-get >/dev/null 2>&1; then
   run apt-get update
-  run apt-get install -y build-essential pkg-config libasound2-dev
+  # shellcheck disable=SC2086
+  run apt-get install -y build-essential pkg-config libasound2-dev $FFMPEG
 elif command -v dnf >/dev/null 2>&1; then
-  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel
+  # shellcheck disable=SC2086
+  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $FFMPEG
 elif command -v pacman >/dev/null 2>&1; then
-  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib
+  # shellcheck disable=SC2086
+  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $FFMPEG
 elif command -v zypper >/dev/null 2>&1; then
-  run zypper install -y gcc make pkg-config alsa-devel
+  # shellcheck disable=SC2086
+  run zypper install -y gcc make pkg-config alsa-devel $FFMPEG
 elif command -v apk >/dev/null 2>&1; then
-  run apk add build-base pkgconf alsa-lib-dev
+  # shellcheck disable=SC2086
+  run apk add build-base pkgconf alsa-lib-dev $FFMPEG
 else
   cat >&2 <<'EOF'
 error: no supported package manager found.
@@ -51,6 +74,7 @@ Install these yourself and re-run `make`:
   - make
   - pkg-config
   - the ALSA development headers (libasound2-dev / alsa-lib-devel / alsa-lib)
+  - ffmpeg, if you want `audiaki --visualize` to render videos
 EOF
   exit 1
 fi

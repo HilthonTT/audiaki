@@ -1,12 +1,15 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * meter.h - single line peak meter drawn on stderr.
+ * meter.h - single line level display drawn on stderr.
  *
- * Disables itself when stderr is not a terminal, so redirected output stays
- * free of carriage returns.
+ * Two shapes: a peak bar with a hold marker, or a row of spectrum bars. Either
+ * way it is one line, redrawn in place, and it disables itself when stderr is
+ * not a terminal so redirected output stays free of carriage returns.
  */
 #ifndef AUDIAKI_METER_H
 #define AUDIAKI_METER_H
+
+#include <stddef.h>
 
 typedef struct
 {
@@ -15,6 +18,7 @@ typedef struct
   int line_dirty;   /* a meter line is currently on screen */
   double hold_peak; /* highest peak seen so far, normalised */
   int clipped;      /* a sample has hit full scale */
+  int unicode;      /* the terminal can render block drawing characters */
 } aud_meter;
 
 /*
@@ -22,8 +26,23 @@ typedef struct
  */
 void meter_init(aud_meter *m, int want);
 
+/*
+ * How many spectrum bars fit on this terminal, given the readout that shares
+ * the line. Returns 0 when the meter is disabled. Clamped to the range
+ * aud_spectrum accepts.
+ */
+size_t meter_fit_bands(const aud_meter *m);
+
 /* Redraw the meter in place. `peak` is normalised to [0.0, 1.0]. */
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns);
+
+/*
+ * Redraw as spectrum bars instead. `bands` holds `n` values in [0.0, 1.0], low
+ * frequency first; `peak` still feeds the clip and hold tracking so the
+ * post-recording warnings do not depend on which display was chosen.
+ */
+void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak,
+                         double seconds, unsigned xruns);
 
 /* Erase the meter line so other output starts on a clean row. */
 void meter_clear(aud_meter *m);

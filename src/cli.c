@@ -2,7 +2,9 @@
 #include "cli.h"
 
 #include "parse.h"
+#include "spectrum.h"
 #include "version.h"
+#include "visualize.h"
 
 #include <getopt.h>
 #include <stdlib.h>
@@ -17,6 +19,10 @@
 #define PERIOD_MAX 1048576u
 #define PERIODS_MIN 2u
 #define PERIODS_MAX 64u
+#define VIZ_DIM_MIN 64u
+#define VIZ_DIM_MAX 7680u
+#define VIZ_FPS_MIN 1u
+#define VIZ_FPS_MAX 240u
 
 /* defaults mirrored from device.h without pulling in <alsa/asoundlib.h> */
 #define CLI_DEFAULT_DEVICE "default"
@@ -28,6 +34,11 @@
 enum
 {
   OPT_NO_METER = 1000,
+  OPT_SPECTRUM,
+  OPT_VISUALIZE,
+  OPT_SIZE,
+  OPT_FPS,
+  OPT_BARS,
 };
 
 static const struct option long_options[] = {
@@ -38,10 +49,17 @@ static const struct option long_options[] = {
     {"duration", required_argument, NULL, 't'},
     {"period", required_argument, NULL, 'p'},
     {"periods", required_argument, NULL, 'n'},
+    {"output", required_argument, NULL, 'o'},
     {"force", no_argument, NULL, 'y'},
     {"quiet", no_argument, NULL, 'q'},
     {"verbose", no_argument, NULL, 'v'},
     {"no-meter", no_argument, NULL, OPT_NO_METER},
+    {"spectrum", no_argument, NULL, OPT_SPECTRUM},
+    {"visualize", required_argument, NULL, OPT_VISUALIZE},
+    {"visualise", required_argument, NULL, OPT_VISUALIZE},
+    {"size", required_argument, NULL, OPT_SIZE},
+    {"fps", required_argument, NULL, OPT_FPS},
+    {"bars", required_argument, NULL, OPT_BARS},
     {"list", no_argument, NULL, 'l'},
     {"probe", no_argument, NULL, 'P'},
     {"help", no_argument, NULL, 'h'},
@@ -66,6 +84,12 @@ void cli_defaults(aud_options *opts)
   opts->duration = 0.0;
   opts->overwrite = 0;
   opts->show_meter = 1;
+  opts->show_spectrum = 0;
+  opts->input_path = NULL;
+  opts->viz_width = AUD_VIZ_DEFAULT_WIDTH;
+  opts->viz_height = AUD_VIZ_DEFAULT_HEIGHT;
+  opts->viz_fps = AUD_VIZ_DEFAULT_FPS;
+  opts->viz_bars = AUD_VIZ_DEFAULT_BARS;
   opts->log_level = AUD_LOG_NORMAL;
 }
 
@@ -73,12 +97,14 @@ void cli_print_usage(FILE *out)
 {
   fprintf(out,
           "usage: " AUDIAKI_NAME " [options] <output.wav>\n"
+          "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
           "\n"
-          "Record an ALSA capture device straight to a PCM WAV file.\n"
+          "Record an ALSA capture device straight to a PCM WAV file, and turn a\n"
+          "recording into a spectrum visualiser video.\n"
           "\n"
-          "Options:\n"
+          "Recording options:\n"
           "  -D, --device NAME     ALSA device (default: %s, $AUDIAKI_DEVICE)\n"
           "  -r, --rate HZ         sample rate (default: %u)\n"
           "  -c, --channels N      channel count (default: %u)\n"
@@ -87,8 +113,19 @@ void cli_print_usage(FILE *out)
           "  -t, --duration SPEC   stop after SS, MM:SS or HH:MM:SS\n"
           "  -p, --period FRAMES   period size (default: %u)\n"
           "  -n, --periods N       periods per buffer (default: %u)\n"
+          "      --spectrum        show live spectrum bars instead of the peak bar\n"
+          "      --no-meter        do not draw anything while recording\n"
+          "\n"
+          "Visualiser options:\n"
+          "      --visualize FILE  render FILE (a WAV) to a video and exit\n"
+          "  -o, --output FILE     video to write (default: input with .mp4)\n"
+          "      --size SPEC       WxH, or 480p/720p/1080p/1440p/2160p\n"
+          "                        (default: %ux%u)\n"
+          "      --fps N           video frame rate (default: %u)\n"
+          "      --bars N          number of spectrum bars (default: %u)\n"
+          "\n"
+          "Common options:\n"
           "  -y, --force           overwrite the output file if it exists\n"
-          "      --no-meter        do not draw the live peak meter\n"
           "  -q, --quiet           errors only\n"
           "  -v, --verbose         report device negotiation details\n"
           "  -l, --list            list capture devices and exit\n"
@@ -98,12 +135,18 @@ void cli_print_usage(FILE *out)
           "\n"
           "Examples:\n"
           "  " AUDIAKI_NAME " take01.wav                  record until Ctrl+C\n"
+          "  " AUDIAKI_NAME " --spectrum take01.wav       record, watching the "
+          "spectrum\n"
           "  " AUDIAKI_NAME " -t 1:30 take02.wav          record 90 seconds\n"
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
+          "  " AUDIAKI_NAME " --visualize take01.wav --size 1080p\n"
+          "\n"
+          "Rendering a video needs ffmpeg(1) on PATH. Recording does not.\n"
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
           CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
-          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS);
+          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_VIZ_DEFAULT_WIDTH,
+          AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS, AUD_VIZ_DEFAULT_BARS);
 }
 
 void cli_print_version(FILE *out)
@@ -123,8 +166,8 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   cli_defaults(opts);
 
   /* leading ':' -> report a missing argument as ':' instead of '?' */
-  while ((opt = getopt_long(argc, argv, ":D:r:c:f:t:p:n:yqvlPhV", long_options, NULL)) !=
-         -1)
+  while ((opt = getopt_long(argc, argv, ":D:r:c:f:t:p:n:o:yqvlPhV", long_options,
+                            NULL)) != -1)
   {
     switch (opt)
     {
@@ -174,6 +217,9 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       break;
+    case 'o':
+      opts->output_path = optarg;
+      break;
     case 'y':
       opts->overwrite = 1;
       break;
@@ -186,6 +232,36 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case OPT_NO_METER:
       opts->show_meter = 0;
+      break;
+    case OPT_SPECTRUM:
+      opts->show_spectrum = 1;
+      break;
+    case OPT_VISUALIZE:
+      opts->command = AUD_CMD_VISUALIZE;
+      opts->input_path = optarg;
+      break;
+    case OPT_SIZE:
+      if (parse_size(optarg, VIZ_DIM_MIN, VIZ_DIM_MAX, &opts->viz_width,
+                     &opts->viz_height) != 0)
+      {
+        bad_value("--size", optarg, "WxH in 64..7680, or 720p/1080p/1440p/2160p");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_FPS:
+      if (parse_uint(optarg, VIZ_FPS_MIN, VIZ_FPS_MAX, &opts->viz_fps) != 0)
+      {
+        bad_value("--fps", optarg, "1..240");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_BARS:
+      if (parse_uint(optarg, AUD_SPECTRUM_MIN_BANDS, AUD_SPECTRUM_MAX_BANDS,
+                     &opts->viz_bars) != 0)
+      {
+        bad_value("--bars", optarg, "4..512");
+        return CLI_EXIT_USAGE;
+      }
       break;
     case 'l':
       opts->command = AUD_CMD_LIST;
@@ -213,6 +289,29 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     }
   }
 
+  if (opts->command == AUD_CMD_VISUALIZE)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (the input comes from --visualize, "
+                "the output from -o)",
+                argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    /*
+     * libx264 with yuv420p subsamples by two in both directions, so an odd
+     * dimension fails inside ffmpeg with a message about the pixel format.
+     * Catching it here says what is actually wrong.
+     */
+    if ((opts->viz_width % 2u) != 0 || (opts->viz_height % 2u) != 0)
+    {
+      aud_error("--size %ux%u: both dimensions must be even", opts->viz_width,
+                opts->viz_height);
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
+  }
+
   if (opts->command != AUD_CMD_RECORD)
   {
     if (optind < argc)
@@ -223,18 +322,28 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     return 0;
   }
 
-  if (optind >= argc)
+  if (optind < argc)
+  {
+    /* -o is accepted here too, but naming the file twice is surely a mistake */
+    if (opts->output_path != NULL)
+    {
+      aud_error("output file given twice ('-o %s' and '%s')", opts->output_path,
+                argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    opts->output_path = argv[optind++];
+
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (only one output file is supported)",
+                argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+  }
+  else if (opts->output_path == NULL)
   {
     aud_error("no output file given");
     aud_info("run '" AUDIAKI_NAME " --help' for usage");
-    return CLI_EXIT_USAGE;
-  }
-  opts->output_path = argv[optind++];
-
-  if (optind < argc)
-  {
-    aud_error("unexpected argument '%s' (only one output file is supported)",
-              argv[optind]);
     return CLI_EXIT_USAGE;
   }
 

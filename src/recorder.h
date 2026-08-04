@@ -12,9 +12,10 @@
 typedef struct
 {
   const char *output_path;
-  double duration; /* seconds; 0 records until interrupted */
-  int overwrite;   /* allow replacing an existing file */
-  int show_meter;  /* draw the live peak meter */
+  double duration;   /* seconds; 0 records until interrupted */
+  int overwrite;     /* allow replacing an existing file */
+  int show_meter;    /* draw a live display at all */
+  int show_spectrum; /* make that display spectrum bars, not the peak bar */
 } aud_recorder_options;
 
 typedef struct

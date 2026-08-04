@@ -29,6 +29,61 @@ int parse_uint(const char *text, unsigned min, unsigned max, unsigned *out)
   return 0;
 }
 
+int parse_size(const char *text, unsigned min, unsigned max, unsigned *out_width,
+               unsigned *out_height)
+{
+  static const struct
+  {
+    const char *name;
+    unsigned width;
+    unsigned height;
+  } shorthand[] = {
+      {"480p", 854u, 480u},    {"720p", 1280u, 720u},   {"1080p", 1920u, 1080u},
+      {"1440p", 2560u, 1440u}, {"2160p", 3840u, 2160u},
+  };
+
+  char buf[32];
+  char *cross;
+  unsigned width;
+  unsigned height;
+  size_t len;
+
+  if (text == NULL || out_width == NULL || out_height == NULL || *text == '\0')
+    return -1;
+
+  for (size_t i = 0; i < sizeof(shorthand) / sizeof(shorthand[0]); i++)
+  {
+    if (strcmp(text, shorthand[i].name) != 0)
+      continue;
+    if (shorthand[i].width < min || shorthand[i].width > max ||
+        shorthand[i].height < min || shorthand[i].height > max)
+      return -1;
+    *out_width = shorthand[i].width;
+    *out_height = shorthand[i].height;
+    return 0;
+  }
+
+  len = strlen(text);
+  if (len >= sizeof(buf))
+    return -1;
+  memcpy(buf, text, len + 1);
+
+  cross = strchr(buf, 'x');
+  if (cross == NULL)
+    cross = strchr(buf, 'X');
+  if (cross == NULL || cross == buf)
+    return -1;
+  *cross = '\0';
+
+  if (parse_uint(buf, min, max, &width) != 0 ||
+      parse_uint(cross + 1, min, max, &height) != 0)
+    return -1;
+
+  *out_width = width;
+  *out_height = height;
+  return 0;
+}
+
 /* Parse one "12" or "12.5" field. Returns 0 on success. */
 static int parse_field(const char *text, double *out)
 {

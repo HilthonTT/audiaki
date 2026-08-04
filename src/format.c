@@ -220,6 +220,110 @@ double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_fo
   return peak > 1.0 ? 1.0 : peak;
 }
 
+/*
+ * Mono decoders. Same shape as the peak helpers above: one loop per format so
+ * the switch is paid once per buffer rather than once per sample.
+ */
+
+static void mono_s16(float *dst, const unsigned char *p, size_t frames, unsigned ch)
+{
+  for (size_t f = 0; f < frames; f++)
+  {
+    double sum = 0.0;
+    for (unsigned c = 0; c < ch; c++)
+    {
+      int16_t s;
+      memcpy(&s, p + (f * ch + c) * 2, 2);
+      sum += (double)s / 32768.0;
+    }
+    dst[f] = (float)(sum / ch);
+  }
+}
+
+static void mono_s24_3(float *dst, const unsigned char *p, size_t frames, unsigned ch)
+{
+  for (size_t f = 0; f < frames; f++)
+  {
+    double sum = 0.0;
+    for (unsigned c = 0; c < ch; c++)
+    {
+      const unsigned char *q = p + (f * ch + c) * 3;
+      uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
+      int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+      sum += (double)s / 8388608.0;
+    }
+    dst[f] = (float)(sum / ch);
+  }
+}
+
+static void mono_s24_4(float *dst, const unsigned char *p, size_t frames, unsigned ch)
+{
+  for (size_t f = 0; f < frames; f++)
+  {
+    double sum = 0.0;
+    for (unsigned c = 0; c < ch; c++)
+    {
+      uint32_t raw;
+      int32_t s;
+      memcpy(&raw, p + (f * ch + c) * 4, 4);
+      raw &= 0x00FFFFFFu;
+      s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+      sum += (double)s / 8388608.0;
+    }
+    dst[f] = (float)(sum / ch);
+  }
+}
+
+static void mono_s32(float *dst, const unsigned char *p, size_t frames, unsigned ch)
+{
+  for (size_t f = 0; f < frames; f++)
+  {
+    double sum = 0.0;
+    for (unsigned c = 0; c < ch; c++)
+    {
+      int32_t s;
+      memcpy(&s, p + (f * ch + c) * 4, 4);
+      sum += (double)s / 2147483648.0;
+    }
+    dst[f] = (float)(sum / ch);
+  }
+}
+
+void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned channels,
+                        aud_format fmt)
+{
+  const unsigned char *p = (const unsigned char *)src;
+
+  if (dst == NULL || frames == 0)
+    return;
+
+  if (p == NULL || channels == 0)
+  {
+    memset(dst, 0, frames * sizeof(*dst));
+    return;
+  }
+
+  switch (fmt)
+  {
+  case AUD_FORMAT_S16_LE:
+    mono_s16(dst, p, frames, channels);
+    return;
+  case AUD_FORMAT_S24_3LE:
+    mono_s24_3(dst, p, frames, channels);
+    return;
+  case AUD_FORMAT_S24_LE:
+    mono_s24_4(dst, p, frames, channels);
+    return;
+  case AUD_FORMAT_S32_LE:
+    mono_s32(dst, p, frames, channels);
+    return;
+  case AUD_FORMAT_UNKNOWN:
+  default:
+    memset(dst, 0, frames * sizeof(*dst));
+    return;
+  }
+}
+
 double aud_format_dbfs(double peak)
 {
   if (!(peak > 0.0))

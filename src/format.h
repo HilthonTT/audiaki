@@ -57,6 +57,16 @@ void aud_format_repack(void *dst, const void *src, size_t samples, aud_format fm
  */
 double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_format fmt);
 
+/*
+ * Decode `frames` interleaved frames into mono floats in [-1.0, 1.0),
+ * averaging the channels. dst must hold `frames` floats.
+ *
+ * Written for the spectrum analyser, which does not care about channel
+ * separation. Unknown formats fill dst with zeros.
+ */
+void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned channels,
+                        aud_format fmt);
+
 /* Convert a normalised peak to dBFS, clamped at AUD_DBFS_FLOOR. */
 #define AUD_DBFS_FLOOR (-99.0)
 double aud_format_dbfs(double peak);

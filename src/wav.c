@@ -2,8 +2,13 @@
 #include "wav.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+
+/* off_t, fseeko and ftello, so the reader can seek past the 2 GB mark */
+#include <sys/types.h>
 
 static void put_u16(unsigned char *p, uint16_t v)
 {
@@ -166,4 +171,356 @@ double wav_duration(const wav_writer *w)
   if (block_align == 0 || w->rate == 0)
     return 0.0;
   return (double)(w->data_bytes / block_align) / (double)w->rate;
+}
+
+/* -- reader ---------------------------------------------------------------- */
+
+#define WAV_FORMAT_PCM 0x0001u
+#define WAV_FORMAT_FLOAT 0x0003u
+#define WAV_FORMAT_EXTENSIBLE 0xFFFEu
+
+/* frames staged per fread(); one page or so of audio, not a tuning knob */
+#define WAV_READ_CHUNK_FRAMES 4096u
+
+static uint16_t get_u16(const unsigned char *p)
+{
+  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
+}
+
+static uint32_t get_u32(const unsigned char *p)
+{
+  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
+         ((uint32_t)p[3] << 24);
+}
+
+static int read_exact(FILE *f, void *buf, size_t n)
+{
+  return fread(buf, 1, n, f) == n ? 0 : -1;
+}
+
+int wav_read_open(wav_reader *r, const char *path)
+{
+  unsigned char riff[12];
+  unsigned char fmt[40];
+  const char *msg;
+  off_t data_offset = -1;
+  uint64_t data_bytes = 0;
+  uint16_t tag = 0;
+  int have_fmt = 0;
+
+  if (r == NULL)
+  {
+    errno = EINVAL;
+    return -1;
+  }
+
+  memset(r, 0, sizeof(*r));
+  /* cleared so the caller can tell a libc failure from a bad file layout */
+  errno = 0;
+
+  if (path == NULL)
+  {
+    r->error = "no input path";
+    errno = EINVAL;
+    return -1;
+  }
+
+  r->file = fopen(path, "rb");
+  if (r->file == NULL)
+  {
+    r->error = "cannot open the file";
+    return -1;
+  }
+
+  if (read_exact(r->file, riff, sizeof(riff)) != 0)
+  {
+    msg = "too short to be a WAV file";
+    goto fail;
+  }
+  if (memcmp(riff, "RIFF", 4) != 0 || memcmp(riff + 8, "WAVE", 4) != 0)
+  {
+    msg = "not a RIFF/WAVE file";
+    goto fail;
+  }
+
+  /*
+   * Walk the chunk list rather than assuming our own 44 byte layout: files that
+   * have been through ffmpeg or an editor carry LIST/fact/id3 chunks, and the
+   * data chunk is not always last.
+   */
+  for (;;)
+  {
+    unsigned char head[8];
+    uint32_t size;
+    off_t skip;
+
+    if (read_exact(r->file, head, sizeof(head)) != 0)
+      break; /* ran out of chunks */
+    size = get_u32(head + 4);
+    /* RIFF chunks are word aligned; an odd body is followed by a pad byte. */
+    skip = (off_t)size + (size & 1u);
+
+    if (memcmp(head, "fmt ", 4) == 0)
+    {
+      size_t take = size < sizeof(fmt) ? size : sizeof(fmt);
+
+      if (size < 16u)
+      {
+        msg = "malformed fmt chunk";
+        goto fail;
+      }
+      if (read_exact(r->file, fmt, take) != 0)
+      {
+        msg = "truncated fmt chunk";
+        goto fail;
+      }
+      if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
+      {
+        msg = "cannot seek past the fmt chunk";
+        goto fail;
+      }
+
+      tag = get_u16(fmt);
+      r->channels = get_u16(fmt + 2);
+      r->rate = get_u32(fmt + 4);
+      r->bits = get_u16(fmt + 14);
+      /* WAVE_FORMAT_EXTENSIBLE hides the real tag in the SubFormat GUID. */
+      if (tag == WAV_FORMAT_EXTENSIBLE && size >= 40u)
+        tag = get_u16(fmt + 24);
+      have_fmt = 1;
+    }
+    else if (memcmp(head, "data", 4) == 0)
+    {
+      data_offset = ftello(r->file);
+      if (data_offset < 0)
+      {
+        msg = "cannot locate the data chunk";
+        goto fail;
+      }
+      data_bytes = size;
+      if (have_fmt)
+        break; /* nothing after this point can matter */
+      if (fseeko(r->file, skip, SEEK_CUR) != 0)
+        break;
+    }
+    else if (fseeko(r->file, skip, SEEK_CUR) != 0)
+    {
+      break;
+    }
+
+    if (have_fmt && data_offset >= 0)
+      break;
+  }
+
+  if (!have_fmt)
+  {
+    msg = "no fmt chunk";
+    goto fail;
+  }
+  if (data_offset < 0)
+  {
+    msg = "no data chunk";
+    goto fail;
+  }
+  if (r->channels == 0 || r->channels > 64u || r->rate == 0)
+  {
+    msg = "implausible channel count or sample rate";
+    goto fail;
+  }
+
+  if (tag == WAV_FORMAT_FLOAT)
+  {
+    if (r->bits != 32u && r->bits != 64u)
+    {
+      msg = "only 32 and 64 bit float WAV is supported";
+      goto fail;
+    }
+    r->is_float = 1;
+  }
+  else if (tag == WAV_FORMAT_PCM)
+  {
+    if (r->bits != 8u && r->bits != 16u && r->bits != 24u && r->bits != 32u)
+    {
+      msg = "only 8, 16, 24 and 32 bit PCM WAV is supported";
+      goto fail;
+    }
+  }
+  else
+  {
+    msg = "compressed WAV is not supported";
+    goto fail;
+  }
+
+  r->block = (unsigned)r->channels * (r->bits / 8u);
+  r->frames = data_bytes / r->block;
+  r->position = 0;
+
+  if (fseeko(r->file, data_offset, SEEK_SET) != 0)
+  {
+    msg = "cannot rewind to the audio data";
+    goto fail;
+  }
+
+  r->raw_frames = WAV_READ_CHUNK_FRAMES;
+  r->raw = malloc(r->raw_frames * r->block);
+  if (r->raw == NULL)
+  {
+    msg = "out of memory";
+    errno = ENOMEM;
+    goto fail;
+  }
+
+  return 0;
+
+fail:
+  fclose(r->file);
+  r->file = NULL;
+  r->error = msg;
+  return -1;
+}
+
+/*
+ * Decode one staged block of interleaved frames down to mono. The switch is
+ * hoisted out of the frame loop, as in format.c: a render walks millions of
+ * frames and the layout does not change between them.
+ */
+static void decode_mono(const wav_reader *r, float *dst, const unsigned char *src,
+                        size_t frames)
+{
+  unsigned ch = r->channels;
+  unsigned width = r->bits / 8u;
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    const unsigned char *p = src + (size_t)f * r->block;
+    double sum = 0.0;
+
+    for (unsigned c = 0; c < ch; c++)
+    {
+      const unsigned char *q = p + (size_t)c * width;
+
+      if (r->is_float)
+      {
+        if (r->bits == 32u)
+        {
+          float v;
+          memcpy(&v, q, sizeof(v));
+          sum += (double)v;
+        }
+        else
+        {
+          double v;
+          memcpy(&v, q, sizeof(v));
+          sum += v;
+        }
+        continue;
+      }
+
+      switch (r->bits)
+      {
+      case 8u:
+        /* 8 bit WAV is unsigned with 128 as silence, unlike every other depth */
+        sum += ((double)q[0] - 128.0) / 128.0;
+        break;
+      case 16u:
+      {
+        int16_t v;
+        memcpy(&v, q, sizeof(v));
+        sum += (double)v / 32768.0;
+        break;
+      }
+      case 24u:
+      {
+        uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
+        int32_t v = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+        sum += (double)v / 8388608.0;
+        break;
+      }
+      default:
+      {
+        int32_t v;
+        memcpy(&v, q, sizeof(v));
+        sum += (double)v / 2147483648.0;
+        break;
+      }
+      }
+    }
+
+    /* float WAV is allowed to exceed full scale; the analyser expects it not to */
+    sum /= ch;
+    if (sum > 1.0)
+      sum = 1.0;
+    if (sum < -1.0)
+      sum = -1.0;
+    dst[f] = (float)sum;
+  }
+}
+
+long wav_read_mono(wav_reader *r, float *mono, size_t frames)
+{
+  size_t done = 0;
+
+  if (r == NULL || r->file == NULL || mono == NULL)
+  {
+    errno = EINVAL;
+    return -1;
+  }
+  if (frames == 0 || r->position >= r->frames)
+    return 0;
+
+  if ((uint64_t)frames > r->frames - r->position)
+    frames = (size_t)(r->frames - r->position);
+  if (frames > (size_t)LONG_MAX)
+    frames = (size_t)LONG_MAX;
+
+  while (done < frames)
+  {
+    size_t want = frames - done;
+    size_t got;
+
+    if (want > r->raw_frames)
+      want = r->raw_frames;
+
+    got = fread(r->raw, r->block, want, r->file);
+    if (got == 0)
+    {
+      if (ferror(r->file))
+      {
+        r->error = "read error";
+        return -1;
+      }
+      /*
+       * The data chunk claimed more than the file holds - a recording that was
+       * killed before its header was patched. Report what is really there.
+       */
+      r->frames = r->position;
+      break;
+    }
+
+    decode_mono(r, mono + done, r->raw, got);
+    done += got;
+    r->position += got;
+  }
+
+  return (long)done;
+}
+
+double wav_read_duration(const wav_reader *r)
+{
+  if (r == NULL || r->rate == 0)
+    return 0.0;
+  return (double)r->frames / (double)r->rate;
+}
+
+void wav_read_close(wav_reader *r)
+{
+  if (r == NULL)
+    return;
+
+  if (r->file != NULL)
+    fclose(r->file);
+  r->file = NULL;
+  free(r->raw);
+  r->raw = NULL;
+  r->raw_frames = 0;
 }

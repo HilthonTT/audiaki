@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--visualize FILE` renders a WAV recording into a spectrum visualiser video.
+  audiaki analyses and rasterises the frames itself and pipes raw RGBA to
+  `ffmpeg`, which encodes them and muxes in the original audio. `--size`,
+  `--fps` and `--bars` control the output; `-o` names it, defaulting to the
+  input path with `.mp4`. Inspired by
+  [musializer](https://github.com/tsoding/musializer).
+- `--spectrum` replaces the live peak bar with spectrum bars while recording,
+  using block characters on UTF-8 terminals and an ASCII ramp elsewhere.
+- `-o, --output` names the output file, for recording as well as rendering.
+- A WAV reader (`wav_read_*`), tolerant of the chunk layouts other tools
+  produce: unknown chunks are skipped, `WAVE_FORMAT_EXTENSIBLE` is unwrapped,
+  and 8/16/24/32 bit PCM plus 32/64 bit float are decoded.
+- `fft`, `spectrum` and `canvas` modules, all ALSA-free and unit tested. The
+  live display and the video renderer share the same analyser.
+
+### Changed
+
+- `ffmpeg` is a new optional run-time dependency, needed only for
+  `--visualize`. Building and recording are unaffected.
+- The SIGINT/SIGTERM stop flag moved out of `recorder.c` into `signals.c` so
+  the renderer can be interrupted too. `aud_recorder_install_signals()` and
+  `aud_recorder_stop_requested()` still work as before.
+
 ## [0.2.0] - 2026-08-04
 
 The single-file recorder grew into a structured project. Behaviour is

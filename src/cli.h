@@ -21,6 +21,7 @@ typedef enum
   AUD_CMD_RECORD = 0,
   AUD_CMD_PROBE,
   AUD_CMD_LIST,
+  AUD_CMD_VISUALIZE,
   AUD_CMD_HELP,
   AUD_CMD_VERSION,
 } aud_command;
@@ -30,6 +31,7 @@ typedef struct
   aud_command command;
   const char *device;
   const char *output_path;
+  const char *input_path; /* --visualize source WAV */
   unsigned rate;
   unsigned channels;
   unsigned period_frames;
@@ -38,6 +40,11 @@ typedef struct
   double duration;   /* seconds; 0 = until interrupted */
   int overwrite;
   int show_meter;
+  int show_spectrum; /* live spectrum bars instead of the peak bar */
+  unsigned viz_width;
+  unsigned viz_height;
+  unsigned viz_fps;
+  unsigned viz_bars;
   aud_log_level log_level;
 } aud_options;
 

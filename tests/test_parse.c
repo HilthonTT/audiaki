@@ -94,6 +94,76 @@ TEST(duration_rejects_garbage)
   CHECK_EQ_DBL(seconds, 7.0, 1e-9);
 }
 
+TEST(size_dimensions)
+{
+  unsigned w = 0;
+  unsigned h = 0;
+
+  CHECK_EQ_INT(parse_size("1280x720", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 1280);
+  CHECK_EQ_INT(h, 720);
+
+  CHECK_EQ_INT(parse_size("640X480", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 640);
+  CHECK_EQ_INT(h, 480);
+
+  CHECK_EQ_INT(parse_size("100x100", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 100);
+  CHECK_EQ_INT(h, 100);
+}
+
+TEST(size_shorthand)
+{
+  unsigned w = 0;
+  unsigned h = 0;
+
+  CHECK_EQ_INT(parse_size("720p", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 1280);
+  CHECK_EQ_INT(h, 720);
+
+  CHECK_EQ_INT(parse_size("1080p", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 1920);
+  CHECK_EQ_INT(h, 1080);
+
+  CHECK_EQ_INT(parse_size("2160p", 64, 7680, &w, &h), 0);
+  CHECK_EQ_INT(w, 3840);
+  CHECK_EQ_INT(h, 2160);
+
+  /* every shorthand is 16:9 with even dimensions, which libx264 requires */
+  const char *names[] = {"480p", "720p", "1080p", "1440p", "2160p"};
+  for (size_t i = 0; i < sizeof(names) / sizeof(names[0]); i++)
+  {
+    CHECK_EQ_INT(parse_size(names[i], 64, 7680, &w, &h), 0);
+    CHECK_EQ_INT(w % 2, 0);
+    CHECK_EQ_INT(h % 2, 0);
+  }
+
+  /* shorthand still has to fit the caller's bounds */
+  CHECK_EQ_INT(parse_size("2160p", 64, 1080, &w, &h), -1);
+}
+
+TEST(size_rejects_garbage)
+{
+  unsigned w = 7;
+  unsigned h = 7;
+
+  CHECK_EQ_INT(parse_size("", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("1280", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("x720", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("1280x", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("1280x720x30", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("1280 x 720", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("-8x-8", 64, 7680, &w, &h), -1);
+  CHECK_EQ_INT(parse_size("32x32", 64, 7680, &w, &h), -1);     /* below min */
+  CHECK_EQ_INT(parse_size("9000x9000", 64, 7680, &w, &h), -1); /* above max */
+  CHECK_EQ_INT(parse_size("1080P", 64, 7680, &w, &h), -1);     /* case matters */
+  CHECK_EQ_INT(parse_size(NULL, 64, 7680, &w, &h), -1);
+
+  /* nothing was written on any of those */
+  CHECK_EQ_INT(w, 7);
+  CHECK_EQ_INT(h, 7);
+}
+
 int main(void)
 {
   RUN(uint_accepts_plain_decimals);
@@ -102,5 +172,8 @@ int main(void)
   RUN(duration_seconds);
   RUN(duration_clock_notation);
   RUN(duration_rejects_garbage);
+  RUN(size_dimensions);
+  RUN(size_shorthand);
+  RUN(size_rejects_garbage);
   return TEST_RESULT();
 }

@@ -4,45 +4,25 @@
 #include "format.h"
 #include "log.h"
 #include "meter.h"
+#include "signals.h"
+#include "spectrum.h"
 #include "wav.h"
 
 #include <errno.h>
-#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 
 /* how often the meter is redrawn, in seconds of captured audio */
 #define METER_INTERVAL 0.05
 
-static volatile sig_atomic_t g_stop = 0;
-
-static void on_signal(int sig)
-{
-  (void)sig;
-  g_stop = 1;
-}
-
 int aud_recorder_install_signals(void)
 {
-  struct sigaction sa;
-
-  memset(&sa, 0, sizeof(sa));
-  sa.sa_handler = on_signal;
-  sigemptyset(&sa.sa_mask);
-  /*
-   * Deliberately no SA_RESTART: the blocking read must return with EINTR so
-   * the loop notices the stop request without waiting for another period.
-   */
-  if (sigaction(SIGINT, &sa, NULL) != 0)
-    return -1;
-  if (sigaction(SIGTERM, &sa, NULL) != 0)
-    return -1;
-  return 0;
+  return aud_signals_install_stop();
 }
 
 int aud_recorder_stop_requested(void)
 {
-  return g_stop != 0;
+  return aud_signals_stop_requested();
 }
 
 int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
@@ -50,6 +30,8 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
 {
   wav_writer wav;
   aud_meter meter;
+  aud_spectrum *spectrum = NULL;
+  size_t bands = 0;
   unsigned char *hw_buf = NULL;
   unsigned char *out_buf = NULL;
   size_t hw_buf_bytes;
@@ -58,6 +40,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   uint64_t limit_frames = 0;
   unsigned xruns = 0;
   double next_meter_at = 0.0;
+  double last_drawn_at = 0.0;
   int repack = aud_format_needs_repack(dev->format);
   unsigned hw_bytes = aud_format_hw_bytes(dev->format);
   unsigned wav_bytes = aud_format_wav_bytes(dev->format);
@@ -100,6 +83,24 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   /* initialised before any early exit so the cleanup path is unconditional */
   meter_init(&meter, opts->show_meter);
 
+  if (opts->show_spectrum && opts->show_meter)
+  {
+    aud_spectrum_config spec_cfg;
+
+    bands = meter_fit_bands(&meter);
+    if (bands > 0)
+    {
+      aud_spectrum_config_defaults(&spec_cfg, dev->rate, bands);
+      spectrum = aud_spectrum_create(&spec_cfg);
+      if (spectrum == NULL)
+      {
+        /* not worth aborting a take over: fall back to the peak bar */
+        aud_warn("cannot set up the spectrum display, showing the peak meter");
+        bands = 0;
+      }
+    }
+  }
+
   if (wav_open(&wav, opts->output_path, dev->rate, (uint16_t)dev->channels,
                (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite) != 0)
   {
@@ -119,7 +120,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   else
     aud_info("press Ctrl+C to stop");
 
-  while (!g_stop)
+  while (!aud_signals_stop_requested())
   {
     unsigned long want = dev->period_frames;
     long got;
@@ -157,13 +158,35 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
       goto finish;
     }
 
+    /*
+     * Analyse the captured period, not the repacked copy: hw_buf is what the
+     * device delivered, and out_buf may alias it anyway.
+     */
+    if (spectrum != NULL)
+      aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
+
     frames_written += (uint64_t)got;
     elapsed = (double)frames_written / dev->rate;
 
     if (elapsed >= next_meter_at)
     {
-      meter_draw(&meter, aud_format_peak(hw_buf, (size_t)got, dev->channels, dev->format),
-                 elapsed, xruns);
+      double peak = aud_format_peak(hw_buf, (size_t)got, dev->channels, dev->format);
+
+      if (spectrum != NULL)
+      {
+        /*
+         * Smooth against captured time rather than METER_INTERVAL, so the bars
+         * decay at the same rate whether or not a redraw was skipped.
+         */
+        const float *values = aud_spectrum_analyse(spectrum, elapsed - last_drawn_at);
+        meter_draw_spectrum(&meter, values, bands, peak, elapsed, xruns);
+      }
+      else
+      {
+        meter_draw(&meter, peak, elapsed, xruns);
+      }
+
+      last_drawn_at = elapsed;
       next_meter_at = elapsed + METER_INTERVAL;
     }
 
@@ -199,10 +222,11 @@ finish:
     stats->bytes = frames_written * dev->channels * wav_bytes;
     stats->xruns = xruns;
     stats->clipped = meter_clipped(&meter);
-    stats->interrupted = g_stop != 0;
+    stats->interrupted = aud_signals_stop_requested();
   }
 
 out:
+  aud_spectrum_destroy(spectrum);
   if (repack)
     free(out_buf);
   free(hw_buf);

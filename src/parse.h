@@ -20,4 +20,12 @@ int parse_uint(const char *text, unsigned min, unsigned max, unsigned *out);
  */
 int parse_duration(const char *text, double *out_seconds);
 
+/*
+ * Parse a frame size: "1280x720", or "720p"/"1080p"/"1440p"/"2160p" as
+ * shorthand for the matching 16:9 size. Both dimensions must land in
+ * [min, max]. Returns 0 on success, -1 on anything else.
+ */
+int parse_size(const char *text, unsigned min, unsigned max, unsigned *out_width,
+               unsigned *out_height);
+
 #endif /* AUDIAKI_PARSE_H */

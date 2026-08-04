@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * wav.h - streaming writer for canonical 44 byte PCM WAV files.
+ * wav.h - PCM WAV file I/O.
  *
- * The header is written once with zero sizes and patched on close, so the
- * total length does not have to be known up front.
+ * The writer streams: the header is written once with zero sizes and patched on
+ * close, so the total length does not have to be known up front.
+ *
+ * The reader is deliberately more forgiving than the writer is strict, because
+ * it has to cope with files other tools produced - extra chunks, a wider fmt
+ * chunk, float samples.
  */
 #ifndef AUDIAKI_WAV_H
 #define AUDIAKI_WAV_H
@@ -63,5 +67,44 @@ double wav_duration(const wav_writer *w);
  */
 void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
                       uint32_t rate, uint16_t channels, uint16_t bits);
+
+/* -- reader ---------------------------------------------------------------- */
+
+typedef struct
+{
+  FILE *file;
+  uint32_t rate;
+  uint16_t channels;
+  uint16_t bits;      /* 8, 16, 24, 32 or 64 */
+  int is_float;       /* payload is IEEE float rather than signed integer */
+  uint64_t frames;    /* total frames in the data chunk */
+  uint64_t position;  /* frames handed out so far */
+  const char *error;  /* static description of the last failure, or NULL */
+  unsigned block;     /* bytes per frame */
+  unsigned char *raw; /* staging buffer for undecoded frames */
+  size_t raw_frames;  /* capacity of raw, in frames */
+} wav_reader;
+
+/*
+ * Open `path` and parse its header. Returns 0 on success, -1 on failure with
+ * r->error set to a description and errno set when the failure came from the
+ * C library. The reader is left closed on failure.
+ *
+ * Accepts uncompressed PCM (8, 16, 24 or 32 bit) and IEEE float (32 or 64
+ * bit), in any chunk order, with unknown chunks skipped.
+ */
+int wav_read_open(wav_reader *r, const char *path);
+
+/*
+ * Decode up to `frames` frames into `mono`, averaging the channels and scaling
+ * to [-1.0, 1.0]. Returns the number of frames decoded, 0 at end of data, or
+ * -1 on a read error with r->error set.
+ */
+long wav_read_mono(wav_reader *r, float *mono, size_t frames);
+
+/* Seconds of audio in the file. */
+double wav_read_duration(const wav_reader *r);
+
+void wav_read_close(wav_reader *r);
 
 #endif /* AUDIAKI_WAV_H */
