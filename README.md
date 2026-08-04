@@ -1,7 +1,17 @@
-# audiaki
+<p align="center">
+  <img src="assets/logo.png" alt="audiaki logo" width="140">
+</p>
 
-[![CI](https://github.com/HilthonTT/audiaki/actions/workflows/ci.yml/badge.svg)](https://github.com/HilthonTT/audiaki/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+<h1 align="center">audiaki</h1>
+
+<p align="center">
+  Minimal ALSA capture-to-WAV recorder for Linux, with live peak metering.
+</p>
+
+<p align="center">
+  <a href="https://github.com/HilthonTT/audiaki/actions/workflows/ci.yml"><img src="https://github.com/HilthonTT/audiaki/actions/workflows/ci.yml/badge.svg" alt="CI status"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
+</p>
 
 A small ALSA capture-to-WAV recorder for Linux. It opens a capture device,
 picks the best sample format the hardware actually supports, and streams it
@@ -148,6 +158,15 @@ that can be built and tested anywhere — which is what CI does.
 
 Bug reports and patches are welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
 
+## Credits
+
+The logo is the
+[teriyaki icon](https://www.flaticon.com/free-icon/teriyaki_6632525) by
+**AUTHOR** from [Flaticon](https://www.flaticon.com/), used under the
+[Flaticon Free License](https://www.freepikcompany.com/legal#nav-flaticon-agreement)
+with attribution.
+
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE) — this covers the source code. The logo in
+`assets/` is licensed separately, as noted under [Credits](#credits).
