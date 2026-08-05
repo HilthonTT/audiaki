@@ -4,6 +4,7 @@ audiaki
 
 # Recordings
 *.wav
+*.mp4
 
 # Object and dependency files
 *.o
