@@ -312,6 +312,7 @@ TEST(reader_rejects_what_it_cannot_decode)
 {
   wav_reader r;
   int16_t samples[2] = {0, 0};
+  float mono[2];
 
   /* not a WAV at all */
   {
@@ -347,7 +348,7 @@ TEST(reader_rejects_what_it_cannot_decode)
   CHECK_EQ_INT(write_take(g_path, 44100, 1, 16, samples, sizeof(samples)), 0);
   CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
   CHECK_EQ_INT(wav_read_mono(&r, NULL, 4), -1);
-  CHECK_EQ_INT(wav_read_mono(&r, (float *)samples, 0), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 0), 0);
   wav_read_close(&r);
 
   /* closing twice is harmless */
