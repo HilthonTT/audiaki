@@ -5,8 +5,8 @@
 <h1 align="center">audiaki</h1>
 
 <p align="center">
-  Minimal ALSA capture-to-WAV recorder for Linux, with live metering and a
-  spectrum visualiser.
+  Minimal ALSA capture-to-WAV recorder for Linux, with live metering, a
+  spectrum visualiser and a desktop app.
 </p>
 
 <p align="center">
@@ -18,6 +18,10 @@ A small ALSA capture-to-WAV recorder for Linux. It opens a capture device,
 picks the best sample format the hardware actually supports, and streams it
 straight into a PCM WAV file with a live meter. It can also turn a finished
 take into a spectrum visualiser video.
+
+It ships as two binaries: `audiaki`, the command line recorder, and
+`audiaki-gui`, a desktop window with a transport, playback monitoring and a
+live glowing spectrum. Both are built from the same capture and analysis core.
 
 Written for a Sonicake Smart Box (QME-20) guitar interface, but it works with
 any ALSA capture device — USB interfaces, built-in codecs, `plughw` plugins.
@@ -66,6 +70,29 @@ Install somewhere else with `PREFIX`:
 make install PREFIX=~/.local
 ```
 
+### Building the desktop app
+
+`audiaki-gui` needs [raylib](https://www.raylib.com/), which is not packaged by
+Debian or Ubuntu, so it is vendored as a submodule and pinned to the version the
+visualiser was drawn against. It also needs the OpenGL and X11 development
+headers.
+
+```sh
+sudo apt install libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
+                 libxcursor-dev libxinerama-dev libxkbcommon-dev
+git submodule update --init --depth 1
+make
+```
+
+`make` then builds both binaries; raylib itself is compiled once and reused.
+
+None of this is required for the command line recorder. If the submodule is
+not initialised, `make` quietly builds `audiaki` alone and skips the window —
+which is what you want on a headless machine.
+
+`sudo make install` also installs a `.desktop` entry, so audiaki appears in the
+application menu alongside everything else.
+
 ## Usage
 
 ```sh
@@ -111,6 +138,60 @@ Set a default device once instead of typing `-D` every time:
 ```sh
 export AUDIAKI_DEVICE=hw:CARD=Box,DEV=0
 ```
+
+## The desktop app
+
+<p align="center">
+  <img src="screenshots/desktop.png" alt="the audiaki desktop app" width="820">
+</p>
+
+```sh
+audiaki-gui                          # open the window on the default device
+audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
+audiaki-gui -o session               # name takes session-001.wav and up
+audiaki-gui -M                       # come up already monitoring
+```
+
+The capture stream opens with the window and stays open, so the spectrum moves
+and the meter reads before you press anything — setting an input level should
+not mean starting a take you are going to throw away.
+
+| Control | Does |
+| --- | --- |
+| **Record** | Starts the next numbered take |
+| **Pause** / **Resume** | Stops and continues writing, without closing the file |
+| **Stop** | Patches the WAV header and closes the take |
+| **Monitor** | Plays the input back through the default output |
+| Volume slider | Monitoring level, from silent to +6 dB |
+| Device dropdown | Switches capture device, `default` plus every capture PCM |
+
+The device dropdown is disabled while a take is open: switching means closing
+the capture stream, and doing that mid-take would truncate the recording. Stop
+first. If the new device will not open, audiaki falls back to the previous one
+rather than leaving the window with no audio.
+
+| Key | Does |
+| --- | --- |
+| `space` | Record, or pause and resume once a take is running |
+| `S` | Stop |
+| `M` | Toggle monitoring |
+| `F` | Fullscreen |
+
+Takes are always numbered from the prefix, so there is no overwrite prompt and
+no `--force` to get wrong: pressing record cannot destroy an earlier take.
+
+**Monitoring feeds your input back to your speakers**, which will howl if you
+are recording a microphone in the same room. It starts off for that reason.
+Headphones, or an instrument rather than a mic, and it is fine.
+
+### The visualiser
+
+The bars are the same analysis the CLI's `--spectrum` and `--visualize` use:
+a 2048 point window folded into log-spaced bands, with a fast attack and a slow
+decay. The drawing is a stem per band with a glowing cap, after
+[musializer](https://github.com/tsoding/musializer) — the glow is one radial
+gradient texture drawn additively, so overlapping halos sum towards white and
+loud clusters bloom.
 
 ## Reading the meter
 
@@ -286,15 +367,27 @@ src/
   ffmpeg_posix.c  its fork/exec/pipe implementation
   signals.c/.h  the shared Ctrl+C flag
   parse.c/.h    strict CLI value parsing
+  monitor.c/.h  ALSA playback, for hearing the input while it records
+  ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
   log.c/.h      stderr diagnostics
+  gui/
+    app.c       the desktop window: layout, transport, keys
+    engine.c/.h the capture thread and its idle/recording/paused transport
+    viz.c/.h    the glowing spectrum, drawn with raylib
+    ui.c/.h     immediate-mode buttons, slider and meter
 tests/          unit tests for the ALSA-free modules
 docs/           man page
+vendor/raylib/  submodule, only needed for the desktop app
 ```
 
-ALSA lives behind `device.c` alone, so `format`, `wav`, `parse`, `fft`,
-`spectrum`, `canvas`, `info`, `take` and `jsonout` are plain C that can be built
-and tested anywhere — which is what CI does. The analysis and drawing code is shared: the live
-terminal display and the video renderer run the same `spectrum` module.
+ALSA lives behind `device.c` and `monitor.c`, so `format`, `wav`, `parse`,
+`fft`, `spectrum`, `canvas`, `info`, `take`, `ringbuf` and `jsonout` are plain C
+that can be built and tested anywhere — which is what CI does. The analysis is
+shared three ways: the terminal display, the video renderer and the desktop
+app all run the same `spectrum` module.
+
+`src/gui/` is the only code that knows raylib exists, and nothing in `src/`
+depends on it, which is what keeps the CLI buildable with the submodule absent.
 
 ## Limitations
 
@@ -302,10 +395,16 @@ terminal display and the video renderer run the same `spectrum` module.
 - Plain 44-byte PCM WAV, so recordings stop at the 4 GB RIFF limit
   (about 3.5 hours of 24-bit stereo at 48 kHz).
 - Linux/ALSA only. No PipeWire, JACK or CoreAudio backend.
-- The visualiser renders offline from a file. There is no windowed real-time
-  view; live feedback is the terminal spectrum.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
+- The desktop app records to numbered takes in the working directory. There is
+  no file dialog, and no playback of a finished take.
+- Monitoring needs an output that accepts the capture rate directly. audiaki
+  does not resample, so it declines to monitor rather than play back at the
+  wrong pitch.
+- The desktop app's device list is built at startup, so an interface plugged in
+  afterwards needs a restart to appear. Rate and channels are fixed for the
+  session; only the device can be changed from the window.
 
 ## Contributing
 

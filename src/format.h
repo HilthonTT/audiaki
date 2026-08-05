@@ -67,6 +67,16 @@ double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_fo
 void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned channels,
                         aud_format fmt);
 
+/*
+ * Decode `frames` interleaved frames into interleaved floats in [-1.0, 1.0),
+ * keeping the channels apart. dst must hold frames * channels floats.
+ *
+ * Written for playback monitoring, which has to put the left channel back in
+ * the left ear. Unknown formats fill dst with zeros.
+ */
+void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned channels,
+                         aud_format fmt);
+
 /* Convert a normalised peak to dBFS, clamped at AUD_DBFS_FLOOR. */
 #define AUD_DBFS_FLOOR (-99.0)
 double aud_format_dbfs(double peak);

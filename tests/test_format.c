@@ -103,6 +103,80 @@ TEST(dbfs_scale)
   CHECK_EQ_DBL(aud_format_dbfs(1e-30), AUD_DBFS_FLOOR, 1e-9);
 }
 
+/*
+ * The interleaved decoder is what feeds playback monitoring, so the property
+ * that matters is that the channels come back out where they went in - the
+ * mono decoder deliberately loses exactly that.
+ */
+TEST(to_float_keeps_the_channels_apart)
+{
+  /* two stereo frames: L = +0.5, R = -0.5, then L = 0, R = full negative */
+  const unsigned char buf[8] = {0x00, 0x40, 0x00, 0xC0, 0x00, 0x00, 0x00, 0x80};
+  float out[4] = {0};
+
+  aud_format_to_float(out, buf, 2, 2, AUD_FORMAT_S16_LE);
+  CHECK_EQ_DBL(out[0], 0.5, 1e-6);
+  CHECK_EQ_DBL(out[1], -0.5, 1e-6);
+  CHECK_EQ_DBL(out[2], 0.0, 1e-6);
+  CHECK_EQ_DBL(out[3], -1.0, 1e-6);
+}
+
+TEST(to_float_agrees_across_the_24_bit_layouts)
+{
+  const unsigned char packed[3] = {0x00, 0x00, 0x40};       /* 0x400000 */
+  const unsigned char padded[4] = {0x00, 0x00, 0x40, 0x00}; /* same, padded */
+  const unsigned char wide[4] = {0x00, 0x00, 0x00, 0x40};   /* 0x40000000 */
+  float out = 0.0f;
+
+  aud_format_to_float(&out, packed, 1, 1, AUD_FORMAT_S24_3LE);
+  CHECK_EQ_DBL(out, 0.5, 1e-6);
+
+  out = 0.0f;
+  aud_format_to_float(&out, padded, 1, 1, AUD_FORMAT_S24_LE);
+  CHECK_EQ_DBL(out, 0.5, 1e-6);
+
+  out = 0.0f;
+  aud_format_to_float(&out, wide, 1, 1, AUD_FORMAT_S32_LE);
+  CHECK_EQ_DBL(out, 0.5, 1e-6);
+}
+
+TEST(to_float_averages_nothing_where_to_mono_does)
+{
+  /* one stereo frame, hard panned: mono halves it, interleaved must not */
+  const unsigned char buf[4] = {0x00, 0x40, 0x00, 0x00};
+  float stereo[2] = {0};
+  float mono = 0.0f;
+
+  aud_format_to_float(stereo, buf, 1, 2, AUD_FORMAT_S16_LE);
+  aud_format_to_mono(&mono, buf, 1, 2, AUD_FORMAT_S16_LE);
+
+  CHECK_EQ_DBL(stereo[0], 0.5, 1e-6);
+  CHECK_EQ_DBL(stereo[1], 0.0, 1e-6);
+  CHECK_EQ_DBL(mono, 0.25, 1e-6);
+}
+
+TEST(to_float_edge_cases)
+{
+  const unsigned char buf[4] = {0xFF, 0xFF, 0xFF, 0xFF};
+  float out[2] = {7.0f, 7.0f};
+
+  /* an unknown format zeroes rather than leaving the caller's buffer stale */
+  aud_format_to_float(out, buf, 2, 1, AUD_FORMAT_UNKNOWN);
+  CHECK_EQ_DBL(out[0], 0.0, 1e-9);
+  CHECK_EQ_DBL(out[1], 0.0, 1e-9);
+
+  out[0] = 7.0f;
+  aud_format_to_float(out, NULL, 2, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_DBL(out[0], 0.0, 1e-9);
+
+  /* nothing to decode leaves the buffer untouched rather than clearing it */
+  out[0] = 7.0f;
+  aud_format_to_float(out, buf, 0, 1, AUD_FORMAT_S16_LE);
+  aud_format_to_float(out, buf, 2, 0, AUD_FORMAT_S16_LE);
+  aud_format_to_float(NULL, buf, 2, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_DBL(out[0], 7.0, 1e-9);
+}
+
 int main(void)
 {
   RUN(format_sizes);
@@ -113,5 +187,9 @@ int main(void)
   RUN(peak_s24_variants_agree);
   RUN(peak_edge_cases);
   RUN(dbfs_scale);
+  RUN(to_float_keeps_the_channels_apart);
+  RUN(to_float_agrees_across_the_24_bit_layouts);
+  RUN(to_float_averages_nothing_where_to_mono_does);
+  RUN(to_float_edge_cases);
   return TEST_RESULT();
 }

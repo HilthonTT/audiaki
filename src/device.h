@@ -75,4 +75,24 @@ int aud_device_probe(const char *name, int json);
  */
 int aud_device_list(int json);
 
+/* One capture-capable PCM, as found by aud_device_enumerate(). */
+typedef struct
+{
+  char name[64];        /* the string to pass as a device, hw:CARD=x,DEV=n */
+  char card[80];        /* the card's human readable name */
+  char description[80]; /* what the PCM calls itself */
+} aud_device_entry;
+
+/*
+ * Build an array of every capture-capable PCM. Returns the number found and
+ * stores the array in *out, which the caller frees; *out is NULL when nothing
+ * was found. Returns -1 on failure.
+ *
+ * The plugin devices - "default", "pulse" and friends - are not included,
+ * because they are configuration rather than hardware and ALSA offers no way
+ * to enumerate them meaningfully. A caller offering a choice should present
+ * "default" itself.
+ */
+int aud_device_enumerate(aud_device_entry **out);
+
 #endif /* AUDIAKI_DEVICE_H */

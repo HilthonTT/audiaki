@@ -1,7 +1,8 @@
 .\" SPDX-License-Identifier: MIT
 .TH AUDIAKI 1 "2026-08-04" "audiaki 0.2.0" "User Commands"
 .SH NAME
-audiaki \- record an ALSA capture device to a WAV file, and visualise it
+audiaki, audiaki\-gui \- record an ALSA capture device to a WAV file, and
+visualise it
 .SH SYNOPSIS
 .B audiaki
 [\fIOPTION\fR]... \fIOUTPUT.WAV\fR
@@ -17,6 +18,9 @@ audiaki \- record an ALSA capture device to a WAV file, and visualise it
 .br
 .B audiaki
 \fB\-\-list\fR
+.br
+.B audiaki\-gui
+[\fIOPTION\fR]...
 .SH DESCRIPTION
 .B audiaki
 opens an ALSA capture device, negotiates the widest sample format the hardware
@@ -280,6 +284,72 @@ with the audio re-encoded to AAC.
 Rendering can be interrupted with
 .BR SIGINT :
 ffmpeg is stopped and the partial video is removed.
+.SH DESKTOP APPLICATION
+.B audiaki\-gui
+is a window with the same recorder behind it: a record, pause, resume and stop
+transport, a live level meter with peak hold, and a real\-time spectrum drawn as
+glowing bars.
+.PP
+The capture stream opens with the window and stays open whether or not a take is
+being written, so the meter and the spectrum are live before recording starts \-
+which is how an input level gets set in the first place.
+.PP
+A dropdown in the header selects the capture device, offering
+.B default
+alongside every capture PCM found. Switching rebuilds the stream and the
+analyser around whatever the new device negotiates, and falls back to the
+previous device if the new one will not open. It is disabled while a take is
+open, because closing the capture stream mid\-take would truncate the recording.
+The list is built at startup, so an interface plugged in afterwards needs a
+restart to appear.
+.TP
+.B \-D, \-\-device NAME
+ALSA capture device the window opens on. It is preselected in the dropdown, and
+appears there even when it is not one of the enumerated devices.
+.TP
+.B \-r, \-\-rate HZ
+Sample rate.
+.TP
+.B \-c, \-\-channels N
+Channel count.
+.TP
+.B \-o, \-\-take PREFIX
+Take name prefix; takes are numbered from it. Defaults to
+.BR take .
+.TP
+.B \-M, \-\-monitor
+Start with playback monitoring already on.
+.PP
+Keys:
+.B space
+records, or pauses and resumes a running take;
+.B S
+stops;
+.B M
+toggles monitoring;
+.B F
+toggles fullscreen.
+.PP
+Pausing stops appending to the file without closing it, so a take can be resumed
+into the same WAV. Stopping patches the header and closes it.
+.PP
+Takes are always numbered from the prefix, so there is no
+.B \-\-force
+and pressing record cannot overwrite an earlier take.
+.PP
+Monitoring opens a second stream on the default output and plays the input back
+through it. It is off unless
+.B \-M
+is given, because monitoring a microphone through speakers howls. audiaki does
+not resample, so an output that will not accept the capture rate is declined
+rather than played back at the wrong pitch. When the output cannot keep up the
+excess frames are dropped rather than queued, so the monitor stays in step with
+the input instead of drifting further behind it.
+.PP
+.B audiaki\-gui
+is only built when the vendored raylib submodule is initialised and the OpenGL
+and X11 development headers are installed. Neither is needed for
+.BR audiaki .
 .SH ENVIRONMENT
 .TP
 .B AUDIAKI_DEVICE

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=audiaki
+GenericName=Audio Recorder
+Comment=Record your instrument and watch the spectrum while you play
+Exec=audiaki-gui
+Icon=audiaki
+Terminal=false
+Categories=AudioVideo;Audio;Recorder;
+Keywords=record;recorder;audio;guitar;wav;alsa;spectrum;
+StartupNotify=true

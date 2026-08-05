@@ -324,6 +324,91 @@ void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned cha
   }
 }
 
+/*
+ * Interleaved decoders. Channel layout is preserved, so unlike the mono pass
+ * there is nothing to average and the sample index runs flat across the buffer.
+ */
+
+static void flt_s16(float *dst, const unsigned char *p, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    int16_t s;
+    memcpy(&s, p + i * 2, 2);
+    dst[i] = (float)((double)s / 32768.0);
+  }
+}
+
+static void flt_s24_3(float *dst, const unsigned char *p, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    const unsigned char *q = p + i * 3;
+    uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
+    int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+    dst[i] = (float)((double)s / 8388608.0);
+  }
+}
+
+static void flt_s24_4(float *dst, const unsigned char *p, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    uint32_t raw;
+    int32_t s;
+    memcpy(&raw, p + i * 4, 4);
+    raw &= 0x00FFFFFFu;
+    s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+    dst[i] = (float)((double)s / 8388608.0);
+  }
+}
+
+static void flt_s32(float *dst, const unsigned char *p, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    int32_t s;
+    memcpy(&s, p + i * 4, 4);
+    dst[i] = (float)((double)s / 2147483648.0);
+  }
+}
+
+void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned channels,
+                         aud_format fmt)
+{
+  const unsigned char *p = (const unsigned char *)src;
+  size_t n = frames * (size_t)channels;
+
+  if (dst == NULL || frames == 0 || channels == 0)
+    return;
+
+  if (p == NULL)
+  {
+    memset(dst, 0, n * sizeof(*dst));
+    return;
+  }
+
+  switch (fmt)
+  {
+  case AUD_FORMAT_S16_LE:
+    flt_s16(dst, p, n);
+    return;
+  case AUD_FORMAT_S24_3LE:
+    flt_s24_3(dst, p, n);
+    return;
+  case AUD_FORMAT_S24_LE:
+    flt_s24_4(dst, p, n);
+    return;
+  case AUD_FORMAT_S32_LE:
+    flt_s32(dst, p, n);
+    return;
+  case AUD_FORMAT_UNKNOWN:
+  default:
+    memset(dst, 0, n * sizeof(*dst));
+    return;
+  }
+}
+
 double aud_format_dbfs(double peak)
 {
   if (!(peak > 0.0))

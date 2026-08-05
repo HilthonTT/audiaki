@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `audiaki-gui`, a desktop application. A window with a record / pause / resume
+  / stop transport, a live level meter with peak hold, a clipping indicator and
+  a real-time spectrum. The capture stream opens with the window and stays open,
+  so levels and the spectrum are live before a take is started. Takes are always
+  numbered from a prefix, so recording cannot overwrite an earlier one.
+- A capture device dropdown in the desktop app, listing `default` alongside
+  every capture PCM ALSA reports. Switching rebuilds the capture stream and the
+  analyser around whatever the new device negotiates, and falls back to the
+  previous device if the new one will not open. Disabled while a take is open,
+  so a device change cannot truncate a recording.
+- `aud_device_enumerate()` returns the capture device list as data rather than
+  printing it; `--list` is now a presentation layer over it and its output is
+  unchanged.
+- Playback monitoring: a second ALSA stream plays the input back while it
+  records, with a volume slider and a toggle. Off by default, because
+  monitoring a microphone through speakers howls. It drops frames rather than
+  queueing them when the output falls behind, so the monitor cannot drift
+  further behind the input the longer a take runs.
+- The desktop visualiser draws a stem per band with an additively blended
+  glowing cap, after [musializer](https://github.com/tsoding/musializer). It
+  reuses the same `spectrum` analyser as the terminal meter and the video
+  renderer.
+- `monitor` module: ALSA playback for hearing the input, independent of the
+  capture stream, so monitoring can fail or be switched off without the
+  recording noticing.
+- `ringbuf` module: a lock-free single-producer single-consumer float ring, so
+  the capture thread hands audio to the drawing thread without a mutex that
+  could stall it into an xrun. ALSA-free and unit tested.
+- `aud_format_to_float()` decodes interleaved PCM to interleaved floats,
+  keeping the channels apart, which is what monitoring needs.
+- A `.desktop` entry, installed by `make install` when the desktop app is
+  built, so audiaki appears in the application menu.
 - `--visualize FILE` renders a WAV recording into a spectrum visualiser video.
   audiaki analyses and rasterises the frames itself and pipes raw RGBA to
   `ffmpeg`, which encodes them and muxes in the original audio. `--size`,
@@ -28,6 +60,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `ffmpeg` is a new optional run-time dependency, needed only for
   `--visualize`. Building and recording are unaffected.
+- raylib is a new optional build-time dependency, vendored as a pinned
+  submodule under `vendor/raylib` and needed only for `audiaki-gui`. `make`
+  builds the desktop app when the submodule is initialised and the OpenGL and
+  X11 headers are present, and quietly builds the command line recorder alone
+  when they are not — so headless machines and CI are unaffected.
+- `make install` now installs `audiaki-gui`, its `.desktop` entry and its icon
+  as well, when the desktop app was built.
 - The SIGINT/SIGTERM stop flag moved out of `recorder.c` into `signals.c` so
   the renderer can be interrupted too. `aud_recorder_install_signals()` and
   `aud_recorder_stop_requested()` still work as before.

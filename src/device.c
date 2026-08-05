@@ -10,6 +10,7 @@
 #include <alloca.h>
 #include <errno.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 /*
@@ -313,12 +314,40 @@ int aud_device_probe(const char *name, int json)
   return 0;
 }
 
-int aud_device_list(int json)
+/*
+ * Grow `*list` to hold one more entry. Returns 0, or -1 leaving the existing
+ * array intact for the caller to free.
+ */
+static int push_entry(aud_device_entry **list, int count, const char *name,
+                      const char *card, const char *description)
+{
+  aud_device_entry *grown = realloc(*list, (size_t)(count + 1) * sizeof(**list));
+
+  if (grown == NULL)
+    return -1;
+
+  *list = grown;
+  snprintf(grown[count].name, sizeof(grown[count].name), "%s", name);
+  snprintf(grown[count].card, sizeof(grown[count].card), "%s", card != NULL ? card : "");
+  snprintf(grown[count].description, sizeof(grown[count].description), "%s",
+           description != NULL ? description : "");
+  return 0;
+}
+
+int aud_device_enumerate(aud_device_entry **out)
 {
   snd_ctl_card_info_t *card_info = NULL;
   snd_pcm_info_t *pcm_info = NULL;
+  aud_device_entry *list = NULL;
   int card = -1;
   int found = 0;
+
+  if (out == NULL)
+  {
+    errno = EINVAL;
+    return -1;
+  }
+  *out = NULL;
 
   snd_ctl_card_info_alloca(&card_info);
   snd_pcm_info_alloca(&pcm_info);
@@ -328,11 +357,6 @@ int aud_device_list(int json)
     aud_error("no sound cards found");
     return -1;
   }
-
-  if (json)
-    fputs("[", stdout);
-  else
-    printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
 
   while (card >= 0)
   {
@@ -367,20 +391,13 @@ int aud_device_list(int json)
       snprintf(device_name, sizeof(device_name), "hw:CARD=%s,DEV=%d",
                snd_ctl_card_info_get_id(card_info), device);
 
-      if (json)
+      if (push_entry(&list, found, device_name, snd_ctl_card_info_get_name(card_info),
+                     snd_pcm_info_get_name(pcm_info)) != 0)
       {
-        fputs(found == 0 ? "\n  {\"device\": " : ",\n  {\"device\": ", stdout);
-        aud_json_string(stdout, device_name);
-        fputs(", \"card\": ", stdout);
-        aud_json_string(stdout, snd_ctl_card_info_get_name(card_info));
-        fputs(", \"description\": ", stdout);
-        aud_json_string(stdout, snd_pcm_info_get_name(pcm_info));
-        fputc('}', stdout);
-      }
-      else
-      {
-        printf("%-32s %s: %s\n", device_name, snd_ctl_card_info_get_name(card_info),
-               snd_pcm_info_get_name(pcm_info));
+        aud_error("out of memory listing devices");
+        snd_ctl_close(ctl);
+        free(list);
+        return -1;
       }
       found++;
     }
@@ -391,9 +408,46 @@ int aud_device_list(int json)
       break;
   }
 
+  *out = list;
+  return found;
+}
+
+int aud_device_list(int json)
+{
+  aud_device_entry *list = NULL;
+  int found = aud_device_enumerate(&list);
+
+  if (found < 0)
+    return -1;
+
+  if (json)
+    fputs("[", stdout);
+  else
+    printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
+
+  for (int i = 0; i < found; i++)
+  {
+    if (json)
+    {
+      fputs(i == 0 ? "\n  {\"device\": " : ",\n  {\"device\": ", stdout);
+      aud_json_string(stdout, list[i].name);
+      fputs(", \"card\": ", stdout);
+      aud_json_string(stdout, list[i].card);
+      fputs(", \"description\": ", stdout);
+      aud_json_string(stdout, list[i].description);
+      fputc('}', stdout);
+    }
+    else
+    {
+      printf("%-32s %s: %s\n", list[i].name, list[i].card, list[i].description);
+    }
+  }
+
   if (json)
     fputs(found > 0 ? "\n]\n" : "]\n", stdout);
   else if (found == 0)
     aud_warn("no capture devices found");
+
+  free(list);
   return 0;
 }
