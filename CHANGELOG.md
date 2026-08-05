@@ -31,6 +31,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glowing cap, after [musializer](https://github.com/tsoding/musializer). It
   reuses the same `spectrum` analyser as the terminal meter and the video
   renderer.
+- Five live visualiser styles in the desktop app - `bars`, `mirror`, `radial`,
+  `scope` and `waterfall` - switchable from a strip on the visualiser, with the
+  `V` key, or up front with `-s, --style`. `scope` draws raw samples, triggered
+  on a rising zero crossing so a steady note stands still; `waterfall` keeps
+  about eight seconds of spectrogram history as a ring of texture columns, one
+  written per frame.
 - `monitor` module: ALSA playback for hearing the input, independent of the
   capture stream, so monitoring can fail or be switched off without the
   recording noticing.

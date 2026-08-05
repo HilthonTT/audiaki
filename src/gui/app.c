@@ -77,6 +77,10 @@ typedef struct
   int device_selected;
   int device_menu_open;
 
+  /* the visualiser style selector, mirroring the mode held by aud_viz */
+  const char *style_labels[AUD_VIZ_MODE_COUNT];
+  int style_selected;
+
   float peak_hold;
   float peak_hold_left; /* seconds the marker still has before it decays */
   float monitor_gain;
@@ -96,15 +100,19 @@ static void usage(FILE *out, const app *a)
           "  -r, --rate HZ        sample rate (default: %u)\n"
           "  -c, --channels N     channel count (default: %u)\n"
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
+          "  -s, --style NAME     visualiser style (default: %s)\n"
           "  -M, --monitor        start with playback monitoring on\n"
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
           "\n"
+          "styles: bars, mirror, radial, scope, waterfall\n"
+          "\n"
           "Takes are numbered from the prefix, so recording never overwrites\n"
           "an existing file and there is no --force to get wrong.\n"
           "\n"
-          "keys: space record or pause, S stop, M monitor, F fullscreen\n",
-          a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix);
+          "keys: space record or pause, S stop, M monitor, V style, F fullscreen\n",
+          a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
+          aud_viz_mode_name((aud_viz_mode)a->style_selected));
 }
 
 /* Returns 0 to carry on, or a process exit code to stop with. */
@@ -147,6 +155,18 @@ static int parse_args(app *a, int argc, char **argv)
       a->cfg.channels = (unsigned)strtoul(value, NULL, 10);
     else if (strcmp(arg, "-o") == 0 || strcmp(arg, "--take") == 0)
       snprintf(a->prefix, sizeof(a->prefix), "%s", value);
+    else if (strcmp(arg, "-s") == 0 || strcmp(arg, "--style") == 0)
+    {
+      aud_viz_mode mode;
+
+      if (aud_viz_mode_from_name(value, &mode) != 0)
+      {
+        aud_error("unknown style '%s'", value);
+        aud_info("styles: bars, mirror, radial, scope, waterfall");
+        return 2;
+      }
+      a->style_selected = (int)mode;
+    }
     else
     {
       aud_error("unknown option '%s'", arg);
@@ -250,6 +270,8 @@ static int app_open_engine(app *a)
     return -1;
   }
 
+  /* the style survives a device change; the analyser behind it does not */
+  aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
   aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
   return 0;
 }
@@ -613,8 +635,30 @@ static void draw_frame(app *a, const aud_engine_status *st)
     /* the stage is drawn nearly black so the additive glow has somewhere to go */
     DrawRectangleRounded(stage, 10.0f / stage.height, 8, BLACK);
     DrawRectangleRoundedLines(stage, 10.0f / stage.height, 8, AUD_UI_EDGE);
-    aud_viz_draw_idle(a->viz, inner);
     aud_viz_draw(a->viz, inner);
+
+    /*
+     * The style selector rides on the stage rather than in the chrome. There
+     * is no room for five more labels in the header at the minimum window
+     * width, and a control that sits on what it changes is easy to find.
+     */
+    if (stage.width > 360.0f && stage.height > 90.0f)
+    {
+      float tabs_w = 92.0f * (float)AUD_VIZ_MODE_COUNT;
+      Rectangle tabs;
+
+      if (tabs_w > stage.width - 24.0f)
+        tabs_w = stage.width - 24.0f;
+
+      tabs.x = stage.x + stage.width - 12.0f - tabs_w;
+      tabs.y = stage.y + 12.0f;
+      tabs.width = tabs_w;
+      tabs.height = 26.0f;
+
+      if (aud_ui_tabs(tabs, a->style_labels, AUD_VIZ_MODE_COUNT, &a->style_selected,
+                      !a->device_menu_open, 1))
+        aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
+    }
   }
 
   draw_transport(a, transport, st);
@@ -652,6 +696,9 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (IsKeyPressed(KEY_M))
     aud_engine_set_monitor(a->engine, !aud_engine_monitor_wanted(a->engine));
 
+  if (IsKeyPressed(KEY_V))
+    a->style_selected = (int)aud_viz_cycle_mode(a->viz);
+
   if (IsKeyPressed(KEY_F))
     ToggleFullscreen();
 }
@@ -664,6 +711,9 @@ int main(int argc, char *argv[])
   aud_engine_config_defaults(&a.cfg);
   snprintf(a.prefix, sizeof(a.prefix), "%s", APP_DEFAULT_PREFIX);
   a.monitor_gain = 1.0f;
+
+  for (int i = 0; i < AUD_VIZ_MODE_COUNT; i++)
+    a.style_labels[i] = aud_viz_mode_name((aud_viz_mode)i);
 
   rc = parse_args(&a, argc, argv);
   if (rc != 0)

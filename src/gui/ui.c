@@ -227,6 +227,65 @@ void aud_ui_meter(Rectangle bounds, float level, float peak_hold)
   DrawRectangleRoundedLines(bounds, roundness, 6, AUD_UI_EDGE);
 }
 
+int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *selected,
+                int enabled, int dim)
+{
+  int changed = 0;
+  int over;
+  float seg;
+  float strength;
+
+  if (labels == NULL || selected == NULL || count <= 0 || bounds.width <= 0.0f)
+    return 0;
+
+  if (*selected < 0 || *selected >= count)
+    *selected = 0;
+
+  over = enabled && hovering(bounds);
+  seg = bounds.width / (float)count;
+
+  /* faded until pointed at, so it stays out of the way of the visualiser */
+  strength = (!dim || over) ? 1.0f : 0.45f;
+  if (!enabled)
+    strength *= 0.5f;
+
+  DrawRectangleRounded(bounds, 0.4f, 8, fade_to(AUD_UI_PANEL, 0.55f * strength));
+  DrawRectangleRoundedLines(bounds, 0.4f, 8, fade_to(AUD_UI_EDGE, 0.7f * strength));
+
+  for (int i = 0; i < count; i++)
+  {
+    Rectangle cell = {bounds.x + seg * (float)i, bounds.y, seg, bounds.height};
+    int cell_hover = enabled && hovering(cell);
+    Color text;
+
+    if (i == *selected)
+    {
+      Rectangle lit = {cell.x + 2.0f, cell.y + 2.0f, cell.width - 4.0f,
+                       cell.height - 4.0f};
+
+      DrawRectangleRounded(lit, 0.4f, 8, fade_to(AUD_UI_ACCENT, 0.30f * strength));
+      text = fade_to(WHITE, strength);
+    }
+    else
+    {
+      text = fade_to(cell_hover ? AUD_UI_TEXT : AUD_UI_MUTED, strength);
+    }
+
+    aud_ui_text_centred(cell, 16, text, labels[i]);
+
+    if (cell_hover)
+      SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+
+    if (cell_hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && i != *selected)
+    {
+      *selected = i;
+      changed = 1;
+    }
+  }
+
+  return changed;
+}
+
 /*
  * Draw `text` clipped to `max_width`, ending in an ellipsis when it does not
  * fit. Device descriptions are as long as their vendor felt like making them.

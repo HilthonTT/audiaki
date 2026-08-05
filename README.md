@@ -158,6 +158,7 @@ export AUDIAKI_DEVICE=hw:CARD=Box,DEV=0
 audiaki-gui                          # open the window on the default device
 audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
 audiaki-gui -o session               # name takes session-001.wav and up
+audiaki-gui -s waterfall             # start on a particular visualiser
 audiaki-gui -M                       # come up already monitoring
 ```
 
@@ -184,6 +185,7 @@ rather than leaving the window with no audio.
 | `space` | Record, or pause and resume once a take is running |
 | `S` | Stop |
 | `M` | Toggle monitoring |
+| `V` | Next visualiser style |
 | `F` | Fullscreen |
 
 Takes are always numbered from the prefix, so there is no overwrite prompt and
@@ -193,14 +195,37 @@ no `--force` to get wrong: pressing record cannot destroy an earlier take.
 are recording a microphone in the same room. It starts off for that reason.
 Headphones, or an instrument rather than a mic, and it is fine.
 
-### The visualiser
+### The visualisers
 
-The bars are the same analysis the CLI's `--spectrum` and `--visualize` use:
+<p align="center">
+  <img src="screenshots/styles.png" alt="the five visualiser styles" width="820">
+</p>
+
+Five styles, switchable from the strip on the visualiser or with `V`:
+
+| Style | Shows |
+| --- | --- |
+| `bars` | A stem per band with a glowing cap, growing from the floor |
+| `mirror` | The same bars, opening from the centre line |
+| `radial` | The spectrum wrapped into a ring, bass at the top |
+| `scope` | An oscilloscope trace of the last few milliseconds |
+| `waterfall` | A scrolling spectrogram, newest at the right |
+
+All five read the same analysis the CLI's `--spectrum` and `--visualize` use:
 a 2048 point window folded into log-spaced bands, with a fast attack and a slow
-decay. The drawing is a stem per band with a glowing cap, after
+decay. `bars` is the default, after
 [musializer](https://github.com/tsoding/musializer) — the glow is one radial
 gradient texture drawn additively, so overlapping halos sum towards white and
-loud clusters bloom.
+loud clusters bloom. `mirror` and `radial` reuse the same caps.
+
+`scope` is the odd one out: it draws raw samples rather than the spectrum, and
+starts each sweep at a rising zero crossing so a steady note stands still
+instead of scrolling. It shows true amplitude, so a quiet input is a quiet
+trace — that is the meter's job to explain, not the scope's.
+
+`waterfall` is the only one with a memory. It keeps about eight seconds of
+history as a ring of texture columns, one written per frame, so a hum or a
+dropout is still on screen after it has happened.
 
 ## Reading the meter
 

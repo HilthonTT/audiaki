@@ -317,6 +317,12 @@ Channel count.
 Take name prefix; takes are numbered from it. Defaults to
 .BR take .
 .TP
+.B \-s, \-\-style NAME
+Visualiser style to start on:
+.BR bars ", " mirror ", " radial ", " scope " or " waterfall .
+Defaults to
+.BR bars .
+.TP
 .B \-M, \-\-monitor
 Start with playback monitoring already on.
 .PP
@@ -327,8 +333,24 @@ records, or pauses and resumes a running take;
 stops;
 .B M
 toggles monitoring;
+.B V
+steps through the visualiser styles;
 .B F
 toggles fullscreen.
+.PP
+The styles all read the same analysis described under
+.BR VISUALISER .
+.BR bars ", " mirror " and " radial
+draw the current spectrum as stems with glowing caps, from the floor, from the
+centre line, and wrapped into a ring.
+.B scope
+draws raw samples instead, starting each sweep at a rising zero crossing so a
+steady note stands still rather than scrolling, and showing true amplitude
+rather than fitting the window.
+.B waterfall
+is the only one with a memory: it keeps around eight seconds of spectrogram
+history, time running left to right and frequency bottom to top, so a hum or a
+dropout is still on screen after it has happened.
 .PP
 Pausing stops appending to the file without closing it, so a take can be resumed
 into the same WAV. Stopping patches the header and closes it.

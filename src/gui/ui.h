@@ -91,6 +91,16 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
  */
 void aud_ui_meter(Rectangle bounds, float level, float peak_hold);
 
+/*
+ * A segmented control: `count` labels sharing `bounds`, one of them lit.
+ * `*selected` is written through. Returns non-zero on the frame it changes.
+ *
+ * `dim` draws it faintly until the pointer is over it, for a control that sits
+ * on top of something worth looking at and should not compete with it.
+ */
+int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *selected,
+                int enabled, int dim);
+
 /* Rows of an open dropdown drawn before it starts scrolling instead. */
 #define AUD_UI_DROPDOWN_MAX_ROWS 8
 
