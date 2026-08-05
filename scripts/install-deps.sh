@@ -85,6 +85,7 @@ gui_packages() {
       echo "mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev" \
            "libxinerama-dev libxkbcommon-dev"
       ;;
+    *) ;;
   esac
 }
 

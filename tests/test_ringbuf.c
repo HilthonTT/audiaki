@@ -55,6 +55,8 @@ TEST(a_write_comes_back_out_in_order)
 
   for (size_t i = 0; i < 16; i++)
     CHECK_EQ_DBL(out[i], in[i], 0.0);
+
+  aud_ringbuf_free(&rb);
 }
 
 TEST(a_partial_read_leaves_the_rest_queued)

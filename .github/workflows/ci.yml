@@ -77,6 +77,44 @@ jobs:
                SANITIZE="-fsanitize=address,undefined -fno-sanitize-recover=all" \
                all test
 
+  # The other jobs never see src/gui: they do not check out the raylib
+  # submodule, so `make` quietly builds the CLI alone. This is what stops the
+  # desktop app rotting unnoticed - and it exercises the submodule and the
+  # vendored raylib build at the same time.
+  desktop:
+    name: desktop app (${{ matrix.cc }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        cc: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: true
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libgl1-mesa-dev libx11-dev \
+                                  libxrandr-dev libxi-dev libxcursor-dev \
+                                  libxinerama-dev libxkbcommon-dev
+
+      - name: Build the desktop app
+        run: make STRICT=1 CC=${{ matrix.cc }} gui
+
+      # --help is handled before the window is opened, so this runs on a
+      # headless runner with no display.
+      - name: Smoke test the binary
+        run: |
+          ./build/audiaki-gui --help
+          status=0
+          ./build/audiaki-gui --nonsense || status=$?
+          if [ "$status" -ne 2 ]; then
+            echo "expected exit status 2 for a bad option, got $status" >&2
+            exit 1
+          fi
+
   style:
     name: clang-format
     runs-on: ubuntu-latest
@@ -102,6 +140,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cppcheck shellcheck libasound2-dev
 
+      # src/gui is skipped: it is written against raylib's headers, which this
+      # job does not have, and without them cppcheck cannot even parse a
+      # CLITERAL(Color){...} colour constant, let alone say anything useful
+      # about it. The desktop job below compiles that code with -Werror under
+      # both compilers instead.
       - name: cppcheck
         run: |
           cppcheck --error-exitcode=1 --std=c11 --quiet \
@@ -109,6 +152,7 @@ jobs:
                    --inline-suppr \
                    --suppress=missingIncludeSystem \
                    --suppress=unmatchedSuppression \
+                   -i src/gui \
                    -I src src tests
 
       - name: shellcheck
