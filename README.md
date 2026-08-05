@@ -64,6 +64,10 @@ make
 sudo make install           # installs to /usr/local by default
 ```
 
+The script handles apt, dnf, pacman, zypper and apk, and takes `--dry-run` to
+show what it would install. By default it also pulls in `ffmpeg` and the
+desktop app's OpenGL and X11 headers; `--no-ffmpeg` and `--no-gui` skip those.
+
 Install somewhere else with `PREFIX`:
 
 ```sh
@@ -75,16 +79,21 @@ make install PREFIX=~/.local
 `audiaki-gui` needs [raylib](https://www.raylib.com/), which is not packaged by
 Debian or Ubuntu, so it is vendored as a submodule and pinned to the version the
 visualiser was drawn against. It also needs the OpenGL and X11 development
-headers.
+headers, which `install-deps.sh` installs unless you pass `--no-gui`.
 
 ```sh
-sudo apt install libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
-                 libxcursor-dev libxinerama-dev libxkbcommon-dev
-git submodule update --init --depth 1
+./scripts/install-deps.sh              # OpenGL and X11 headers included
+git submodule update --init --depth 1  # fetch raylib
 make
 ```
 
 `make` then builds both binaries; raylib itself is compiled once and reused.
+Installing the headers by hand instead, on Debian or Ubuntu:
+
+```sh
+sudo apt install libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
+                 libxcursor-dev libxinerama-dev libxkbcommon-dev
+```
 
 None of this is required for the command line recorder. If the submodule is
 not initialised, `make` quietly builds `audiaki` alone and skips the window —

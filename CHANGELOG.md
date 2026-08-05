@@ -41,6 +41,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keeping the channels apart, which is what monitoring needs.
 - A `.desktop` entry, installed by `make install` when the desktop app is
   built, so audiaki appears in the application menu.
+- `scripts/install-deps.sh` now installs the desktop app's OpenGL and X11
+  headers too, across apt, dnf, pacman, zypper and apk, and takes `--no-gui`
+  to leave them out on a headless machine.
 - `--visualize FILE` renders a WAV recording into a spectrum visualiser video.
   audiaki analyses and rasterises the frames itself and pipes raw RGBA to
   `ffmpeg`, which encodes them and muxes in the original audio. `--size`,

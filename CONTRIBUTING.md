@@ -12,15 +12,29 @@ make                        # -> build/audiaki
 make check                  # unit tests + clang-format check
 ```
 
+To work on the desktop app as well, fetch its vendored raylib. The headers it
+needs are already covered by `install-deps.sh`, unless you passed `--no-gui`:
+
+```sh
+git submodule update --init --depth 1
+make                        # -> build/audiaki and build/audiaki-gui
+```
+
+Without the submodule, `make` builds the command line recorder alone and says
+nothing about it — that is the supported headless setup, not a broken one.
+
 Useful targets:
 
 | Target | What it does |
 | --- | --- |
-| `make` | Build `build/audiaki` |
+| `make` | Build `build/audiaki`, and `build/audiaki-gui` when raylib is available |
+| `make gui` | Build only the desktop app, failing loudly if it cannot |
 | `make test` | Run the unit tests (needs no ALSA device, or even ALSA headers) |
 | `make debug` | Build with `-O0`, AddressSanitizer and UBSan |
 | `make check` | `test` plus a `clang-format` check |
 | `make format` | Reformat the sources in place |
+| `make clean` | Remove `build/`, keeping the compiled raylib |
+| `make clean-raylib` | Rebuild raylib from scratch next time; takes about a minute |
 | `make STRICT=1 ...` | Warnings become errors, as in CI |
 
 ## Before opening a pull request

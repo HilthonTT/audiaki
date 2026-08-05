@@ -4,22 +4,30 @@
 # Install the build dependencies for audiaki: a C compiler, make, pkg-config
 # and the ALSA development headers.
 #
-# Also installs ffmpeg, which `audiaki --visualize` runs to encode a video.
-# It is not needed to build audiaki or to record with it; pass --no-ffmpeg to
-# leave it out.
+# Also installs, by default:
 #
-# Usage: ./scripts/install-deps.sh [--dry-run] [--no-ffmpeg]
+#   ffmpeg, which `audiaki --visualize` runs to encode a video. It is not
+#   needed to build audiaki or to record with it; pass --no-ffmpeg to skip it.
+#
+#   the OpenGL and X11 development headers, which the `audiaki-gui` desktop
+#   app needs to build its vendored copy of raylib. Not needed for the command
+#   line recorder, and useless on a headless machine; pass --no-gui to skip
+#   them.
+#
+# Usage: ./scripts/install-deps.sh [--dry-run] [--no-ffmpeg] [--no-gui]
 
 set -eu
 
 DRY_RUN=0
 WANT_FFMPEG=1
+WANT_GUI=1
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --no-ffmpeg) WANT_FFMPEG=0 ;;
+    --no-gui) WANT_GUI=0 ;;
     *)
-      echo "usage: $0 [--dry-run] [--no-ffmpeg]" >&2
+      echo "usage: $0 [--dry-run] [--no-ffmpeg] [--no-gui]" >&2
       exit 2
       ;;
   esac
@@ -49,22 +57,58 @@ if [ "$WANT_FFMPEG" -eq 1 ]; then
   FFMPEG="ffmpeg"
 fi
 
+# The GUI package names are not: every distribution splits and capitalises the
+# X11 libraries differently, so each branch names its own set. raylib is built
+# against the X11 backend, which works under Wayland through XWayland.
+gui_packages() {
+  if [ "$WANT_GUI" -eq 0 ]; then
+    return
+  fi
+  case "$1" in
+    apt)
+      echo "libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev" \
+           "libxcursor-dev libxinerama-dev libxkbcommon-dev"
+      ;;
+    dnf)
+      echo "mesa-libGL-devel libX11-devel libXrandr-devel libXi-devel" \
+           "libXcursor-devel libXinerama-devel libxkbcommon-devel"
+      ;;
+    pacman)
+      # Arch ships headers in the main packages rather than -dev split ones
+      echo "mesa libx11 libxrandr libxi libxcursor libxinerama libxkbcommon"
+      ;;
+    zypper)
+      echo "Mesa-libGL-devel libX11-devel libXrandr-devel libXi-devel" \
+           "libXcursor-devel libXinerama-devel libxkbcommon-devel"
+      ;;
+    apk)
+      echo "mesa-dev libx11-dev libxrandr-dev libxi-dev libxcursor-dev" \
+           "libxinerama-dev libxkbcommon-dev"
+      ;;
+  esac
+}
+
 if command -v apt-get >/dev/null 2>&1; then
+  GUI=$(gui_packages apt)
   run apt-get update
   # shellcheck disable=SC2086
-  run apt-get install -y build-essential pkg-config libasound2-dev $FFMPEG
+  run apt-get install -y build-essential pkg-config libasound2-dev $FFMPEG $GUI
 elif command -v dnf >/dev/null 2>&1; then
+  GUI=$(gui_packages dnf)
   # shellcheck disable=SC2086
-  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $FFMPEG
+  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $FFMPEG $GUI
 elif command -v pacman >/dev/null 2>&1; then
+  GUI=$(gui_packages pacman)
   # shellcheck disable=SC2086
-  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $FFMPEG
+  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $FFMPEG $GUI
 elif command -v zypper >/dev/null 2>&1; then
+  GUI=$(gui_packages zypper)
   # shellcheck disable=SC2086
-  run zypper install -y gcc make pkg-config alsa-devel $FFMPEG
+  run zypper install -y gcc make pkg-config alsa-devel $FFMPEG $GUI
 elif command -v apk >/dev/null 2>&1; then
+  GUI=$(gui_packages apk)
   # shellcheck disable=SC2086
-  run apk add build-base pkgconf alsa-lib-dev $FFMPEG
+  run apk add build-base pkgconf alsa-lib-dev $FFMPEG $GUI
 else
   cat >&2 <<'EOF'
 error: no supported package manager found.
@@ -75,9 +119,19 @@ Install these yourself and re-run `make`:
   - pkg-config
   - the ALSA development headers (libasound2-dev / alsa-lib-devel / alsa-lib)
   - ffmpeg, if you want `audiaki --visualize` to render videos
+  - the OpenGL and X11 development headers, if you want the audiaki-gui
+    desktop app: GL, X11, Xrandr, Xi, Xcursor, Xinerama and xkbcommon
 EOF
   exit 1
 fi
 
 echo
-echo "Dependencies installed. Build with: make"
+if [ "$WANT_GUI" -eq 1 ]; then
+  # The headers alone are not enough: raylib itself lives in a submodule.
+  echo "Dependencies installed. For the desktop app, fetch raylib too:"
+  echo "    git submodule update --init --depth 1"
+  echo
+  echo "Then build both binaries with: make"
+else
+  echo "Dependencies installed. Build with: make"
+fi
