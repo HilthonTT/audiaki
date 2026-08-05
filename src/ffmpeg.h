@@ -23,6 +23,9 @@ typedef struct FFMPEG FFMPEG;
  * audio in `sound_file_path`, into `output_path` - overwriting it if it exists,
  * so callers own the "refuse without --force" decision.
  *
+ * A NULL `sound_file_path` writes a video with no audio track at all, for a
+ * caller that wants the picture on its own.
+ *
  * Returns NULL after reporting the reason through log.h. SIGPIPE is set to
  * SIG_IGN on success: if ffmpeg dies early, a send should fail with EPIPE
  * rather than take this process down with it.

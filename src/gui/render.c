@@ -175,13 +175,13 @@ aud_render *aud_render_start(const aud_render_options *opts)
   }
   r->target_ready = 1;
 
-  r->ffmpeg =
-      ffmpeg_start_rendering(r->partial, r->width, r->height, r->fps, opts->wav_path);
+  r->ffmpeg = ffmpeg_start_rendering(r->partial, r->width, r->height, r->fps,
+                                     opts->silent ? NULL : opts->wav_path);
   if (r->ffmpeg == NULL)
     goto fail; /* ffmpeg_start_rendering has already said why */
 
-  aud_info("rendering %s: %ux%u at %u fps, %s", r->output, r->width, r->height, r->fps,
-           aud_viz_mode_name(opts->mode));
+  aud_info("rendering %s: %ux%u at %u fps, %s%s", r->output, r->width, r->height, r->fps,
+           aud_viz_mode_name(opts->mode), opts->silent ? ", no audio" : "");
   return r;
 
 fail:

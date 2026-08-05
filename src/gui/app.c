@@ -27,8 +27,8 @@
 
 #define APP_WIDTH 1100
 #define APP_HEIGHT 680
-/* wide enough for the transport, the video and monitor controls and the slider */
-#define APP_MIN_WIDTH 900
+/* wide enough for the transport, the video, audio and monitor controls and the slider */
+#define APP_MIN_WIDTH 960
 #define APP_MIN_HEIGHT 460
 
 #define APP_PAD 18.0f
@@ -96,6 +96,13 @@ typedef struct
    * whether stopping also renders an MP4 of the visualiser from it.
    */
   int want_video;
+  /*
+   * Whether that MP4 carries the take's own audio. On by default - a take and
+   * its visualiser belong together - but a video headed for an edit that has
+   * the audio already, or for somewhere it should not play, is better off
+   * without a track to strip back out.
+   */
+  int want_video_audio;
   unsigned video_width;
   unsigned video_height;
   unsigned video_fps;
@@ -123,6 +130,7 @@ static void usage(FILE *out, const app *a)
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
           "  -s, --style NAME     visualiser style (default: %s)\n"
           "  -V, --video          also render an MP4 of the visualiser\n"
+          "      --video-silent   render that MP4 without the take's audio\n"
           "      --video-size WxH video size (default: %ux%u, or 720p/1080p/...)\n"
           "      --video-fps N    video frame rate (default: %u)\n"
           "  -M, --monitor        start with playback monitoring on\n"
@@ -169,6 +177,11 @@ static int parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "-V") == 0 || strcmp(arg, "--video") == 0)
     {
       a->want_video = 1;
+      continue;
+    }
+    if (strcmp(arg, "--video-silent") == 0)
+    {
+      a->want_video_audio = 0;
       continue;
     }
 
@@ -456,6 +469,7 @@ static void app_stop_take(app *a, const aud_engine_status *st)
   opts.width = a->video_width;
   opts.height = a->video_height;
   opts.fps = a->video_fps;
+  opts.silent = !a->want_video_audio;
 
   a->render = aud_render_start(&opts);
   if (a->render == NULL)
@@ -638,21 +652,33 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
     float slider_w = 140.0f;
     float monitor_w = 120.0f;
     float video_w = 100.0f;
+    float audio_w = 100.0f;
     Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 26.0f) / 2.0f,
                         slider_w, 26.0f};
     Rectangle monitor = {slider.x - gap - monitor_w, r.y, monitor_w, r.height};
-    Rectangle video = {monitor.x - gap - video_w, r.y, video_w, r.height};
+    Rectangle audio = {monitor.x - gap - audio_w, r.y, audio_w, r.height};
+    Rectangle video = {audio.x - gap - video_w, r.y, video_w, r.height};
     int wanted = aud_engine_monitor_wanted(a->engine);
-
     /*
      * Only settable between takes: the video is rendered from the finished
      * WAV, so changing your mind halfway through would be answered either by
      * rendering the whole take or none of it, and neither is what the click
      * meant.
      */
-    if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT,
-                      usable && !live && !rendering))
+    int settable = usable && !live && !rendering;
+
+    if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT, settable))
       a->want_video = !a->want_video;
+
+    /*
+     * What goes in that video, so it sits next to the control that turns it on
+     * and greys out with it. The label says which way it is set rather than
+     * leaving that to the lit state alone: "no audio" is the answer people
+     * come looking for, and it should be readable without clicking anything.
+     */
+    if (aud_ui_toggle(audio, a->want_video_audio ? "Audio" : "No audio",
+                      a->want_video_audio, AUD_UI_ACCENT, settable && a->want_video))
+      a->want_video_audio = !a->want_video_audio;
 
     if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted,
                       AUD_UI_OK, usable))
@@ -910,6 +936,7 @@ int main(int argc, char *argv[])
   aud_engine_config_defaults(&a.cfg);
   snprintf(a.prefix, sizeof(a.prefix), "%s", APP_DEFAULT_PREFIX);
   a.monitor_gain = 1.0f;
+  a.want_video_audio = 1; /* before parse_args, which only ever clears it */
   a.video_width = AUD_RENDER_DEFAULT_WIDTH;
   a.video_height = AUD_RENDER_DEFAULT_HEIGHT;
   a.video_fps = AUD_RENDER_DEFAULT_FPS;

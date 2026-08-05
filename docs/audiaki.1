@@ -328,6 +328,11 @@ Render an MP4 of the visualiser alongside each take, as if the
 .B Video
 control were already on.
 .TP
+.B \-\-video\-silent
+Render that MP4 with no audio track, as if the
+.B Audio
+control were already off. The take's WAV is written as usual.
+.TP
 .B \-\-video\-size SPEC
 Video size as
 .IR WxH ,
@@ -384,6 +389,22 @@ on
 .BR PATH ;
 without it the WAV is still written and the window reports why the video was
 not.
+.PP
+The
+.B Audio
+control beside it decides whether that MP4 has an audio track at all. It is on
+by default; with it off, or with
+.BR \-\-video\-silent ,
+the video is encoded with no audio stream, for a clip going into an edit that
+has the sound already or somewhere it should not play. The take is still read
+either way - it is what the picture is drawn from - and its WAV is written
+whichever way the control is set. Both controls are settable only between
+takes: the render is a single pass over the finished take, so there is no half
+of it to change your mind about, and
+.B Audio
+greys out with
+.B Video
+off.
 .PP
 The video is rendered from the finished take when recording stops, rather than
 captured live from the screen. Recording is the job that cannot miss a

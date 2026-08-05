@@ -39,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   becomes **Cancel** while it runs. `--video-size` and `--video-fps` set the
   output, defaulting to 1280x720 at 60. Needs `ffmpeg` on `PATH`; without it
   the WAV is still written and the window says why the video was not.
+- An **Audio** toggle beside it, or `--video-silent`, choosing whether that MP4
+  carries the take's audio. On by default; off encodes the video with no audio
+  stream at all, rather than a muted one, for a clip going into an edit that
+  has the sound already. `ffmpeg_start_rendering()` takes a NULL sound file for
+  this. The take's WAV is written either way, and is still what the picture is
+  drawn from.
 - `aud_take_with_extension()` derives a video name from a take name. The CLI's
   `--visualize` default output now goes through it too, so the two cannot
   disagree about what `take-003.wav`'s video is called.

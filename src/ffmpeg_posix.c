@@ -70,8 +70,8 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
   int pipefd[2];
   pid_t child;
 
-  if (output_path == NULL || sound_file_path == NULL || width == 0 || height == 0 ||
-      fps == 0)
+  /* sound_file_path may be NULL: that is a video with no audio track */
+  if (output_path == NULL || width == 0 || height == 0 || fps == 0)
   {
     aud_error("ffmpeg: invalid render parameters");
     return NULL;
@@ -111,20 +111,35 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
     snprintf(resolution, sizeof(resolution), "%zux%zu", width, height);
     snprintf(framerate, sizeof(framerate), "%zu", fps);
 
-    execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
+    if (sound_file_path != NULL)
+      execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
 
-           /* input 0: our frames, arriving on stdin */
-           "-f", "rawvideo", "-pix_fmt", "rgba", "-s", resolution, "-r", framerate, "-i",
-           "-",
+             /* input 0: our frames, arriving on stdin */
+             "-f", "rawvideo", "-pix_fmt", "rgba", "-s", resolution, "-r", framerate,
+             "-i", "-",
 
-           /* input 1: the audio, which ffmpeg opens for itself */
-           "-i", sound_file_path,
+             /* input 1: the audio, which ffmpeg opens for itself */
+             "-i", sound_file_path,
 
-           /* -shortest trims the trailing partial frame off the end */
-           "-c:v", "libx264", "-vb", "2500k", "-c:a", "aac", "-ab", "200k", "-pix_fmt",
-           "yuv420p", "-shortest", output_path,
+             /* -shortest trims the trailing partial frame off the end */
+             "-c:v", "libx264", "-vb", "2500k", "-c:a", "aac", "-ab", "200k", "-pix_fmt",
+             "yuv420p", "-shortest", output_path,
 
-           NULL);
+             NULL);
+    else
+      /*
+       * Silent: one input and -an, rather than muxing a track and muting it.
+       * There is no second input to be shorter than the video, so -shortest
+       * has nothing to trim and is left off.
+       */
+      execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
+
+             "-f", "rawvideo", "-pix_fmt", "rgba", "-s", resolution, "-r", framerate,
+             "-i", "-",
+
+             "-an", "-c:v", "libx264", "-vb", "2500k", "-pix_fmt", "yuv420p", output_path,
+
+             NULL);
 
     /* only reached if execlp failed */
     fprintf(stderr, "\nffmpeg child: cannot run ffmpeg: %s\n", strerror(errno));

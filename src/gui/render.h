@@ -44,6 +44,13 @@ typedef struct
   unsigned height;
   unsigned fps;
   size_t bands;
+  /*
+   * Leave the take's audio out of the video. The take is still read - it is
+   * what the picture is drawn from - it just is not muxed in, for a video
+   * headed somewhere the sound would be laid over separately or not wanted at
+   * all. Off by default: a visualiser without its audio is the unusual want.
+   */
+  int silent;
 } aud_render_options;
 
 typedef struct aud_render aud_render;

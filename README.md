@@ -161,6 +161,7 @@ audiaki-gui -o session               # name takes session-001.wav and up
 audiaki-gui -s waterfall             # start on a particular visualiser
 audiaki-gui -V                       # also render an MP4 of each take
 audiaki-gui -V --video-size 1080p    # ...at a particular size
+audiaki-gui -V --video-silent        # ...with no audio track in it
 audiaki-gui -M                       # come up already monitoring
 ```
 
@@ -174,6 +175,7 @@ not mean starting a take you are going to throw away.
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
 | **Stop** | Patches the WAV header and closes the take |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
+| **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
 | **Monitor** | Plays the input back through the default output |
 | Volume slider | Monitoring level, from silent to +6 dB |
 | Device dropdown | Switches capture device, `default` plus every capture PCM |
@@ -201,6 +203,15 @@ that same WAV and then `take-003.mp4` alongside it, showing whichever
 visualiser was selected, with the take's own audio muxed in. It needs `ffmpeg`
 on `PATH`; without it the WAV is still written and the window says why the
 video was not.
+
+**Audio**, beside it, decides whether that MP4 gets an audio track at all. On
+by default — a take and its visualiser belong together. Turn it off, or start
+with `--video-silent`, and the video is encoded with no audio stream in it, for
+a clip going into an edit that already has the sound, or somewhere it should
+not play. The WAV is written either way, so nothing is lost by choosing wrong;
+it is also what the picture is drawn from, silent video or not. Like **Video**,
+it is only settable between takes: the render is a single pass over the
+finished take, so there is no half of it to change your mind about.
 
 The video is rendered **after** the take stops, not captured live off the
 screen. Recording is the job that must not miss a deadline, and grabbing the
