@@ -209,6 +209,66 @@ TEST(reader_round_trips_the_writer)
   CHECK(r.file == NULL);
 }
 
+TEST(reader_keeps_channels_apart_on_request)
+{
+  wav_reader r;
+  /* two stereo frames: hard left, then equal and opposite */
+  int16_t samples[4] = {32767, 0, 16000, -16000};
+  float frames[4];
+
+  CHECK_EQ_INT(write_take(g_path, 48000, 2, 16, samples, sizeof(samples)), 0);
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+
+  CHECK_EQ_INT(wav_read_frames(&r, frames, 2), 2);
+  CHECK_EQ_DBL(frames[0], 32767.0 / 32768.0, 1e-6);
+  CHECK_EQ_DBL(frames[1], 0.0, 1e-6);
+  CHECK_EQ_DBL(frames[2], 16000.0 / 32768.0, 1e-6);
+  CHECK_EQ_DBL(frames[3], -16000.0 / 32768.0, 1e-6);
+
+  /* and the same end-of-data behaviour as the mono decoder */
+  CHECK_EQ_INT(wav_read_frames(&r, frames, 2), 0);
+  wav_read_close(&r);
+}
+
+TEST(the_per_channel_reader_does_not_clamp_float)
+{
+  wav_reader r;
+  /*
+   * 32 bit float WAV is allowed past full scale. wav_read_mono() clamps,
+   * because the analyser wants a bounded signal; wav_read_frames() must not,
+   * because measuring a take means seeing the overshoot.
+   */
+  static const unsigned char file[] = {
+      'R',  'I',  'F',  'F',  0x2C, 0x00, 0x00, 0x00, 'W',  'A',  'V',  'E',
+      'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x03, 0x00, 0x01, 0x00,
+      0x44, 0xAC, 0x00, 0x00, 0x10, 0xB1, 0x02, 0x00, 0x04, 0x00, 0x20, 0x00,
+      'd',  'a',  't',  'a',  0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0xC0, 0x3F, /* 1.5f */
+      0x00, 0x00, 0xC0, 0xBF,                                                 /* -1.5f */
+  };
+  FILE *f = fopen(g_path, "wb");
+  float frames[2];
+  float mono[2];
+
+  CHECK(f != NULL);
+  if (f == NULL)
+    return;
+  CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
+  fclose(f);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.is_float, 1);
+  CHECK_EQ_INT(wav_read_frames(&r, frames, 2), 2);
+  CHECK_EQ_DBL(frames[0], 1.5, 1e-6);
+  CHECK_EQ_DBL(frames[1], -1.5, 1e-6);
+  wav_read_close(&r);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 2), 2);
+  CHECK_EQ_DBL(mono[0], 1.0, 1e-6);
+  CHECK_EQ_DBL(mono[1], -1.0, 1e-6);
+  wav_read_close(&r);
+}
+
 TEST(reader_downmixes_channels)
 {
   wav_reader r;
@@ -402,6 +462,8 @@ int main(void)
   RUN(overflow_guard);
   RUN(discard_removes_the_file);
   RUN(reader_round_trips_the_writer);
+  RUN(reader_keeps_channels_apart_on_request);
+  RUN(the_per_channel_reader_does_not_clamp_float);
   RUN(reader_downmixes_channels);
   RUN(reader_handles_24_bit);
   RUN(reader_reads_in_several_calls);

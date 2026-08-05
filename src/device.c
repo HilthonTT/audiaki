@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "device.h"
 
+#include "jsonout.h"
 #include "log.h"
 #include "version.h"
 
@@ -233,7 +234,7 @@ size_t aud_device_period_bytes(const aud_device *dev)
   return (size_t)dev->period_frames * dev->channels * aud_format_hw_bytes(dev->format);
 }
 
-int aud_device_probe(const char *name)
+int aud_device_probe(const char *name, int json)
 {
   snd_pcm_t *pcm = NULL;
   snd_pcm_hw_params_t *hw = NULL;
@@ -259,36 +260,60 @@ int aud_device_probe(const char *name)
     return -1;
   }
 
-  printf("device:   %s\n", name);
-
-  printf("formats: ");
-  for (int f = 0; f <= SND_PCM_FORMAT_LAST; f++)
-  {
-    if (snd_pcm_hw_params_test_format(pcm, hw, (snd_pcm_format_t)f) == 0)
-      printf(" %s", snd_pcm_format_name((snd_pcm_format_t)f));
-  }
-  printf("\n");
-
   snd_pcm_hw_params_get_channels_min(hw, &cmin);
   snd_pcm_hw_params_get_channels_max(hw, &cmax);
-  printf("channels: %u..%u\n", cmin, cmax);
-
   snd_pcm_hw_params_get_rate_min(hw, &rmin, &dir);
   snd_pcm_hw_params_get_rate_max(hw, &rmax, &dir);
-  printf("rates:    %u..%u Hz\n", rmin, rmax);
-
   snd_pcm_hw_params_get_period_size_min(hw, &pmin, &dir);
   snd_pcm_hw_params_get_period_size_max(hw, &pmax, &dir);
   snd_pcm_hw_params_get_buffer_size_min(hw, &bmin);
   snd_pcm_hw_params_get_buffer_size_max(hw, &bmax);
-  printf("period:   %lu..%lu frames\n", (unsigned long)pmin, (unsigned long)pmax);
-  printf("buffer:   %lu..%lu frames\n", (unsigned long)bmin, (unsigned long)bmax);
+
+  if (json)
+  {
+    int first = 1;
+
+    fputs("{\n  \"device\": ", stdout);
+    aud_json_string(stdout, name);
+    fputs(",\n  \"formats\": [", stdout);
+    for (int f = 0; f <= SND_PCM_FORMAT_LAST; f++)
+    {
+      if (snd_pcm_hw_params_test_format(pcm, hw, (snd_pcm_format_t)f) != 0)
+        continue;
+      fputs(first ? "" : ", ", stdout);
+      aud_json_string(stdout, snd_pcm_format_name((snd_pcm_format_t)f));
+      first = 0;
+    }
+    printf("],\n  \"channels\": {\"min\": %u, \"max\": %u}", cmin, cmax);
+    printf(",\n  \"rates\": {\"min\": %u, \"max\": %u}", rmin, rmax);
+    printf(",\n  \"period_frames\": {\"min\": %lu, \"max\": %lu}", (unsigned long)pmin,
+           (unsigned long)pmax);
+    printf(",\n  \"buffer_frames\": {\"min\": %lu, \"max\": %lu}\n}\n",
+           (unsigned long)bmin, (unsigned long)bmax);
+  }
+  else
+  {
+    printf("device:   %s\n", name);
+
+    printf("formats: ");
+    for (int f = 0; f <= SND_PCM_FORMAT_LAST; f++)
+    {
+      if (snd_pcm_hw_params_test_format(pcm, hw, (snd_pcm_format_t)f) == 0)
+        printf(" %s", snd_pcm_format_name((snd_pcm_format_t)f));
+    }
+    printf("\n");
+
+    printf("channels: %u..%u\n", cmin, cmax);
+    printf("rates:    %u..%u Hz\n", rmin, rmax);
+    printf("period:   %lu..%lu frames\n", (unsigned long)pmin, (unsigned long)pmax);
+    printf("buffer:   %lu..%lu frames\n", (unsigned long)bmin, (unsigned long)bmax);
+  }
 
   snd_pcm_close(pcm);
   return 0;
 }
 
-int aud_device_list(void)
+int aud_device_list(int json)
 {
   snd_ctl_card_info_t *card_info = NULL;
   snd_pcm_info_t *pcm_info = NULL;
@@ -304,7 +329,10 @@ int aud_device_list(void)
     return -1;
   }
 
-  printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
+  if (json)
+    fputs("[", stdout);
+  else
+    printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
 
   while (card >= 0)
   {
@@ -338,8 +366,22 @@ int aud_device_list(void)
 
       snprintf(device_name, sizeof(device_name), "hw:CARD=%s,DEV=%d",
                snd_ctl_card_info_get_id(card_info), device);
-      printf("%-32s %s: %s\n", device_name, snd_ctl_card_info_get_name(card_info),
-             snd_pcm_info_get_name(pcm_info));
+
+      if (json)
+      {
+        fputs(found == 0 ? "\n  {\"device\": " : ",\n  {\"device\": ", stdout);
+        aud_json_string(stdout, device_name);
+        fputs(", \"card\": ", stdout);
+        aud_json_string(stdout, snd_ctl_card_info_get_name(card_info));
+        fputs(", \"description\": ", stdout);
+        aud_json_string(stdout, snd_pcm_info_get_name(pcm_info));
+        fputc('}', stdout);
+      }
+      else
+      {
+        printf("%-32s %s: %s\n", device_name, snd_ctl_card_info_get_name(card_info),
+               snd_pcm_info_get_name(pcm_info));
+      }
       found++;
     }
     snd_ctl_close(ctl);
@@ -349,7 +391,9 @@ int aud_device_list(void)
       break;
   }
 
-  if (found == 0)
+  if (json)
+    fputs(found > 0 ? "\n]\n" : "]\n", stdout);
+  else if (found == 0)
     aud_warn("no capture devices found");
   return 0;
 }

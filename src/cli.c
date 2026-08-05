@@ -39,6 +39,10 @@ enum
   OPT_SIZE,
   OPT_FPS,
   OPT_BARS,
+  OPT_STYLE,
+  OPT_INFO,
+  OPT_TAKE,
+  OPT_JSON,
 };
 
 static const struct option long_options[] = {
@@ -60,6 +64,10 @@ static const struct option long_options[] = {
     {"size", required_argument, NULL, OPT_SIZE},
     {"fps", required_argument, NULL, OPT_FPS},
     {"bars", required_argument, NULL, OPT_BARS},
+    {"style", required_argument, NULL, OPT_STYLE},
+    {"info", required_argument, NULL, OPT_INFO},
+    {"take", required_argument, NULL, OPT_TAKE},
+    {"json", no_argument, NULL, OPT_JSON},
     {"list", no_argument, NULL, 'l'},
     {"probe", no_argument, NULL, 'P'},
     {"help", no_argument, NULL, 'h'},
@@ -86,10 +94,13 @@ void cli_defaults(aud_options *opts)
   opts->show_meter = 1;
   opts->show_spectrum = 0;
   opts->input_path = NULL;
+  opts->take_prefix = NULL;
   opts->viz_width = AUD_VIZ_DEFAULT_WIDTH;
   opts->viz_height = AUD_VIZ_DEFAULT_HEIGHT;
   opts->viz_fps = AUD_VIZ_DEFAULT_FPS;
   opts->viz_bars = AUD_VIZ_DEFAULT_BARS;
+  opts->viz_style = AUD_VIZ_STYLE_BARS;
+  opts->json = 0;
   opts->log_level = AUD_LOG_NORMAL;
 }
 
@@ -98,11 +109,12 @@ void cli_print_usage(FILE *out)
   fprintf(out,
           "usage: " AUDIAKI_NAME " [options] <output.wav>\n"
           "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
+          "       " AUDIAKI_NAME " --info <input.wav>\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
           "\n"
-          "Record an ALSA capture device straight to a PCM WAV file, and turn a\n"
-          "recording into a spectrum visualiser video.\n"
+          "Record an ALSA capture device straight to a PCM WAV file, measure a\n"
+          "finished take, and turn one into a visualiser video.\n"
           "\n"
           "Recording options:\n"
           "  -D, --device NAME     ALSA device (default: %s, $AUDIAKI_DEVICE)\n"
@@ -113,18 +125,22 @@ void cli_print_usage(FILE *out)
           "  -t, --duration SPEC   stop after SS, MM:SS or HH:MM:SS\n"
           "  -p, --period FRAMES   period size (default: %u)\n"
           "  -n, --periods N       periods per buffer (default: %u)\n"
+          "      --take PREFIX     write the next free PREFIX-001.wav\n"
           "      --spectrum        show live spectrum bars instead of the peak bar\n"
           "      --no-meter        do not draw anything while recording\n"
           "\n"
           "Visualiser options:\n"
           "      --visualize FILE  render FILE (a WAV) to a video and exit\n"
           "  -o, --output FILE     video to write (default: input with .mp4)\n"
+          "      --style NAME      bars, scope or waveform (default: bars)\n"
           "      --size SPEC       WxH, or 480p/720p/1080p/1440p/2160p\n"
           "                        (default: %ux%u)\n"
           "      --fps N           video frame rate (default: %u)\n"
           "      --bars N          number of spectrum bars (default: %u)\n"
           "\n"
           "Common options:\n"
+          "      --info FILE       report levels and clipping for FILE and exit\n"
+          "      --json            machine readable --list, --probe and --info\n"
           "  -y, --force           overwrite the output file if it exists\n"
           "  -q, --quiet           errors only\n"
           "  -v, --verbose         report device negotiation details\n"
@@ -138,8 +154,12 @@ void cli_print_usage(FILE *out)
           "  " AUDIAKI_NAME " --spectrum take01.wav       record, watching the "
           "spectrum\n"
           "  " AUDIAKI_NAME " -t 1:30 take02.wav          record 90 seconds\n"
+          "  " AUDIAKI_NAME " --take session              record session-001.wav\n"
+          "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
+          "out?\n"
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --size 1080p\n"
+          "  " AUDIAKI_NAME " --visualize take01.wav --style waveform\n"
           "\n"
           "Rendering a video needs ffmpeg(1) on PATH. Recording does not.\n"
           "\n"
@@ -263,6 +283,23 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       break;
+    case OPT_STYLE:
+      if (aud_visualize_style_from_name(optarg, &opts->viz_style) != 0)
+      {
+        bad_value("--style", optarg, "bars, scope or waveform");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_INFO:
+      opts->command = AUD_CMD_INFO;
+      opts->input_path = optarg;
+      break;
+    case OPT_TAKE:
+      opts->take_prefix = optarg;
+      break;
+    case OPT_JSON:
+      opts->json = 1;
+      break;
     case 'l':
       opts->command = AUD_CMD_LIST;
       break;
@@ -287,6 +324,34 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       aud_info("run '" AUDIAKI_NAME " --help' for usage");
       return CLI_EXIT_USAGE;
     }
+  }
+
+  /*
+   * --json describes a report, not a recording. Silently ignoring it on a
+   * command that has nothing to serialise would let a script believe it was
+   * getting parseable output right up until it tried to parse it.
+   */
+  if (opts->json && opts->command != AUD_CMD_LIST && opts->command != AUD_CMD_PROBE &&
+      opts->command != AUD_CMD_INFO)
+  {
+    aud_error("--json only applies to --list, --probe and --info");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (opts->take_prefix != NULL && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--take only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (opts->command == AUD_CMD_INFO)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (the file comes from --info)", argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
   }
 
   if (opts->command == AUD_CMD_VISUALIZE)
@@ -340,7 +405,16 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       return CLI_EXIT_USAGE;
     }
   }
-  else if (opts->output_path == NULL)
+
+  /* --take picks the name itself, so being handed one as well is a conflict */
+  if (opts->take_prefix != NULL && opts->output_path != NULL)
+  {
+    aud_error("--take %s and the output file '%s' both name the take", opts->take_prefix,
+              opts->output_path);
+    return CLI_EXIT_USAGE;
+  }
+
+  if (opts->take_prefix == NULL && opts->output_path == NULL)
   {
     aud_error("no output file given");
     aud_info("run '" AUDIAKI_NAME " --help' for usage");

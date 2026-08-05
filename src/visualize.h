@@ -18,6 +18,27 @@
 #define AUD_VIZ_DEFAULT_BARS 64u
 
 /*
+ * What a frame shows. All three read the same take; they differ in what they
+ * make of it - the spectrum at this instant, the shape of the wave at this
+ * instant, or the shape of the whole recording with a playhead crossing it.
+ */
+typedef enum
+{
+  AUD_VIZ_STYLE_BARS = 0, /* log-spaced spectrum bars */
+  AUD_VIZ_STYLE_SCOPE,    /* an oscilloscope trace of the last few ms */
+  AUD_VIZ_STYLE_WAVEFORM, /* the whole take's envelope, swept by a playhead */
+} aud_viz_style;
+
+/* Canonical lower-case name, e.g. "waveform". "unknown" if unrecognised. */
+const char *aud_visualize_style_name(aud_viz_style style);
+
+/*
+ * Parse a style name (case insensitive) into *out. Returns 0 on success, -1
+ * when the name is not one of the three, leaving *out untouched.
+ */
+int aud_visualize_style_from_name(const char *name, aud_viz_style *out);
+
+/*
  * Note there is no overwrite flag: ffmpeg is always told to replace the output.
  * Enforcing "refuse unless --force" is the caller's job, so that the message
  * matches the one recording gives.
@@ -29,7 +50,8 @@ typedef struct
   unsigned width;
   unsigned height;
   unsigned fps;
-  unsigned bars;
+  unsigned bars; /* only meaningful for AUD_VIZ_STYLE_BARS */
+  aud_viz_style style;
 } aud_visualize_options;
 
 void aud_visualize_defaults(aud_visualize_options *opts);

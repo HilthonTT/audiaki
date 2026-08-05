@@ -60,7 +60,8 @@ OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 # Objects that do not touch libasound. Tests link against these so the suite
 # runs on machines without ALSA headers.
 PORTABLE_SRCS := src/format.c src/wav.c src/parse.c src/log.c src/fft.c \
-                 src/spectrum.c src/canvas.c
+                 src/spectrum.c src/canvas.c src/jsonout.c src/info.c \
+                 src/take.c
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 TEST_SRCS := $(sort $(wildcard tests/test_*.c))

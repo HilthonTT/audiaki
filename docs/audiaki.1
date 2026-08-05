@@ -10,6 +10,9 @@ audiaki \- record an ALSA capture device to a WAV file, and visualise it
 \fB\-\-visualize\fR \fIINPUT.WAV\fR [\fB\-o\fR \fIOUTPUT.MP4\fR]
 .br
 .B audiaki
+\fB\-\-info\fR \fIINPUT.WAV\fR
+.br
+.B audiaki
 \fB\-\-probe\fR [\fB\-D\fR \fIDEVICE\fR]
 .br
 .B audiaki
@@ -27,11 +30,16 @@ so interrupted recordings are still valid files.
 .PP
 With
 .B \-\-visualize
-it instead reads a WAV file, computes a short-time Fourier transform of it,
-rasterises the result as a row of spectrum bars and pipes the frames to
+it instead reads a WAV file, analyses it, rasterises each video frame and pipes
+them to
 .BR ffmpeg (1),
 which encodes them and muxes in the original audio. Nothing is captured and no
 sound card is needed in this mode.
+.PP
+With
+.B \-\-info
+it reads a WAV file and reports what is in it \- levels, clipping and noise
+floor \- then exits. This too needs no sound card.
 .SH OPTIONS
 .SS Recording
 .TP
@@ -68,6 +76,23 @@ overruns at the cost of latency in the meter display.
 .BR \-n ", " \-\-periods " " \fIN\fR
 Periods per buffer (default 4).
 .TP
+.BR \-\-take " " \fIPREFIX\fR
+Name the take automatically: write the first
+.RI \fIPREFIX\fR \-001.wav
+that does not already exist, then
+.BR \-002 ,
+and so on. Numbers are padded to three digits and grow beyond that if a session
+runs long, up to 9999.
+.IP
+A prefix that already carries an extension keeps it, so
+.B \-\-take session.wav
+also writes
+.IR session\-001.wav ,
+and a path works as well as a bare name. Because the chosen name is free by
+construction, nothing is ever overwritten and
+.B \-\-force
+does not apply. Naming an output file as well is an error.
+.TP
 .B \-\-spectrum
 Draw live spectrum bars instead of the peak bar. The number of bars follows the
 terminal width. Block drawing characters are used when the locale is UTF-8, and
@@ -96,6 +121,26 @@ The container is inferred from the suffix by
 .BR ffmpeg (1).
 This option also names the output when recording.
 .TP
+.BR \-\-style " " \fINAME\fR
+What each frame shows:
+.BR bars " (default), " scope " or " waveform .
+.RS
+.TP
+.B bars
+The spectrum at that instant, as log-spaced bars with peak markers.
+.TP
+.B scope
+An oscilloscope trace of the last 40 ms, drawn from the sample values
+themselves. Its colour follows level rather than frequency, because its
+horizontal axis is time.
+.TP
+.B waveform
+The envelope of the whole take, with a playhead sweeping across it and the part
+already heard picked out. The file is read once beforehand to reduce it to one
+minimum/maximum pair per column, so the cost of that pass follows the width of
+the video rather than the length of the recording.
+.RE
+.TP
 .BR \-\-size " " \fISPEC\fR
 Frame size as
 .IR WxH ,
@@ -108,8 +153,26 @@ subsamples chroma by two.
 Video frame rate, 1 to 240 (default 60).
 .TP
 .BR \-\-bars " " \fIN\fR
-Number of spectrum bars, 4 to 512 (default 64).
+Number of spectrum bars, 4 to 512 (default 64). Applies to
+.B \-\-style bars
+only.
 .SS Common
+.TP
+.BR \-\-info " " \fIFILE\fR
+Measure
+.I FILE
+and exit. Reports its format and duration, the peak and RMS level in dBFS, an
+estimated noise floor, how many samples reached full scale, and the peak, RMS
+and DC offset of each channel separately. See
+.B TAKE REPORT
+below.
+.TP
+.B \-\-json
+Write the output of
+.BR \-\-list ", " \-\-probe " or " \-\-info
+as JSON on standard output instead of aligned text. Diagnostics stay on
+standard error, so the stream is safe to pipe into a parser. Using it with any
+other command is an error.
 .TP
 .BR \-y ", " \-\-force
 Overwrite the output file if it already exists. Without this flag an existing
@@ -153,13 +216,58 @@ Under
 the bar is replaced by one column per frequency band, low frequencies on the
 left, spaced logarithmically from 40 Hz to 12 kHz. The dBFS readout, peak
 tracking and clipping warning are unchanged.
+.SH TAKE REPORT
+.PP
+.nf
+ $ audiaki \-\-info take01.wav
+ file:        take01.wav
+ format:      24 bit PCM
+ channels:    2
+ rate:        48000 Hz
+ duration:    01:12.34  (3472320 frames)
+ peak:        \-4.4 dBFS
+ rms:         \-10.7 dBFS
+ noise floor: \-68.2 dBFS
+ clipped:     0 sample(s)
+ channels:    ch 1: peak   \-4.4 dBFS  rms   \-8.7 dBFS  dc +0.00000
+              ch 2: peak  \-10.5 dBFS  rms  \-14.7 dBFS  dc \-0.00029
+.fi
+.PP
+.B peak
+is the loudest single sample in the take and
+.B rms
+its average power, both in dBFS.
+.B clipped
+counts samples that reached full scale; anything above zero means the take is
+distorted. Each channel is also measured on its own, so a clipped left channel
+cannot hide behind a quiet right one, and a per-channel
+.B dc
+much past \(+-0.001 suggests the interface has a DC bias.
+.PP
+The
+.B noise floor
+is the tenth percentile of the RMS of 50 ms windows, which in practice
+describes the room and the cable with nothing being played. Because it is a
+percentile rather than a minimum, it survives a take that never falls silent; a
+file that contains true digital silence reports \-99.0 dBFS, which is the truth
+about it.
+.PP
+A file whose data chunk claims more frames than it holds \- a recording killed
+before its header was patched \- is reported as truncated, and every figure
+describes what is actually there.
 .SH VISUALISER
-Bands are analysed with a 2048 point Hann-windowed transform and spaced
+Under
+.B \-\-style bars
+bands are analysed with a 2048 point Hann-windowed transform and spaced
 logarithmically, so an octave occupies the same width wherever it falls. Each
 band takes the strongest bin it covers, then rises quickly and falls slowly, so
 a plucked note reads as an attack rather than a flicker. Bar colour runs from
 cyan at the bass end to pink at the treble end, and the marker above each bar
 holds its recent maximum.
+.PP
+.BR scope " and " waveform
+draw the sample values rather than their spectrum, and share the same
+background and palette.
 .PP
 .BR ffmpeg (1)
 must be on
@@ -212,6 +320,35 @@ Watch the spectrum while playing, then render the take to 1080p:
 .RS
 audiaki \-\-spectrum take01.wav
 audiaki \-\-visualize take01.wav \-\-size 1080p
+.RE
+.fi
+.PP
+Track a part over several attempts, then check how the last one came out:
+.PP
+.nf
+.RS
+audiaki \-\-take session
+audiaki \-\-take session
+audiaki \-\-info session\-002.wav
+.RE
+.fi
+.PP
+Render the whole take as a waveform with a playhead:
+.PP
+.nf
+.RS
+audiaki \-\-visualize session\-002.wav \-\-style waveform
+.RE
+.fi
+.PP
+Find every take that clipped:
+.PP
+.nf
+.RS
+for f in *.wav; do
+  n=$(audiaki \-\-info "$f" \-\-json | jq .clipped_samples)
+  [ "$n" \-gt 0 ] && echo "$f: $n clipped"
+done
 .RE
 .fi
 .SH NOTES

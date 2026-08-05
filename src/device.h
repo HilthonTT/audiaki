@@ -63,10 +63,16 @@ long aud_device_read(aud_device *dev, void *buf, unsigned long frames, unsigned 
 /* Bytes one full period occupies in the capture format. */
 size_t aud_device_period_bytes(const aud_device *dev);
 
-/* Print the capabilities of `name` to stdout. Returns 0 on success. */
-int aud_device_probe(const char *name);
+/*
+ * Print the capabilities of `name` to stdout, as aligned text or as a JSON
+ * object when `json` is non-zero. Returns 0 on success.
+ */
+int aud_device_probe(const char *name, int json);
 
-/* Print every capture-capable PCM device to stdout. Returns 0 on success. */
-int aud_device_list(void);
+/*
+ * Print every capture-capable PCM device to stdout, as a table or as a JSON
+ * array when `json` is non-zero. Returns 0 on success.
+ */
+int aud_device_list(int json);
 
 #endif /* AUDIAKI_DEVICE_H */

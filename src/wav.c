@@ -380,10 +380,54 @@ fail:
 }
 
 /*
- * Decode one staged block of interleaved frames down to mono. The switch is
- * hoisted out of the frame loop, as in format.c: a render walks millions of
- * frames and the layout does not change between them.
+ * One sample, normalised to full scale. Not clamped: float WAV is allowed to
+ * exceed it, and a caller measuring a file needs to see that it did.
  */
+static double decode_sample(const wav_reader *r, const unsigned char *q)
+{
+  if (r->is_float)
+  {
+    if (r->bits == 32u)
+    {
+      float v;
+      memcpy(&v, q, sizeof(v));
+      return (double)v;
+    }
+    else
+    {
+      double v;
+      memcpy(&v, q, sizeof(v));
+      return v;
+    }
+  }
+
+  switch (r->bits)
+  {
+  case 8u:
+    /* 8 bit WAV is unsigned with 128 as silence, unlike every other depth */
+    return ((double)q[0] - 128.0) / 128.0;
+  case 16u:
+  {
+    int16_t v;
+    memcpy(&v, q, sizeof(v));
+    return (double)v / 32768.0;
+  }
+  case 24u:
+  {
+    uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
+    int32_t v = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+    return (double)v / 8388608.0;
+  }
+  default:
+  {
+    int32_t v;
+    memcpy(&v, q, sizeof(v));
+    return (double)v / 2147483648.0;
+  }
+  }
+}
+
+/* Decode one staged block of interleaved frames down to mono. */
 static void decode_mono(const wav_reader *r, float *dst, const unsigned char *src,
                         size_t frames)
 {
@@ -396,55 +440,7 @@ static void decode_mono(const wav_reader *r, float *dst, const unsigned char *sr
     double sum = 0.0;
 
     for (unsigned c = 0; c < ch; c++)
-    {
-      const unsigned char *q = p + (size_t)c * width;
-
-      if (r->is_float)
-      {
-        if (r->bits == 32u)
-        {
-          float v;
-          memcpy(&v, q, sizeof(v));
-          sum += (double)v;
-        }
-        else
-        {
-          double v;
-          memcpy(&v, q, sizeof(v));
-          sum += v;
-        }
-        continue;
-      }
-
-      switch (r->bits)
-      {
-      case 8u:
-        /* 8 bit WAV is unsigned with 128 as silence, unlike every other depth */
-        sum += ((double)q[0] - 128.0) / 128.0;
-        break;
-      case 16u:
-      {
-        int16_t v;
-        memcpy(&v, q, sizeof(v));
-        sum += (double)v / 32768.0;
-        break;
-      }
-      case 24u:
-      {
-        uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
-        int32_t v = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-        sum += (double)v / 8388608.0;
-        break;
-      }
-      default:
-      {
-        int32_t v;
-        memcpy(&v, q, sizeof(v));
-        sum += (double)v / 2147483648.0;
-        break;
-      }
-      }
-    }
+      sum += decode_sample(r, p + (size_t)c * width);
 
     /* float WAV is allowed to exceed full scale; the analyser expects it not to */
     sum /= ch;
@@ -456,11 +452,31 @@ static void decode_mono(const wav_reader *r, float *dst, const unsigned char *sr
   }
 }
 
-long wav_read_mono(wav_reader *r, float *mono, size_t frames)
+/* The same block, keeping the channels apart and the values unclamped. */
+static void decode_interleaved(const wav_reader *r, float *dst, const unsigned char *src,
+                               size_t frames)
+{
+  unsigned ch = r->channels;
+  unsigned width = r->bits / 8u;
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    const unsigned char *p = src + (size_t)f * r->block;
+
+    for (unsigned c = 0; c < ch; c++)
+      dst[(size_t)f * ch + c] = (float)decode_sample(r, p + (size_t)c * width);
+  }
+}
+
+/*
+ * The read loop both public decoders share: stage raw frames, hand each block
+ * to `mono` or the per-channel decoder, stop at the end of the data chunk.
+ */
+static long read_decoded(wav_reader *r, float *dst, size_t frames, int mono)
 {
   size_t done = 0;
 
-  if (r == NULL || r->file == NULL || mono == NULL)
+  if (r == NULL || r->file == NULL || dst == NULL)
   {
     errno = EINVAL;
     return -1;
@@ -497,12 +513,25 @@ long wav_read_mono(wav_reader *r, float *mono, size_t frames)
       break;
     }
 
-    decode_mono(r, mono + done, r->raw, got);
+    if (mono)
+      decode_mono(r, dst + done, r->raw, got);
+    else
+      decode_interleaved(r, dst + done * r->channels, r->raw, got);
     done += got;
     r->position += got;
   }
 
   return (long)done;
+}
+
+long wav_read_mono(wav_reader *r, float *mono, size_t frames)
+{
+  return read_decoded(r, mono, frames, 1);
+}
+
+long wav_read_frames(wav_reader *r, float *interleaved, size_t frames)
+{
+  return read_decoded(r, interleaved, frames, 0);
 }
 
 double wav_read_duration(const wav_reader *r)

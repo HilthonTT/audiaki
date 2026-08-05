@@ -102,6 +102,17 @@ int wav_read_open(wav_reader *r, const char *path);
  */
 long wav_read_mono(wav_reader *r, float *mono, size_t frames);
 
+/*
+ * Decode up to `frames` frames into `interleaved`, keeping the channels apart
+ * and scaling to full scale. Unlike wav_read_mono() the values are not clamped
+ * to [-1.0, 1.0], because float WAV is allowed to exceed full scale and a
+ * caller measuring a take needs to see that it did.
+ *
+ * `interleaved` must hold frames * r->channels floats. Returns the number of
+ * frames decoded, 0 at end of data, or -1 on a read error with r->error set.
+ */
+long wav_read_frames(wav_reader *r, float *interleaved, size_t frames);
+
 /* Seconds of audio in the file. */
 double wav_read_duration(const wav_reader *r);
 

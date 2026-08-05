@@ -10,6 +10,7 @@
 
 #include "format.h"
 #include "log.h"
+#include "visualize.h"
 
 #include <stdio.h>
 
@@ -22,6 +23,7 @@ typedef enum
   AUD_CMD_PROBE,
   AUD_CMD_LIST,
   AUD_CMD_VISUALIZE,
+  AUD_CMD_INFO,
   AUD_CMD_HELP,
   AUD_CMD_VERSION,
 } aud_command;
@@ -31,7 +33,8 @@ typedef struct
   aud_command command;
   const char *device;
   const char *output_path;
-  const char *input_path; /* --visualize source WAV */
+  const char *input_path;  /* --visualize and --info source WAV */
+  const char *take_prefix; /* --take; output_path is derived from it */
   unsigned rate;
   unsigned channels;
   unsigned period_frames;
@@ -45,6 +48,8 @@ typedef struct
   unsigned viz_height;
   unsigned viz_fps;
   unsigned viz_bars;
+  aud_viz_style viz_style;
+  int json; /* machine readable output for --list, --probe and --info */
   aud_log_level log_level;
 } aud_options;
 

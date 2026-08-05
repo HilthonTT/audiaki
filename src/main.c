@@ -10,9 +10,11 @@
  */
 #include "cli.h"
 #include "device.h"
+#include "info.h"
 #include "log.h"
 #include "recorder.h"
 #include "signals.h"
+#include "take.h"
 #include "visualize.h"
 
 #include <stdio.h>
@@ -25,16 +27,30 @@ static int run_record(const aud_options *opts)
   aud_device_config cfg;
   aud_device dev;
   aud_recorder_options rec_opts;
+  char take_path[4096];
+  const char *output = opts->output_path;
   int rc;
 
+  if (opts->take_prefix != NULL)
+  {
+    if (aud_take_next(take_path, sizeof(take_path), opts->take_prefix) != 0)
+    {
+      aud_error("cannot pick a take name from '%s'", opts->take_prefix);
+      aud_info("the prefix may be too long, or the first %u takes may all exist",
+               AUD_TAKE_MAX_NUMBER);
+      return EXIT_FAILURE;
+    }
+    output = take_path;
+    aud_info("recording %s", output);
+  }
   /*
    * Fail before claiming the device, so a mistyped filename does not leave the
    * user staring at device warnings. wav_open() still does the authoritative,
    * race-free check when it creates the file.
    */
-  if (!opts->overwrite && access(opts->output_path, F_OK) == 0)
+  else if (!opts->overwrite && access(output, F_OK) == 0)
   {
-    aud_error("%s already exists (pass --force to overwrite)", opts->output_path);
+    aud_error("%s already exists (pass --force to overwrite)", output);
     return EXIT_FAILURE;
   }
 
@@ -55,9 +71,10 @@ static int run_record(const aud_options *opts)
   if (aud_device_open_capture(&dev, &cfg) != 0)
     return EXIT_FAILURE;
 
-  rec_opts.output_path = opts->output_path;
+  rec_opts.output_path = output;
   rec_opts.duration = opts->duration;
-  rec_opts.overwrite = opts->overwrite;
+  /* a --take name is free by construction, so it never needs clobbering */
+  rec_opts.overwrite = opts->take_prefix != NULL ? 0 : opts->overwrite;
   rec_opts.show_meter = opts->show_meter;
   rec_opts.show_spectrum = opts->show_spectrum;
 
@@ -103,6 +120,7 @@ static int run_visualize(const aud_options *opts)
   viz.height = opts->viz_height;
   viz.fps = opts->viz_fps;
   viz.bars = opts->viz_bars;
+  viz.style = opts->viz_style;
 
   if (viz.output_path == NULL)
   {
@@ -137,6 +155,21 @@ static int run_visualize(const aud_options *opts)
   return aud_visualize_render(&viz) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+static int run_info(const aud_options *opts)
+{
+  aud_info_report report;
+
+  if (aud_info_analyse(opts->input_path, &report) != 0)
+    return EXIT_FAILURE;
+
+  if (opts->json)
+    aud_info_print_json(stdout, opts->input_path, &report);
+  else
+    aud_info_print(stdout, opts->input_path, &report);
+
+  return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[])
 {
   aud_options opts;
@@ -156,11 +189,13 @@ int main(int argc, char *argv[])
     cli_print_version(stdout);
     return EXIT_SUCCESS;
   case AUD_CMD_LIST:
-    return aud_device_list() == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return aud_device_list(opts.json) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   case AUD_CMD_PROBE:
-    return aud_device_probe(opts.device) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+    return aud_device_probe(opts.device, opts.json) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   case AUD_CMD_VISUALIZE:
     return run_visualize(&opts);
+  case AUD_CMD_INFO:
+    return run_info(&opts);
   case AUD_CMD_RECORD:
   default:
     return run_record(&opts);
