@@ -84,30 +84,6 @@ static int run_record(const aud_options *opts)
   return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
-/*
- * Default output for --visualize: the input with its extension replaced by
- * .mp4. Returns 0 on success, -1 when the name would not fit in `out`.
- */
-static int derive_video_path(const char *input, char *out, size_t size)
-{
-  const char *dot = strrchr(input, '.');
-  const char *slash = strrchr(input, '/');
-  size_t stem;
-
-  /* a dot in a directory name is not an extension */
-  if (dot == NULL || (slash != NULL && dot < slash))
-    stem = strlen(input);
-  else
-    stem = (size_t)(dot - input);
-
-  if (stem + sizeof(".mp4") > size)
-    return -1;
-
-  memcpy(out, input, stem);
-  memcpy(out + stem, ".mp4", sizeof(".mp4"));
-  return 0;
-}
-
 static int run_visualize(const aud_options *opts)
 {
   aud_visualize_options viz;
@@ -122,9 +98,10 @@ static int run_visualize(const aud_options *opts)
   viz.bars = opts->viz_bars;
   viz.style = opts->viz_style;
 
+  /* default output: the input with its extension replaced by .mp4 */
   if (viz.output_path == NULL)
   {
-    if (derive_video_path(opts->input_path, derived, sizeof(derived)) != 0)
+    if (aud_take_with_extension(derived, sizeof(derived), opts->input_path, ".mp4") != 0)
     {
       aud_error("input path is too long to derive an output name from");
       aud_info("pass the video name with -o");

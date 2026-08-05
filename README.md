@@ -159,6 +159,8 @@ audiaki-gui                          # open the window on the default device
 audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
 audiaki-gui -o session               # name takes session-001.wav and up
 audiaki-gui -s waterfall             # start on a particular visualiser
+audiaki-gui -V                       # also render an MP4 of each take
+audiaki-gui -V --video-size 1080p    # ...at a particular size
 audiaki-gui -M                       # come up already monitoring
 ```
 
@@ -171,6 +173,7 @@ not mean starting a take you are going to throw away.
 | **Record** | Starts the next numbered take |
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
 | **Stop** | Patches the WAV header and closes the take |
+| **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Monitor** | Plays the input back through the default output |
 | Volume slider | Monitoring level, from silent to +6 dB |
 | Device dropdown | Switches capture device, `default` plus every capture PCM |
@@ -190,6 +193,40 @@ rather than leaving the window with no audio.
 
 Takes are always numbered from the prefix, so there is no overwrite prompt and
 no `--force` to get wrong: pressing record cannot destroy an earlier take.
+
+### Recording video
+
+**Video** off is audio only — `take-003.wav` and nothing else. Video on writes
+that same WAV and then `take-003.mp4` alongside it, showing whichever
+visualiser was selected, with the take's own audio muxed in. It needs `ffmpeg`
+on `PATH`; without it the WAV is still written and the window says why the
+video was not.
+
+The video is rendered **after** the take stops, not captured live off the
+screen. Recording is the job that must not miss a deadline, and grabbing the
+framebuffer sixty times a second on the same machine that is holding a capture
+stream open is how takes end up with xruns in them. Rendering afterwards costs
+the wait, but it is frame-accurate, independent of the window's size and
+refresh rate, and cannot drop a frame.
+
+While it runs, **Stop** becomes **Cancel** and the status line shows progress.
+Cancelling removes the partial video and keeps the WAV. On this machine a
+4-second take renders in about 5 seconds at 720p60 — roughly real time, so
+budget about as long as the take itself.
+
+The `.mp4` only appears once it is finished. An MP4 is not playable until its
+final index is written, so while the render runs the frames go to a hidden
+`.take-003.partial.mp4` and the real name is created by a rename at the end.
+If the render is cancelled, fails, or the app is killed, you are left with the
+take and no video, rather than a file that looks like a video and will not
+open.
+
+`--video-size` takes `WxH` or `720p`/`1080p`/`1440p`/`2160p`, and `--video-fps`
+the frame rate; the defaults are 1280x720 at 60.
+
+The CLI's `--visualize` renders video too, from a WAV you already have. It has
+its own three styles and does not need a display, so it is the one to use on a
+headless box or in a script.
 
 **Monitoring feeds your input back to your speakers**, which will howl if you
 are recording a microphone in the same room. It starts off for that reason.
@@ -433,6 +470,9 @@ depends on it, which is what keeps the CLI buildable with the submodule absent.
   business, not audiaki's.
 - The desktop app records to numbered takes in the working directory. There is
   no file dialog, and no playback of a finished take.
+- Video is rendered after the take, not captured live, so recording a long take
+  with video on means waiting roughly its own length again before the next one.
+  Cancelling is always available, and the audio is safe on disk regardless.
 - Monitoring needs an output that accepts the capture rate directly. audiaki
   does not resample, so it declines to monitor rather than play back at the
   wrong pitch.

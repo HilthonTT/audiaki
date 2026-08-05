@@ -44,4 +44,16 @@ int aud_take_path(char *dst, size_t size, const char *prefix, unsigned number);
  */
 int aud_take_next(char *dst, size_t size, const char *prefix);
 
+/*
+ * Write `path` into `dst` with its extension replaced by `ext`, which includes
+ * the dot: "takes/session-003.wav" and ".mp4" give "takes/session-003.mp4".
+ *
+ * A dot inside a directory name is not an extension, so "a.b/take" becomes
+ * "a.b/take.mp4" rather than "a.mp4". A path with no extension gains one.
+ *
+ * Returns 0 on success, or -1 with dst untouched when the result would not fit
+ * in `size` or the arguments are unusable.
+ */
+int aud_take_with_extension(char *dst, size_t size, const char *path, const char *ext);
+
 #endif /* AUDIAKI_TAKE_H */

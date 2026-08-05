@@ -73,7 +73,11 @@ TEST(a_name_that_does_not_fit_is_refused_not_truncated)
 
   /* "session-001.wav" is 15 bytes plus a terminator */
   CHECK_EQ_INT(aud_take_path(path, 16, "session", 1), 0);
+
+  /* and a refusal must leave dst alone rather than half a filename in it */
+  snprintf(path, sizeof(path), "guard");
   CHECK_EQ_INT(aud_take_path(path, 15, "session", 1), -1);
+  CHECK_EQ_STR(path, "guard");
 }
 
 TEST(next_skips_the_takes_that_already_exist)
@@ -101,6 +105,63 @@ TEST(next_skips_the_takes_that_already_exist)
   remove(expected);
 }
 
+/*
+ * Deriving a video name from a take name. Both the CLI's --visualize default
+ * and the desktop app's video capture go through this, so the two cannot
+ * disagree about what take-003.wav's video is called.
+ */
+TEST(an_extension_is_swapped_for_the_new_one)
+{
+  char out[64];
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "take-003.wav", ".mp4"), 0);
+  CHECK_EQ_STR(out, "take-003.mp4");
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "session.WAV", ".mkv"), 0);
+  CHECK_EQ_STR(out, "session.mkv");
+}
+
+TEST(a_path_without_an_extension_gains_one)
+{
+  char out[64];
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "take", ".mp4"), 0);
+  CHECK_EQ_STR(out, "take.mp4");
+}
+
+TEST(a_dot_in_a_directory_is_not_an_extension)
+{
+  char out[64];
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "my.takes/session", ".mp4"), 0);
+  CHECK_EQ_STR(out, "my.takes/session.mp4");
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "my.takes/a.wav", ".mp4"), 0);
+  CHECK_EQ_STR(out, "my.takes/a.mp4");
+}
+
+TEST(a_hidden_file_keeps_its_leading_dot)
+{
+  char out[64];
+
+  /* ".wav" is a hidden file called .wav, not an empty name with an extension */
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), ".wav", ".mp4"), 0);
+  CHECK_EQ_STR(out, ".wav.mp4");
+}
+
+TEST(an_extension_swap_that_does_not_fit_is_refused)
+{
+  char out[8] = "guard";
+
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "a-long-take.wav", ".mp4"), -1);
+  CHECK_EQ_STR(out, "guard");
+
+  CHECK_EQ_INT(aud_take_with_extension(NULL, 16, "take.wav", ".mp4"), -1);
+  CHECK_EQ_INT(aud_take_with_extension(out, 0, "take.wav", ".mp4"), -1);
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), NULL, ".mp4"), -1);
+  CHECK_EQ_INT(aud_take_with_extension(out, sizeof(out), "take.wav", NULL), -1);
+}
+
 int main(void)
 {
   snprintf(g_prefix, sizeof(g_prefix), "audiaki-take-%ld", (long)getpid());
@@ -111,6 +172,11 @@ int main(void)
   RUN(unusable_prefixes_are_refused);
   RUN(a_name_that_does_not_fit_is_refused_not_truncated);
   RUN(next_skips_the_takes_that_already_exist);
+  RUN(an_extension_is_swapped_for_the_new_one);
+  RUN(a_path_without_an_extension_gains_one);
+  RUN(a_dot_in_a_directory_is_not_an_extension);
+  RUN(a_hidden_file_keeps_its_leading_dot);
+  RUN(an_extension_swap_that_does_not_fit_is_refused);
 
   return TEST_RESULT();
 }

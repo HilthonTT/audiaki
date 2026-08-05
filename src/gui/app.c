@@ -9,12 +9,14 @@
  * only going to throw away.
  */
 #include "engine.h"
+#include "render.h"
 #include "ui.h"
 #include "viz.h"
 
 #include "device.h"
 #include "format.h"
 #include "log.h"
+#include "parse.h"
 #include "take.h"
 #include "version.h"
 
@@ -25,7 +27,8 @@
 
 #define APP_WIDTH 1100
 #define APP_HEIGHT 680
-#define APP_MIN_WIDTH 760
+/* wide enough for the transport, the video and monitor controls and the slider */
+#define APP_MIN_WIDTH 900
 #define APP_MIN_HEIGHT 460
 
 #define APP_PAD 18.0f
@@ -41,6 +44,13 @@
 #define APP_PEAK_FALL 0.55f /* units of full scale per second, once falling */
 
 #define APP_DEFAULT_PREFIX "take"
+
+/*
+ * Seconds of each displayed frame given over to encoding. Generous enough to
+ * render several times faster than real time, small enough that the window
+ * still redraws while it happens.
+ */
+#define APP_RENDER_BUDGET 0.012
 
 /*
  * Hardware devices found by ALSA, plus the "default" entry the app prepends.
@@ -81,6 +91,17 @@ typedef struct
   const char *style_labels[AUD_VIZ_MODE_COUNT];
   int style_selected;
 
+  /*
+   * Video capture. The take is always written as a WAV; `want_video` decides
+   * whether stopping also renders an MP4 of the visualiser from it.
+   */
+  int want_video;
+  unsigned video_width;
+  unsigned video_height;
+  unsigned video_fps;
+  aud_render *render;                     /* non-NULL while a video is being written */
+  char render_note[AUD_ENGINE_ERROR_MAX]; /* what happened to the last one */
+
   float peak_hold;
   float peak_hold_left; /* seconds the marker still has before it decays */
   float monitor_gain;
@@ -101,6 +122,9 @@ static void usage(FILE *out, const app *a)
           "  -c, --channels N     channel count (default: %u)\n"
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
           "  -s, --style NAME     visualiser style (default: %s)\n"
+          "  -V, --video          also render an MP4 of the visualiser\n"
+          "      --video-size WxH video size (default: %ux%u, or 720p/1080p/...)\n"
+          "      --video-fps N    video frame rate (default: %u)\n"
           "  -M, --monitor        start with playback monitoring on\n"
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
@@ -110,9 +134,13 @@ static void usage(FILE *out, const app *a)
           "Takes are numbered from the prefix, so recording never overwrites\n"
           "an existing file and there is no --force to get wrong.\n"
           "\n"
+          "Video is rendered from the finished take when recording stops, so it\n"
+          "needs ffmpeg on PATH. The audio WAV is written either way.\n"
+          "\n"
           "keys: space record or pause, S stop, M monitor, V style, F fullscreen\n",
           a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
-          aud_viz_mode_name((aud_viz_mode)a->style_selected));
+          aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
+          a->video_height, a->video_fps);
 }
 
 /* Returns 0 to carry on, or a process exit code to stop with. */
@@ -136,6 +164,11 @@ static int parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "-M") == 0 || strcmp(arg, "--monitor") == 0)
     {
       a->start_monitor = 1;
+      continue;
+    }
+    if (strcmp(arg, "-V") == 0 || strcmp(arg, "--video") == 0)
+    {
+      a->want_video = 1;
       continue;
     }
 
@@ -166,6 +199,24 @@ static int parse_args(app *a, int argc, char **argv)
         return 2;
       }
       a->style_selected = (int)mode;
+    }
+    else if (strcmp(arg, "--video-size") == 0)
+    {
+      if (parse_size(value, AUD_RENDER_MIN_SIZE, AUD_RENDER_MAX_SIZE, &a->video_width,
+                     &a->video_height) != 0)
+      {
+        aud_error("bad video size '%s'", value);
+        aud_info("give it as WxH, or as 720p, 1080p, 1440p or 2160p");
+        return 2;
+      }
+    }
+    else if (strcmp(arg, "--video-fps") == 0)
+    {
+      if (parse_uint(value, 1u, 240u, &a->video_fps) != 0)
+      {
+        aud_error("bad video frame rate '%s' (1 to 240)", value);
+        return 2;
+      }
     }
     else
     {
@@ -366,7 +417,91 @@ static void app_begin_take(app *a)
   if (aud_take_next(path, sizeof(path), a->prefix) != 0)
     return;
 
+  a->render_note[0] = '\0';
   aud_engine_start(a->engine, path, 0);
+}
+
+/*
+ * Stop the take, and start rendering its video if that was asked for. The WAV
+ * has to be closed first: ffmpeg opens it to read the audio, and a header that
+ * has not been patched yet describes a file of zero length.
+ */
+static void app_stop_take(app *a, const aud_engine_status *st)
+{
+  aud_render_options opts;
+  char video[AUD_RENDER_PATH_MAX];
+  char take[AUD_ENGINE_PATH_MAX];
+
+  snprintf(take, sizeof(take), "%s", st->path);
+
+  if (aud_engine_stop(a->engine) != 0)
+    return; /* the failure is already in the status line */
+
+  a->render_note[0] = '\0';
+
+  if (!a->want_video || take[0] == '\0' || a->render != NULL)
+    return;
+
+  if (aud_take_with_extension(video, sizeof(video), take, ".mp4") != 0)
+  {
+    snprintf(a->render_note, sizeof(a->render_note),
+             "cannot work out a video name for that take");
+    return;
+  }
+
+  aud_render_defaults(&opts);
+  opts.wav_path = take;
+  opts.video_path = video;
+  opts.mode = (aud_viz_mode)a->style_selected;
+  opts.width = a->video_width;
+  opts.height = a->video_height;
+  opts.fps = a->video_fps;
+
+  a->render = aud_render_start(&opts);
+  if (a->render == NULL)
+    snprintf(a->render_note, sizeof(a->render_note),
+             "could not start the video render - is ffmpeg installed?");
+}
+
+/* Advance an in-flight render, and report how it went once it ends. */
+static void app_pump_render(app *a)
+{
+  int state;
+
+  if (a->render == NULL)
+    return;
+
+  state = aud_render_step(a->render, APP_RENDER_BUDGET);
+  if (state == 0)
+    return;
+
+  if (state < 0)
+  {
+    aud_render_finish(a->render, 1);
+    snprintf(a->render_note, sizeof(a->render_note), "the video render failed");
+  }
+  else
+  {
+    char name[AUD_RENDER_PATH_MAX];
+
+    snprintf(name, sizeof(name), "%s", aud_render_output(a->render));
+    if (aud_render_finish(a->render, 0) == 0)
+      snprintf(a->render_note, sizeof(a->render_note), "wrote %.200s", name);
+    else
+      snprintf(a->render_note, sizeof(a->render_note), "the video render failed");
+  }
+
+  a->render = NULL;
+}
+
+static void app_cancel_render(app *a)
+{
+  if (a->render == NULL)
+    return;
+
+  aud_render_finish(a->render, 1);
+  a->render = NULL;
+  snprintf(a->render_note, sizeof(a->render_note), "video render cancelled");
 }
 
 static void app_toggle_record(app *a, const aud_engine_status *st)
@@ -374,7 +509,8 @@ static void app_toggle_record(app *a, const aud_engine_status *st)
   switch (st->state)
   {
   case AUD_ENGINE_IDLE:
-    app_begin_take(a);
+    if (a->render == NULL) /* the renderer has the drawing thread */
+      app_begin_take(a);
     return;
   case AUD_ENGINE_RECORDING:
     aud_engine_pause(a->engine);
@@ -458,18 +594,21 @@ static const char *state_label(aud_engine_state state)
 
 static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
 {
-  float bw = 132.0f;
+  float bw = 120.0f;
   float gap = 10.0f;
   Rectangle rec = {r.x, r.y, bw, r.height};
   Rectangle pause = {r.x + bw + gap, r.y, bw, r.height};
   Rectangle stop = {r.x + 2.0f * (bw + gap), r.y, bw, r.height};
   int recording = st->state == AUD_ENGINE_RECORDING;
   int paused = st->state == AUD_ENGINE_PAUSED;
+  int rendering = a->render != NULL;
   /* an open menu covers these, so nothing under it should take a click */
   int live = (recording || paused) && !a->device_menu_open;
   int usable = st->state != AUD_ENGINE_FAILED && !a->device_menu_open;
 
-  if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD, usable && !live))
+  /* a render holds the drawing thread, so no new take can start under it */
+  if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD,
+                    usable && !live && !rendering))
     app_begin_take(a);
 
   if (aud_ui_button(pause, paused ? "Resume" : "Pause", AUD_UI_WARN, live))
@@ -480,19 +619,42 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
       aud_engine_pause(a->engine);
   }
 
-  if (aud_ui_button(stop, "Stop", AUD_UI_ACCENT, live))
-    aud_engine_stop(a->engine);
-
-  /* monitoring sits at the right hand end, away from the transport */
+  /*
+   * The same slot stops the take and, once the take is stopped and its video
+   * is being written, abandons that. Both are "I have had enough of this".
+   */
+  if (rendering)
   {
-    float slider_w = 150.0f;
-    float toggle_w = 128.0f;
+    if (aud_ui_button(stop, "Cancel", AUD_UI_WARN, !a->device_menu_open))
+      app_cancel_render(a);
+  }
+  else if (aud_ui_button(stop, "Stop", AUD_UI_ACCENT, live))
+  {
+    app_stop_take(a, st);
+  }
+
+  /* the capture options sit at the right hand end, away from the transport */
+  {
+    float slider_w = 140.0f;
+    float monitor_w = 120.0f;
+    float video_w = 100.0f;
     Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 26.0f) / 2.0f,
                         slider_w, 26.0f};
-    Rectangle toggle = {slider.x - gap - toggle_w, r.y, toggle_w, r.height};
+    Rectangle monitor = {slider.x - gap - monitor_w, r.y, monitor_w, r.height};
+    Rectangle video = {monitor.x - gap - video_w, r.y, video_w, r.height};
     int wanted = aud_engine_monitor_wanted(a->engine);
 
-    if (aud_ui_toggle(toggle, st->monitoring ? "Monitor on" : "Monitor", wanted,
+    /*
+     * Only settable between takes: the video is rendered from the finished
+     * WAV, so changing your mind halfway through would be answered either by
+     * rendering the whole take or none of it, and neither is what the click
+     * meant.
+     */
+    if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT,
+                      usable && !live && !rendering))
+      a->want_video = !a->want_video;
+
+    if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted,
                       AUD_UI_OK, usable))
       aud_engine_set_monitor(a->engine, !wanted);
 
@@ -534,12 +696,44 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
   }
 
   /*
-   * One line on the right for whatever most needs saying: a failure first,
-   * then clipping, then the file being written.
+   * One line on the right for whatever most needs saying: the video being
+   * rendered while that is happening, then a failure, then clipping, then the
+   * file being written.
    */
+  if (a->render != NULL)
+  {
+    const char *path = aud_render_output(a->render);
+    const char *slash = strrchr(path, '/');
+    float pct = (float)aud_render_progress(a->render) * 100.0f;
+    Rectangle bar;
+
+    snprintf(right, sizeof(right), "rendering %.120s   %.0f%%",
+             slash != NULL ? slash + 1 : path, pct);
+    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_ACCENT, right);
+
+    bar.width = 160.0f;
+    bar.height = 4.0f;
+    bar.x = r.x + r.width - bar.width;
+    bar.y = r.y + 30.0f;
+    DrawRectangleRec(bar, AUD_UI_EDGE);
+    DrawRectangleRec((Rectangle){bar.x, bar.y, bar.width * (pct / 100.0f), bar.height},
+                     AUD_UI_ACCENT);
+    return;
+  }
+
   if (st->error[0] != '\0')
   {
     aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_RECORD, st->error);
+    return;
+  }
+
+  /* how the last render went, until the next take replaces it */
+  if (a->render_note[0] != '\0')
+  {
+    int good = strncmp(a->render_note, "wrote", 5) == 0;
+
+    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, good ? AUD_UI_OK : AUD_UI_WARN,
+                      a->render_note);
     return;
   }
 
@@ -690,8 +884,13 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (IsKeyPressed(KEY_SPACE))
     app_toggle_record(a, st);
 
-  if (IsKeyPressed(KEY_S) && st->state != AUD_ENGINE_IDLE)
-    aud_engine_stop(a->engine);
+  if (IsKeyPressed(KEY_S))
+  {
+    if (a->render != NULL)
+      app_cancel_render(a);
+    else if (st->state != AUD_ENGINE_IDLE)
+      app_stop_take(a, st);
+  }
 
   if (IsKeyPressed(KEY_M))
     aud_engine_set_monitor(a->engine, !aud_engine_monitor_wanted(a->engine));
@@ -711,6 +910,9 @@ int main(int argc, char *argv[])
   aud_engine_config_defaults(&a.cfg);
   snprintf(a.prefix, sizeof(a.prefix), "%s", APP_DEFAULT_PREFIX);
   a.monitor_gain = 1.0f;
+  a.video_width = AUD_RENDER_DEFAULT_WIDTH;
+  a.video_height = AUD_RENDER_DEFAULT_HEIGHT;
+  a.video_fps = AUD_RENDER_DEFAULT_FPS;
 
   for (int i = 0; i < AUD_VIZ_MODE_COUNT; i++)
     a.style_labels[i] = aud_viz_mode_name((aud_viz_mode)i);
@@ -759,12 +961,22 @@ int main(int argc, char *argv[])
     app_pump_audio(&a);
     app_track_peak(&a, (float)st.peak, GetFrameTime());
 
+    /*
+     * Before BeginDrawing: the renderer has its own render target to bind, and
+     * doing that inside the window's pass would leave the wrong one current.
+     */
+    app_pump_render(&a);
+
     BeginDrawing();
     draw_frame(&a, &st);
     EndDrawing();
   }
 
-  /* finalises the take: the WAV header still needs patching */
+  /*
+   * A half-written video is not worth waiting for on the way out, but a
+   * half-written take is: closing the engine patches the WAV header.
+   */
+  app_cancel_render(&a);
   app_close_engine(&a);
   CloseWindow();
   return EXIT_SUCCESS;

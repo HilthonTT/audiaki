@@ -31,6 +31,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   glowing cap, after [musializer](https://github.com/tsoding/musializer). It
   reuses the same `spectrum` analyser as the terminal meter and the video
   renderer.
+- Video capture in the desktop app: a **Video** toggle, or `-V, --video`, that
+  renders an MP4 of the visualiser alongside the take's WAV. It is rendered
+  from the finished take rather than captured live off the screen, so it cannot
+  cost the recording an xrun and is frame-accurate regardless of the window's
+  size or refresh rate; progress is shown in the status line and **Stop**
+  becomes **Cancel** while it runs. `--video-size` and `--video-fps` set the
+  output, defaulting to 1280x720 at 60. Needs `ffmpeg` on `PATH`; without it
+  the WAV is still written and the window says why the video was not.
+- `aud_take_with_extension()` derives a video name from a take name. The CLI's
+  `--visualize` default output now goes through it too, so the two cannot
+  disagree about what `take-003.wav`'s video is called.
 - Five live visualiser styles in the desktop app - `bars`, `mirror`, `radial`,
   `scope` and `waterfall` - switchable from a strip on the visualiser, with the
   `V` key, or up front with `-s, --style`. `scope` draws raw samples, triggered
@@ -121,6 +132,17 @@ compatible with 0.1.0 except for the default device, noted below.
 
 ### Fixed
 
+- The desktop app's video capture no longer creates the `.mp4` until it is
+  finished. An MP4 is only playable once its moov atom is written, which ffmpeg
+  does as the stream ends, so writing straight to the final name put a file on
+  disk the moment recording stopped that looked like a finished take and opened
+  as "no playable streams" for as long as the render ran - and stayed that way
+  for good if the render was cancelled or interrupted. Frames now go to a
+  hidden `.NAME.partial.mp4` that is renamed into place only on success.
+- `aud_take_path()` no longer leaves a truncated filename in the caller's
+  buffer when the name does not fit. It documented "dst untouched" but wrote
+  through `snprintf` before checking the length, so a caller that tested the
+  result second would have acted on half a name.
 - Odd-sized payloads (24-bit mono) now get the RIFF pad byte required by the
   specification.
 - Numeric options reject trailing garbage and negative values instead of

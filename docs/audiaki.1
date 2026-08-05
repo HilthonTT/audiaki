@@ -323,6 +323,21 @@ Visualiser style to start on:
 Defaults to
 .BR bars .
 .TP
+.B \-V, \-\-video
+Render an MP4 of the visualiser alongside each take, as if the
+.B Video
+control were already on.
+.TP
+.B \-\-video\-size SPEC
+Video size as
+.IR WxH ,
+or
+.BR 480p ", " 720p ", " 1080p ", " 1440p " or " 2160p .
+Defaults to 1280x720.
+.TP
+.B \-\-video\-fps N
+Video frame rate, 1 to 240. Defaults to 60.
+.TP
 .B \-M, \-\-monitor
 Start with playback monitoring already on.
 .PP
@@ -358,6 +373,41 @@ into the same WAV. Stopping patches the header and closes it.
 Takes are always numbered from the prefix, so there is no
 .B \-\-force
 and pressing record cannot overwrite an earlier take.
+.PP
+With the
+.B Video
+control off a take is audio only. With it on, the same WAV is written and an
+MP4 of the visualiser is rendered beside it, carrying the take's own audio.
+This needs
+.BR ffmpeg (1)
+on
+.BR PATH ;
+without it the WAV is still written and the window reports why the video was
+not.
+.PP
+The video is rendered from the finished take when recording stops, rather than
+captured live from the screen. Recording is the job that cannot miss a
+deadline, and reading back the framebuffer sixty times a second while a capture
+stream is open is how takes acquire xruns. Rendering afterwards costs the wait
+but is frame accurate, is independent of the window's size and refresh rate,
+and cannot drop a frame. While it runs,
+.B Stop
+becomes
+.BR Cancel ;
+cancelling removes the partial video and keeps the take.
+.PP
+The video file appears only when it is complete. An MP4 cannot be played until
+its index is written, which happens as the encoder finishes, so the frames are
+written to a hidden
+.I .NAME.partial.mp4
+and the real name is created by
+.BR rename (2)
+at the end. A cancelled, failed or interrupted render therefore leaves the take
+and no video, rather than a file that looks like a video and will not open.
+.PP
+For rendering without a display - on a headless machine, or from a script - use
+.B \-\-visualize
+instead, which reads a WAV that already exists.
 .PP
 Monitoring opens a second stream on the default output and plays the input back
 through it. It is off unless

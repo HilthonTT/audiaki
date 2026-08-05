@@ -87,7 +87,7 @@ GUI_OBJS  := $(GUI_SRCS:src/gui/%.c=$(OBJ_DIR)/gui/%.o)
 # window never calls either.
 GUI_CORE_SRCS := src/device.c src/format.c src/wav.c src/log.c src/fft.c \
                  src/spectrum.c src/monitor.c src/ringbuf.c src/take.c \
-                 src/jsonout.c
+                 src/jsonout.c src/parse.c src/ffmpeg_posix.c
 GUI_CORE_OBJS := $(GUI_CORE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 GUI_CPPFLAGS := -Isrc/gui -I$(RAYLIB_SRC)

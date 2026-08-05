@@ -37,9 +37,16 @@ int aud_take_path(char *dst, size_t size, const char *prefix, unsigned number)
   stem = stem_length(prefix);
   suffix = prefix[stem] != '\0' ? prefix + stem : TAKE_DEFAULT_SUFFIX;
 
-  written = snprintf(dst, size, "%.*s-%03u%s", (int)stem, prefix, number, suffix);
+  /*
+   * Measure before writing. snprintf would otherwise leave a truncated name in
+   * dst on the way to reporting that it did not fit, and a caller that checks
+   * the result second would act on half a filename.
+   */
+  written = snprintf(NULL, 0, "%.*s-%03u%s", (int)stem, prefix, number, suffix);
   if (written < 0 || (size_t)written >= size)
     return -1;
+
+  snprintf(dst, size, "%.*s-%03u%s", (int)stem, prefix, number, suffix);
   return 0;
 }
 
@@ -53,4 +60,23 @@ int aud_take_next(char *dst, size_t size, const char *prefix)
       return 0;
   }
   return -1;
+}
+
+int aud_take_with_extension(char *dst, size_t size, const char *path, const char *ext)
+{
+  size_t stem;
+  int written;
+
+  if (dst == NULL || size == 0 || path == NULL || ext == NULL)
+    return -1;
+
+  stem = stem_length(path);
+
+  /* measured first, for the same reason as aud_take_path() */
+  written = snprintf(NULL, 0, "%.*s%s", (int)stem, path, ext);
+  if (written < 0 || (size_t)written >= size)
+    return -1;
+
+  snprintf(dst, size, "%.*s%s", (int)stem, path, ext);
+  return 0;
 }
