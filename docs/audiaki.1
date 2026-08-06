@@ -1,8 +1,8 @@
 .\" SPDX-License-Identifier: MIT
 .TH AUDIAKI 1 "2026-08-04" "audiaki 0.2.0" "User Commands"
 .SH NAME
-audiaki, audiaki\-gui \- record an ALSA capture device to a WAV file, and
-visualise it
+audiaki, audiaki\-gui \- record an ALSA capture device to a WAV file, tune an
+instrument on it, and visualise it
 .SH SYNOPSIS
 .B audiaki
 [\fIOPTION\fR]... \fIOUTPUT.WAV\fR
@@ -12,6 +12,9 @@ visualise it
 .br
 .B audiaki
 \fB\-\-info\fR \fIINPUT.WAV\fR
+.br
+.B audiaki
+\fB\-\-tune\fR [\fB\-D\fR \fIDEVICE\fR]
 .br
 .B audiaki
 \fB\-\-probe\fR [\fB\-D\fR \fIDEVICE\fR]
@@ -44,6 +47,14 @@ With
 .B \-\-info
 it reads a WAV file and reports what is in it \- levels, clipping and noise
 floor \- then exits. This too needs no sound card.
+.PP
+With
+.B \-\-tune
+it opens the capture device and reports the pitch of whatever is being played,
+as a note and how far off that note it is in cents, until interrupted. Nothing
+is written. See
+.B TUNER
+below.
 .SH OPTIONS
 .SS Recording
 .TP
@@ -160,6 +171,19 @@ Video frame rate, 1 to 240 (default 60).
 Number of spectrum bars, 4 to 512 (default 64). Applies to
 .B \-\-style bars
 only.
+.SS Tuner
+.TP
+.B \-\-tune
+Show the pitch of what is being played and exit on
+.BR SIGINT " or " SIGTERM .
+No file is written, and naming one is an error. The capture options above
+still apply, so
+.BR \-D ", " \-r " and " \-c
+choose the device to listen on.
+.TP
+.BR \-\-a4 " " \fIHZ\fR
+The reference pitch every note is measured against, 390 to 500 (default 440).
+Set it to play with an ensemble tuned somewhere other than concert pitch.
 .SS Common
 .TP
 .BR \-\-info " " \fIFILE\fR
@@ -220,6 +244,44 @@ Under
 the bar is replaced by one column per frequency band, low frequencies on the
 left, spaced logarithmically from 40 Hz to 12 kHz. The dBFS readout, peak
 tracking and clipping warning are unchanged.
+.SH TUNER
+.PP
+.nf
+ $ audiaki \-\-tune
+ E2  [.................#.................]  in tune      82.4 Hz  \-18.3 dBFS
+ A2  [...#.............|.................]  \-40 cents   107.5 Hz  \-22.0 dBFS
+ \-\-  [.................|.................]  listening         \-\-  \-71.2 dBFS
+.fi
+.PP
+The scale runs from half a semitone flat on the left to half a semitone sharp
+on the right, with the note itself in the middle. The
+.B #
+marker is the pitch being played and the
+.B |
+is where it should be; past 50 cents the note name changes instead, so the
+needle never points at the wrong note. A reading within 5 cents is called
+.BR "in tune" ,
+which is well inside what a string will drift on its own as it warms.
+.PP
+Pitch is found with the YIN difference function rather than by looking for the
+loudest frequency. A plucked low string often has more energy in its second
+harmonic than in its fundamental, and a tuner that followed the loudest
+frequency would report the octave above. The tradeoff is that this finds one
+pitch at a time: it is a tuner, not a chord detector.
+.PP
+Nothing quieter than about \-52 dBFS is treated as a note, so room noise does
+not read as a pitch; a reading is held for a moment after the note decays past
+that, so the display does not blink out between strums. Notes are named with
+sharps, since a chromatic tuner has no key signature to choose otherwise.
+.PP
+When standard error is not a terminal there is no line to redraw in place, so
+each note is reported once as it settles instead:
+.PP
+.nf
+ $ audiaki \-\-tune 2> notes.log
+ audiaki: E2  \-3 cents  82.2 Hz
+ audiaki: A2  +1 cents  110.1 Hz
+.fi
 .SH TAKE REPORT
 .PP
 .nf
@@ -319,7 +381,7 @@ Take name prefix; takes are numbered from it. Defaults to
 .TP
 .B \-s, \-\-style NAME
 Visualiser style to start on:
-.BR bars ", " mirror ", " radial ", " scope " or " waterfall .
+.BR bars ", " mirror ", " radial ", " scope ", " waterfall " or " tuner .
 Defaults to
 .BR bars .
 .TP
@@ -371,6 +433,18 @@ rather than fitting the window.
 is the only one with a memory: it keeps around eight seconds of spectrogram
 history, time running left to right and frequency bottom to top, so a hum or a
 dropout is still on screen after it has happened.
+.PP
+.B tuner
+is the odd one out. It shows a reading rather than a picture of the sound: the
+note being played, a needle on a scale of half a semitone either side of it,
+and the frequency against what that note should be, going green within 5 cents
+and amber outside it. It runs the same detection as
+.BR "audiaki \-\-tune" ,
+described under
+.BR TUNER ,
+and only while it is the visible style \- the detection is not cheap, and
+nothing else needs it. It sits with the visualiser styles because tuning up is
+what happens immediately before pressing record.
 .PP
 Pausing stops appending to the file without closing it, so a take can be resumed
 into the same WAV. Stopping patches the header and closes it.
@@ -466,6 +540,23 @@ Record until interrupted:
 .nf
 .RS
 audiaki take01.wav
+.RE
+.fi
+.PP
+Tune up first, then record:
+.PP
+.nf
+.RS
+audiaki \-\-tune
+audiaki \-\-take session
+.RE
+.fi
+.PP
+Tune to an ensemble at A = 432 Hz:
+.PP
+.nf
+.RS
+audiaki \-\-tune \-\-a4 432
 .RE
 .fi
 .PP

@@ -15,6 +15,7 @@
 #include "recorder.h"
 #include "signals.h"
 #include "take.h"
+#include "tune.h"
 #include "visualize.h"
 
 #include <stdio.h>
@@ -79,6 +80,39 @@ static int run_record(const aud_options *opts)
   rec_opts.show_spectrum = opts->show_spectrum;
 
   rc = aud_recorder_run(&dev, &rec_opts, NULL);
+  aud_device_close(&dev);
+
+  return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+static int run_tune(const aud_options *opts)
+{
+  aud_device_config cfg;
+  aud_device dev;
+  aud_tune_options tune_opts;
+  int rc;
+
+  aud_device_config_defaults(&cfg);
+  cfg.name = opts->device;
+  cfg.rate = opts->rate;
+  cfg.channels = opts->channels;
+  cfg.format = opts->format;
+  cfg.period_frames = opts->period_frames;
+  cfg.periods = opts->periods;
+
+  if (aud_signals_install_stop() != 0)
+  {
+    aud_perror("cannot install signal handlers");
+    return EXIT_FAILURE;
+  }
+
+  if (aud_device_open_capture(&dev, &cfg) != 0)
+    return EXIT_FAILURE;
+
+  tune_opts.a4_hz = opts->a4_hz;
+  tune_opts.show_meter = opts->show_meter;
+
+  rc = aud_tune_run(&dev, &tune_opts);
   aud_device_close(&dev);
 
   return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
@@ -173,6 +207,8 @@ int main(int argc, char *argv[])
     return run_visualize(&opts);
   case AUD_CMD_INFO:
     return run_info(&opts);
+  case AUD_CMD_TUNE:
+    return run_tune(&opts);
   case AUD_CMD_RECORD:
   default:
     return run_record(&opts);

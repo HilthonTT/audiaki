@@ -137,7 +137,7 @@ static void usage(FILE *out, const app *a)
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
           "\n"
-          "styles: bars, mirror, radial, scope, waterfall\n"
+          "styles: bars, mirror, radial, scope, waterfall, tuner\n"
           "\n"
           "Takes are numbered from the prefix, so recording never overwrites\n"
           "an existing file and there is no --force to get wrong.\n"
@@ -208,7 +208,7 @@ static int parse_args(app *a, int argc, char **argv)
       if (aud_viz_mode_from_name(value, &mode) != 0)
       {
         aud_error("unknown style '%s'", value);
-        aud_info("styles: bars, mirror, radial, scope, waterfall");
+        aud_info("styles: bars, mirror, radial, scope, waterfall, tuner");
         return 2;
       }
       a->style_selected = (int)mode;

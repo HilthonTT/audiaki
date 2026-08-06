@@ -2,7 +2,9 @@
 #include "parse.h"
 
 #include <errno.h>
+#include <float.h>
 #include <limits.h>
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -84,22 +86,32 @@ int parse_size(const char *text, unsigned min, unsigned max, unsigned *out_width
   return 0;
 }
 
-/* Parse one "12" or "12.5" field. Returns 0 on success. */
-static int parse_field(const char *text, double *out)
+int parse_double(const char *text, double min, double max, double *out)
 {
   char *end = NULL;
   double value;
 
-  if (*text == '\0' || *text < '0' || *text > '9')
+  if (text == NULL || out == NULL || *text == '\0')
+    return -1;
+  /* a leading digit rules out "-1", "+1", "inf" and " 1" in one test */
+  if (*text < '0' || *text > '9')
     return -1;
 
   errno = 0;
   value = strtod(text, &end);
-  if (errno != 0 || end == text || *end != '\0' || value < 0.0)
+  if (errno != 0 || end == text || *end != '\0' || !isfinite(value))
+    return -1;
+  if (value < min || value > max)
     return -1;
 
   *out = value;
   return 0;
+}
+
+/* Parse one "12" or "12.5" field of a duration. Returns 0 on success. */
+static int parse_field(const char *text, double *out)
+{
+  return parse_double(text, 0.0, DBL_MAX, out);
 }
 
 int parse_duration(const char *text, double *out_seconds)

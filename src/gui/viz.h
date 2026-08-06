@@ -29,6 +29,12 @@
  * What a frame shows. The first three read the current instant; the waterfall
  * is the only one that shows history, which is what makes it the useful one
  * for spotting a hum or a dropout that has already happened.
+ *
+ * The tuner is the odd one out: it is a reading rather than a picture of the
+ * sound, and it runs its own detector instead of the shared spectrum. It sits
+ * with the styles anyway because it wants the same place on the screen and the
+ * same key to reach it - tuning up is the thing you do immediately before you
+ * press record, not a mode you go somewhere else for.
  */
 typedef enum
 {
@@ -37,6 +43,7 @@ typedef enum
   AUD_VIZ_MODE_RADIAL,    /* the spectrum wrapped into a ring */
   AUD_VIZ_MODE_SCOPE,     /* an oscilloscope trace of the last few ms */
   AUD_VIZ_MODE_WATERFALL, /* a scrolling spectrogram, newest at the right */
+  AUD_VIZ_MODE_TUNER,     /* the note being played, and how far off it is */
   AUD_VIZ_MODE_COUNT
 } aud_viz_mode;
 

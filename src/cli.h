@@ -24,6 +24,7 @@ typedef enum
   AUD_CMD_LIST,
   AUD_CMD_VISUALIZE,
   AUD_CMD_INFO,
+  AUD_CMD_TUNE,
   AUD_CMD_HELP,
   AUD_CMD_VERSION,
 } aud_command;
@@ -49,7 +50,8 @@ typedef struct
   unsigned viz_fps;
   unsigned viz_bars;
   aud_viz_style viz_style;
-  int json; /* machine readable output for --list, --probe and --info */
+  double a4_hz; /* --tune's reference pitch */
+  int json;     /* machine readable output for --list, --probe and --info */
   aud_log_level log_level;
 } aud_options;
 

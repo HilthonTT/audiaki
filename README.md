@@ -40,6 +40,8 @@ plug in an instrument, get a clean take, see the level while you play.
   defaulting to 16-bit.
 - Live peak meter with a peak-hold marker and clipping warning, or a live
   spectrum with `--spectrum`.
+- Tunes the instrument you are about to record with `--tune`, so getting a
+  guitar in tune does not mean opening something else first.
 - Renders a take to a visualiser video with `--visualize`, in the
   spirit of [musializer](https://github.com/tsoding/musializer).
 - Measures a finished take with `--info`: peak, RMS, noise floor, DC offset and
@@ -107,6 +109,7 @@ application menu alongside everything else.
 ```sh
 audiaki --list                       # which capture devices exist
 audiaki --probe -D hw:CARD=Box,DEV=0 # what that device supports
+audiaki --tune                       # tune up before playing anything
 audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum take01.wav        # record, watching the spectrum
 audiaki -t 1:30 take02.wav           # record 90 seconds
@@ -135,6 +138,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--size SPEC` | `WxH`, or `480p`/`720p`/`1080p`/`1440p`/`2160p` (default `1280x720`) |
 | `--fps N` | Video frame rate (default 60) |
 | `--bars N` | Spectrum bar count (default 64) |
+| `--tune` | Show the pitch of what is being played, until Ctrl+C |
+| `--a4 HZ` | Tuner reference pitch (default 440) |
 | `--info FILE` | Report levels and clipping for a WAV and exit |
 | `--json` | Machine-readable `--list`, `--probe` and `--info` |
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
@@ -159,6 +164,7 @@ audiaki-gui                          # open the window on the default device
 audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
 audiaki-gui -o session               # name takes session-001.wav and up
 audiaki-gui -s waterfall             # start on a particular visualiser
+audiaki-gui -s tuner                 # ...come up as a tuner
 audiaki-gui -V                       # also render an MP4 of each take
 audiaki-gui -V --video-size 1080p    # ...at a particular size
 audiaki-gui -V --video-silent        # ...with no audio track in it
@@ -246,10 +252,10 @@ Headphones, or an instrument rather than a mic, and it is fine.
 ### The visualisers
 
 <p align="center">
-  <img src="screenshots/styles.png" alt="the five visualiser styles" width="820">
+  <img src="screenshots/styles.png" alt="the visualiser styles" width="820">
 </p>
 
-Five styles, switchable from the strip on the visualiser or with `V`:
+Six styles, switchable from the strip on the visualiser or with `V`:
 
 | Style | Shows |
 | --- | --- |
@@ -258,8 +264,9 @@ Five styles, switchable from the strip on the visualiser or with `V`:
 | `radial` | The spectrum wrapped into a ring, bass at the top |
 | `scope` | An oscilloscope trace of the last few milliseconds |
 | `waterfall` | A scrolling spectrogram, newest at the right |
+| `tuner` | The note being played, and how far off it is |
 
-All five read the same analysis the CLI's `--spectrum` and `--visualize` use:
+The first five read the same analysis the CLI's `--spectrum` and `--visualize` use:
 a 2048 point window folded into log-spaced bands, with a fast attack and a slow
 decay. `bars` is the default, after
 [musializer](https://github.com/tsoding/musializer) — the glow is one radial
@@ -274,6 +281,15 @@ trace — that is the meter's job to explain, not the scope's.
 `waterfall` is the only one with a memory. It keeps about eight seconds of
 history as a ring of texture columns, one written per frame, so a hum or a
 dropout is still on screen after it has happened.
+
+`tuner` is not a picture of the sound at all. It shows the note being played,
+a needle on a scale of half a semitone either side of it, and the frequency
+against what that note should be — green within 5 cents, amber outside it. It
+runs the same detection as the CLI's `--tune`, and only while it is the visible
+style: the detection costs millions of operations a go, and paying for it behind
+a style nobody is looking at would slow every video render down. It sits with
+the visualiser styles because tuning up is what you do immediately before
+pressing record, and it wants the same place on the screen.
 
 ## Reading the meter
 
@@ -297,6 +313,50 @@ frequencies on the left, log-spaced from 40 Hz to 12 kHz:
 
 Block characters are used when the locale is UTF-8, and an ASCII ramp
 otherwise.
+
+## Tuning up
+
+```
+$ audiaki --tune
+ E2  [.................#.................]  in tune      82.4 Hz  -18.3 dBFS
+ A2  [...#.............|.................]  -40 cents   107.5 Hz  -22.0 dBFS
+ --  [.................|.................]  listening         --  -71.2 dBFS
+```
+
+The scale runs from half a semitone flat on the left to half a semitone sharp
+on the right. `#` is what you are playing and `|` is where it should be; past
+50 cents the note name changes instead, so the needle never ends up pointing at
+the wrong note. Within 5 cents it says `in tune`, which is well inside what a
+string drifts on its own as it warms up.
+
+`--a4` moves the reference pitch for an ensemble tuned somewhere other than
+concert pitch:
+
+```sh
+audiaki --tune --a4 432
+```
+
+The pitch comes from the [YIN][yin] difference function, not from looking for
+the loudest frequency. A plucked low E often has more energy at 165 Hz than at
+82 Hz, and a tuner that followed the loudest frequency would tell you the string
+is an octave up — which is worse than no tuner. The tradeoff is that it finds
+one pitch at a time: it tunes strings, it does not name chords.
+
+[yin]: https://audition.ens.fr/adc/pdf/2002_JASA_YIN.pdf
+
+Anything quieter than about −52 dBFS is not treated as a note, so the room does
+not read as a pitch, and a reading is held for a moment after the note decays
+past that so the display does not blink out between strums.
+
+Nothing is written and no file is named — `--tune` is a display, not a take. If
+stderr is not a terminal there is no line to redraw in place, so it reports each
+note once as it settles instead, which makes it something you can log:
+
+```sh
+$ audiaki --tune 2> notes.log
+audiaki: E2  -3 cents  82.2 Hz
+audiaki: A2  +1 cents  110.1 Hz
+```
 
 ## Numbering takes
 
@@ -443,6 +503,8 @@ src/
   meter.c/.h    the terminal peak and spectrum displays
   fft.c/.h      radix-2 FFT and the Hann window
   spectrum.c/.h streaming analyser: samples in, bar heights out
+  tuner.c/.h    pitch detection: samples in, a note and its offset out
+  tune.c/.h     the --tune loop: device -> tuner -> terminal
   canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
   visualize.c/.h render a WAV to a video
   ffmpeg.h      pipe frames to an ffmpeg child
@@ -463,10 +525,11 @@ vendor/raylib/  submodule, only needed for the desktop app
 ```
 
 ALSA lives behind `device.c` and `monitor.c`, so `format`, `wav`, `parse`,
-`fft`, `spectrum`, `canvas`, `info`, `take`, `ringbuf` and `jsonout` are plain C
-that can be built and tested anywhere — which is what CI does. The analysis is
-shared three ways: the terminal display, the video renderer and the desktop
-app all run the same `spectrum` module.
+`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf` and `jsonout`
+are plain C that can be built and tested anywhere — which is what CI does. The
+analysis is shared three ways: the terminal display, the video renderer and the
+desktop app all run the same `spectrum` module, and the terminal tuner and the
+desktop one run the same `tuner`.
 
 `src/gui/` is the only code that knows raylib exists, and nothing in `src/`
 depends on it, which is what keeps the CLI buildable with the submodule absent.
@@ -487,6 +550,9 @@ depends on it, which is what keeps the CLI buildable with the submodule absent.
 - Monitoring needs an output that accepts the capture rate directly. audiaki
   does not resample, so it declines to monitor rather than play back at the
   wrong pitch.
+- The tuner is monophonic. It reports one pitch at a time and will not name a
+  chord, and it looks for pitches between 40 Hz and 2 kHz — a bass low B and a
+  guitar's top fret are both inside that, a piccolo is not.
 - The desktop app's device list is built at startup, so an interface plugged in
   afterwards needs a restart to appear. Rate and channels are fixed for the
   session; only the device can be changed from the window.

@@ -46,6 +46,51 @@ TEST(uint_enforces_range)
   CHECK_EQ_INT(value, 64);
 }
 
+TEST(double_accepts_decimals)
+{
+  double value = -1.0;
+
+  CHECK_EQ_INT(parse_double("440", 390.0, 500.0, &value), 0);
+  CHECK_EQ_DBL(value, 440.0, 1e-9);
+
+  CHECK_EQ_INT(parse_double("432.5", 390.0, 500.0, &value), 0);
+  CHECK_EQ_DBL(value, 432.5, 1e-9);
+
+  /* the bounds themselves are inside the range */
+  CHECK_EQ_INT(parse_double("390", 390.0, 500.0, &value), 0);
+  CHECK_EQ_INT(parse_double("500", 390.0, 500.0, &value), 0);
+}
+
+TEST(double_rejects_garbage)
+{
+  double value = -1.0;
+
+  CHECK_EQ_INT(parse_double("", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("abc", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("440hz", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("4 40", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double(" 440", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("-440", -1000.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("+440", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("inf", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("nan", 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("1e999", 0.0, 1e300, &value), -1);
+  CHECK_EQ_INT(parse_double(NULL, 0.0, 1000.0, &value), -1);
+  CHECK_EQ_INT(parse_double("440", 0.0, 1000.0, NULL), -1);
+
+  /* a rejected parse leaves the caller's value alone */
+  CHECK_EQ_DBL(value, -1.0, 1e-9);
+}
+
+TEST(double_enforces_range)
+{
+  double value = -1.0;
+
+  CHECK_EQ_INT(parse_double("389.9", 390.0, 500.0, &value), -1);
+  CHECK_EQ_INT(parse_double("500.1", 390.0, 500.0, &value), -1);
+  CHECK_EQ_INT(parse_double("0", 390.0, 500.0, &value), -1);
+}
+
 TEST(duration_seconds)
 {
   double seconds = -1.0;
@@ -169,6 +214,9 @@ int main(void)
   RUN(uint_accepts_plain_decimals);
   RUN(uint_rejects_garbage);
   RUN(uint_enforces_range);
+  RUN(double_accepts_decimals);
+  RUN(double_rejects_garbage);
+  RUN(double_enforces_range);
   RUN(duration_seconds);
   RUN(duration_clock_notation);
   RUN(duration_rejects_garbage);

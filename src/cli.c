@@ -3,6 +3,7 @@
 
 #include "parse.h"
 #include "spectrum.h"
+#include "tuner.h"
 #include "version.h"
 #include "visualize.h"
 
@@ -43,6 +44,8 @@ enum
   OPT_INFO,
   OPT_TAKE,
   OPT_JSON,
+  OPT_TUNE,
+  OPT_A4,
 };
 
 static const struct option long_options[] = {
@@ -67,6 +70,8 @@ static const struct option long_options[] = {
     {"style", required_argument, NULL, OPT_STYLE},
     {"info", required_argument, NULL, OPT_INFO},
     {"take", required_argument, NULL, OPT_TAKE},
+    {"tune", no_argument, NULL, OPT_TUNE},
+    {"a4", required_argument, NULL, OPT_A4},
     {"json", no_argument, NULL, OPT_JSON},
     {"list", no_argument, NULL, 'l'},
     {"probe", no_argument, NULL, 'P'},
@@ -100,6 +105,7 @@ void cli_defaults(aud_options *opts)
   opts->viz_fps = AUD_VIZ_DEFAULT_FPS;
   opts->viz_bars = AUD_VIZ_DEFAULT_BARS;
   opts->viz_style = AUD_VIZ_STYLE_BARS;
+  opts->a4_hz = AUD_TUNER_DEFAULT_A4;
   opts->json = 0;
   opts->log_level = AUD_LOG_NORMAL;
 }
@@ -110,11 +116,13 @@ void cli_print_usage(FILE *out)
           "usage: " AUDIAKI_NAME " [options] <output.wav>\n"
           "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
           "       " AUDIAKI_NAME " --info <input.wav>\n"
+          "       " AUDIAKI_NAME " --tune [-D device]\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
           "\n"
-          "Record an ALSA capture device straight to a PCM WAV file, measure a\n"
-          "finished take, and turn one into a visualiser video.\n"
+          "Record an ALSA capture device straight to a PCM WAV file, tune an\n"
+          "instrument on it, measure a finished take, and turn one into a\n"
+          "visualiser video.\n"
           "\n"
           "Recording options:\n"
           "  -D, --device NAME     ALSA device (default: %s, $AUDIAKI_DEVICE)\n"
@@ -138,6 +146,12 @@ void cli_print_usage(FILE *out)
           "      --fps N           video frame rate (default: %u)\n"
           "      --bars N          number of spectrum bars (default: %u)\n"
           "\n"
+          "Tuner options:\n"
+          "      --tune            show the pitch of what is being played, and "
+          "exit\n"
+          "                        on Ctrl+C\n"
+          "      --a4 HZ           reference pitch (default: %.0f)\n"
+          "\n"
           "Common options:\n"
           "      --info FILE       report levels and clipping for FILE and exit\n"
           "      --json            machine readable --list, --probe and --info\n"
@@ -155,6 +169,7 @@ void cli_print_usage(FILE *out)
           "spectrum\n"
           "  " AUDIAKI_NAME " -t 1:30 take02.wav          record 90 seconds\n"
           "  " AUDIAKI_NAME " --take session              record session-001.wav\n"
+          "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
           "out?\n"
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
@@ -166,7 +181,8 @@ void cli_print_usage(FILE *out)
           "Home page: " AUDIAKI_HOMEPAGE "\n",
           CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
           CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_VIZ_DEFAULT_WIDTH,
-          AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS, AUD_VIZ_DEFAULT_BARS);
+          AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS, AUD_VIZ_DEFAULT_BARS,
+          AUD_TUNER_DEFAULT_A4);
 }
 
 void cli_print_version(FILE *out)
@@ -297,6 +313,16 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     case OPT_TAKE:
       opts->take_prefix = optarg;
       break;
+    case OPT_TUNE:
+      opts->command = AUD_CMD_TUNE;
+      break;
+    case OPT_A4:
+      if (parse_double(optarg, AUD_TUNER_A4_MIN, AUD_TUNER_A4_MAX, &opts->a4_hz) != 0)
+      {
+        bad_value("--a4", optarg, "a reference pitch in Hz, 390 to 500");
+        return CLI_EXIT_USAGE;
+      }
+      break;
     case OPT_JSON:
       opts->json = 1;
       break;
@@ -342,6 +368,26 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   {
     aud_error("--take only applies when recording");
     return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * --tune writes nothing, so an output file passed with it is either a
+   * mistyped recording or a file the user expects to be created. Neither is
+   * what will happen, and saying so beats tuning up next to a silent surprise.
+   */
+  if (opts->command == AUD_CMD_TUNE)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (--tune records nothing)", argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    if (opts->output_path != NULL)
+    {
+      aud_error("--tune records nothing, so there is no output file to write");
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
   }
 
   if (opts->command == AUD_CMD_INFO)

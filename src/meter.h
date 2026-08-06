@@ -9,6 +9,8 @@
 #ifndef AUDIAKI_METER_H
 #define AUDIAKI_METER_H
 
+#include "tuner.h"
+
 #include <stddef.h>
 
 typedef struct
@@ -43,6 +45,16 @@ void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns);
  */
 void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak,
                          double seconds, unsigned xruns);
+
+/*
+ * Redraw as a tuner instead: the note being played, and a needle showing how
+ * far off it is. The scale runs from a semitone flat on the left to a semitone
+ * sharp on the right, with the note itself in the middle.
+ *
+ * Unlike the other two this draws no clock and tracks no peak - tuning is not a
+ * take, and nothing about it needs reporting afterwards.
+ */
+void meter_draw_tuner(aud_meter *m, const aud_tuner_reading *reading);
 
 /* Erase the meter line so other output starts on a clean row. */
 void meter_clear(aud_meter *m);

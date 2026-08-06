@@ -4,6 +4,7 @@
 #include "format.h"
 #include "spectrum.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -198,6 +199,83 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
 
   fprintf(stderr, "\r %02d:%02d %s %6.1f dBFS  xruns:%-4u%s", minutes, (int)seconds % 60,
           bar, db, xruns, m->clipped ? " CLIP" : "");
+  fflush(stderr);
+  m->line_dirty = 1;
+}
+
+/*
+ * Half a semitone either side of the note. Wider would waste the scale on
+ * distances nobody tunes by, and the note name has already changed by then
+ * anyway - past 50 cents the needle would be pointing at the wrong note.
+ */
+#define METER_TUNER_RANGE_CENTS 50.0
+
+/* Columns the tuner line spends on everything that is not the scale. */
+#define METER_TUNER_READOUT_COLS 4
+
+void meter_draw_tuner(aud_meter *m, const aud_tuner_reading *reading)
+{
+  char bar[METER_MAX_WIDTH + 1];
+  char label[AUD_TUNER_LABEL_MAX];
+  char cents[16];
+  char freq[16];
+  int width = m->width - METER_TUNER_READOUT_COLS;
+  int centre;
+
+  if (!m->enabled || reading == NULL)
+    return;
+
+  if (width > METER_MAX_WIDTH)
+    width = METER_MAX_WIDTH;
+  /* an even scale has no middle column for the note itself to sit on */
+  if ((width % 2) == 0)
+    width--;
+  if (width < 9)
+    width = 9;
+  centre = width / 2;
+
+  memset(bar, '.', (size_t)width);
+  bar[centre] = '|';
+  bar[width] = '\0';
+
+  aud_tuner_note_label(reading, label, sizeof(label));
+
+  if (reading->voiced)
+  {
+    double offset = reading->cents / METER_TUNER_RANGE_CENTS;
+    int needle;
+
+    if (offset < -1.0)
+      offset = -1.0;
+    if (offset > 1.0)
+      offset = 1.0;
+
+    needle = centre + (int)lround(offset * (double)centre);
+    if (needle < 0)
+      needle = 0;
+    if (needle >= width)
+      needle = width - 1;
+    bar[needle] = '#';
+
+    if (fabs(reading->cents) <= AUD_TUNER_IN_TUNE_CENTS)
+      snprintf(cents, sizeof(cents), "in tune");
+    else
+      snprintf(cents, sizeof(cents), "%+.0f cents", reading->cents);
+
+    snprintf(freq, sizeof(freq), "%.1f Hz", reading->frequency);
+  }
+  else
+  {
+    /*
+     * Still a full line, with the level on it. A tuner that goes blank when
+     * nothing is being played looks the same as one that is not listening.
+     */
+    snprintf(cents, sizeof(cents), "listening");
+    snprintf(freq, sizeof(freq), "--");
+  }
+
+  fprintf(stderr, "\r %-4s[%s]  %-10s %9s  %6.1f dBFS", label, bar, cents, freq,
+          reading->level_db);
   fflush(stderr);
   m->line_dirty = 1;
 }

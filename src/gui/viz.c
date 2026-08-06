@@ -1,9 +1,13 @@
 /* SPDX-License-Identifier: MIT */
 #include "viz.h"
 
+#include "ui.h"
+
 #include "spectrum.h"
+#include "tuner.h"
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,6 +58,16 @@
  */
 #define VIZ_FALL_COLUMNS 512
 
+/*
+ * Seconds between pitch analyses. The detection costs millions of operations,
+ * which is nothing twenty times a second and far too much sixty - and a needle
+ * updated faster than this only shakes.
+ */
+#define VIZ_TUNER_INTERVAL 0.05f
+
+/* Half a semitone either side of the note, the same scale the CLI tuner draws. */
+#define VIZ_TUNER_RANGE_CENTS 50.0
+
 struct aud_viz
 {
   aud_spectrum *spectrum;
@@ -74,10 +88,16 @@ struct aud_viz
   Color *column; /* staging for one column, `bands` entries */
   int fall_head; /* the column written most recently */
   int fall_ready;
+
+  /* pitch detection, for the tuner style */
+  aud_tuner *tuner;
+  aud_tuner_reading reading;
+  float tuner_clock; /* seconds of dt banked since the last analysis */
+  double a4_hz;
 };
 
 static const char *const mode_names[AUD_VIZ_MODE_COUNT] = {
-    "bars", "mirror", "radial", "scope", "waterfall",
+    "bars", "mirror", "radial", "scope", "waterfall", "tuner",
 };
 
 const char *aud_viz_mode_name(aud_viz_mode mode)
@@ -192,6 +212,7 @@ static Texture2D make_fall_texture(size_t bands)
 aud_viz *aud_viz_create(unsigned rate, size_t bands)
 {
   aud_spectrum_config cfg;
+  aud_tuner_config tuner_cfg;
   aud_viz *v;
 
   if (bands < AUD_SPECTRUM_MIN_BANDS)
@@ -210,6 +231,16 @@ aud_viz *aud_viz_create(unsigned rate, size_t bands)
     free(v);
     return NULL;
   }
+
+  aud_tuner_config_defaults(&tuner_cfg, rate);
+  v->a4_hz = tuner_cfg.a4_hz;
+  v->tuner = aud_tuner_create(&tuner_cfg);
+  if (v->tuner == NULL)
+  {
+    aud_viz_destroy(v);
+    return NULL;
+  }
+  aud_tuner_describe(0.0, 0.0, &v->reading); /* unvoiced until the first analysis */
 
   v->palette = malloc(bands * sizeof(*v->palette));
   v->wave = calloc(VIZ_WAVE_SAMPLES, sizeof(*v->wave));
@@ -254,6 +285,7 @@ void aud_viz_destroy(aud_viz *v)
     UnloadTexture(v->fall);
 
   aud_spectrum_destroy(v->spectrum);
+  aud_tuner_destroy(v->tuner);
   free(v->palette);
   free(v->wave);
   free(v->column);
@@ -266,6 +298,7 @@ void aud_viz_push(aud_viz *v, const float *mono, size_t frames)
     return;
 
   aud_spectrum_push(v->spectrum, mono, frames);
+  aud_tuner_push(v->tuner, mono, frames);
 
   /* only the newest VIZ_WAVE_SAMPLES can ever be drawn */
   if (frames >= VIZ_WAVE_SAMPLES)
@@ -340,6 +373,24 @@ void aud_viz_update(aud_viz *v, float dt)
    */
   v->values = aud_spectrum_analyse(v->spectrum, (double)dt);
   push_column(v);
+
+  /*
+   * The pitch runs on its own slower clock, and banks the dt it skipped so the
+   * needle settles at the same speed whichever rate the window is drawing at.
+   *
+   * Only while it is the visible style. The detection is millions of operations
+   * a go, and a video render calls this as fast as the encoder will take frames
+   * - paying for a needle nobody is looking at would slow every render down.
+   */
+  if (v->mode != AUD_VIZ_MODE_TUNER)
+    return;
+
+  v->tuner_clock += dt;
+  if (v->tuner_clock >= VIZ_TUNER_INTERVAL)
+  {
+    aud_tuner_analyse(v->tuner, (double)v->tuner_clock, &v->reading);
+    v->tuner_clock = 0.0f;
+  }
 }
 
 size_t aud_viz_bands(const aud_viz *v)
@@ -353,6 +404,14 @@ void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode)
     return;
 
   v->mode = mode;
+
+  /*
+   * Arrive at the tuner already due an analysis. The detection only runs while
+   * the tuner is on screen, so without this the first fiftieth of a second of
+   * it would be the reading from whenever it was last looked at.
+   */
+  if (mode == AUD_VIZ_MODE_TUNER)
+    v->tuner_clock = VIZ_TUNER_INTERVAL;
 }
 
 aud_viz_mode aud_viz_mode_get(const aud_viz *v)
@@ -365,7 +424,7 @@ aud_viz_mode aud_viz_cycle_mode(aud_viz *v)
   if (v == NULL)
     return AUD_VIZ_MODE_BARS;
 
-  v->mode = (aud_viz_mode)((v->mode + 1) % AUD_VIZ_MODE_COUNT);
+  aud_viz_set_mode(v, (aud_viz_mode)((v->mode + 1) % AUD_VIZ_MODE_COUNT));
   return v->mode;
 }
 
@@ -675,13 +734,145 @@ static void draw_waterfall(const aud_viz *v, Rectangle area)
                    with_alpha(WHITE, 0.25f));
 }
 
+/* -- tuner ----------------------------------------------------------------- */
+
+/* Text centred on `cx`, which is how every line of the tuner is placed. */
+static void draw_centred(const char *text, float cx, float y, int size, Color tint)
+{
+  DrawText(text, (int)(cx - (float)MeasureText(text, size) / 2.0f), (int)y, size, tint);
+}
+
+static float clampf(float v, float lo, float hi)
+{
+  if (v < lo)
+    return lo;
+  if (v > hi)
+    return hi;
+  return v;
+}
+
+/*
+ * The scale the needle rides on: a track, a tick every twelve and a half cents
+ * and a taller one in the middle for the note itself. Drawn before the needle
+ * so it reads as something the needle sits on rather than through.
+ */
+static void draw_tuner_scale(Rectangle track, Color tint)
+{
+  float cx = track.x + track.width / 2.0f;
+  float cy = track.y + track.height / 2.0f;
+
+  DrawRectangleRec((Rectangle){track.x, cy - 1.0f, track.width, 2.0f},
+                   with_alpha(tint, 0.22f));
+
+  for (int step = -4; step <= 4; step++)
+  {
+    float t = (float)step / 4.0f;
+    int major = (step % 2) == 0;
+    float h = major ? track.height * 0.55f : track.height * 0.28f;
+    float w = major ? 2.0f : 1.0f;
+    float x = cx + t * track.width / 2.0f;
+
+    /* the centre tick is the target, so it stays lit even when nothing else is */
+    DrawRectangleRec((Rectangle){x - w / 2.0f, cy - h / 2.0f, w, h},
+                     with_alpha(tint, step == 0 ? 0.85f : 0.30f));
+  }
+}
+
+/*
+ * A reading rather than a picture of the sound. Green when the note is close
+ * enough that the string will drift further than this on its own, amber when it
+ * is not, grey when nothing is being played - the colour is meant to be
+ * readable from across the room, with the numbers there for when it is not.
+ */
+static void draw_tuner(const aud_viz *v, Rectangle area)
+{
+  const aud_tuner_reading *r = &v->reading;
+  char label[AUD_TUNER_LABEL_MAX];
+  char line[96];
+  float cx = area.x + area.width / 2.0f;
+  float cy = area.y + area.height / 2.0f;
+  int in_tune = r->voiced && fabs(r->cents) <= AUD_TUNER_IN_TUNE_CENTS;
+  Color tint = !r->voiced ? AUD_UI_MUTED : (in_tune ? AUD_UI_OK : AUD_UI_WARN);
+  int note_size = (int)clampf(area.height * 0.30f, 32.0f, 190.0f);
+  int read_size = (int)clampf(area.height * 0.075f, 16.0f, 34.0f);
+  int small_size = (int)clampf(area.height * 0.055f, 12.0f, 22.0f);
+  Rectangle track;
+
+  aud_tuner_note_label(r, label, sizeof(label));
+  draw_centred(label, cx, cy - (float)note_size * 0.95f, note_size, tint);
+
+  track.width = clampf(area.width * 0.72f, 120.0f, 900.0f);
+  track.height = clampf(area.height * 0.16f, 20.0f, 70.0f);
+  track.x = cx - track.width / 2.0f;
+  track.y = cy + area.height * 0.08f;
+  draw_tuner_scale(track, tint);
+
+  if (r->voiced)
+  {
+    float offset = clampf((float)(r->cents / VIZ_TUNER_RANGE_CENTS), -1.0f, 1.0f);
+    float nx = track.x + track.width / 2.0f + offset * track.width / 2.0f;
+    float ny = track.y + track.height / 2.0f;
+
+    if (v->glow_ready)
+    {
+      BeginBlendMode(BLEND_ADDITIVE);
+      draw_glow(v, nx, ny, track.height * 3.2f,
+                with_alpha(tint, in_tune ? 0.55f : 0.35f));
+      EndBlendMode();
+    }
+    DrawRectangleRec((Rectangle){nx - 2.0f, track.y, 4.0f, track.height}, tint);
+
+    if (in_tune)
+      snprintf(line, sizeof(line), "in tune");
+    else
+      snprintf(line, sizeof(line), "%+.0f cents", r->cents);
+    draw_centred(line, cx, track.y + track.height + (float)read_size * 0.7f, read_size,
+                 tint);
+
+    /*
+     * Two decimals on what is being played and one on what it should be. At the
+     * bottom of a bass a whole cent is under a hundredth of a hertz, so a
+     * single decimal would show the same number either side of "in tune".
+     */
+    snprintf(line, sizeof(line), "%.2f Hz      target %.1f Hz", r->frequency,
+             r->target_hz);
+  }
+  else
+  {
+    draw_centred("play a note", cx, track.y + track.height + (float)read_size * 0.7f,
+                 read_size, AUD_UI_MUTED);
+    snprintf(line, sizeof(line), "listening on the input");
+  }
+
+  draw_centred(line, cx, track.y + track.height + (float)read_size * 2.1f, small_size,
+               AUD_UI_MUTED);
+
+  /* the reference pitch, out of the way, because it changes what all of this means */
+  snprintf(line, sizeof(line), "A = %.0f Hz", v->a4_hz);
+  DrawText(line, (int)(area.x + (float)small_size * 0.5f),
+           (int)(area.y + area.height - (float)small_size * 1.6f), small_size,
+           AUD_UI_MUTED);
+}
+
 /* -- dispatch -------------------------------------------------------------- */
 
 void aud_viz_draw(const aud_viz *v, Rectangle area)
 {
-  if (v == NULL || !v->glow_ready || v->values == NULL)
+  if (v == NULL || area.width <= 0.0f || area.height <= 0.0f)
     return;
-  if (area.width <= 0.0f || area.height <= 0.0f)
+
+  /*
+   * The tuner is text and a needle, so it needs neither the glow sprite nor a
+   * spectrum to have been analysed yet - and it has something worth saying
+   * before the first analysis, which the others do not.
+   */
+  if (v->mode == AUD_VIZ_MODE_TUNER)
+  {
+    draw_tuner(v, area);
+    return;
+  }
+
+  if (!v->glow_ready || v->values == NULL)
     return;
 
   switch (v->mode)
@@ -699,6 +890,7 @@ void aud_viz_draw(const aud_viz *v, Rectangle area)
     if (v->fall_ready)
       draw_waterfall(v, area);
     return;
+  case AUD_VIZ_MODE_TUNER: /* handled above, before the spectrum is needed */
   case AUD_VIZ_MODE_BARS:
   case AUD_VIZ_MODE_COUNT:
   default:

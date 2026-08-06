@@ -9,6 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A tuner. `audiaki --tune` opens the capture device and reports the pitch of
+  whatever is being played as a note, a needle on a scale of half a semitone
+  either side of it, and the frequency and level, until Ctrl+C. Nothing is
+  written; it is a display, not a take. `--a4` moves the reference pitch for an
+  ensemble tuned somewhere other than concert pitch.
+- `tuner` module: monophonic pitch detection using the YIN difference function,
+  plus the note arithmetic that turns a frequency into a note name, an octave
+  and an offset in cents. Time domain rather than a peak over the spectrum,
+  because a plucked low string often has more energy in its second harmonic than
+  in its fundamental and a spectrum peak would report the octave above. No ALSA
+  and no I/O, so it is unit tested like the rest of the analysis.
+- A `tuner` style in the desktop app, alongside the five visualisers and reached
+  the same ways - the strip on the stage, the `V` key, or `-s tuner` up front.
+  It runs the same detection as `--tune`, and only while it is the visible
+  style, so a video render is not slowed by a needle nobody is looking at.
+- `tune` module: the `--tune` capture loop, which is to tuning what `recorder`
+  is to a take. It keeps ALSA out of `tuner`, which the desktop app also uses.
+- `meter_draw_tuner()` draws the terminal tuner line. With stderr redirected
+  there is no line to redraw in place, so `--tune` reports each note once as it
+  settles instead, which makes it something a script can log.
+- `parse_double()` parses a bounded decimal as strictly as `parse_uint()` parses
+  an integer; `--a4` and the duration fields both go through it.
+
 - `audiaki-gui`, a desktop application. A window with a record / pause / resume
   / stop transport, a live level meter with peak hold, a clipping indicator and
   a real-time spectrum. The capture stream opens with the window and stays open,

@@ -15,6 +15,13 @@
 int parse_uint(const char *text, unsigned min, unsigned max, unsigned *out);
 
 /*
+ * Parse a non-negative decimal number in [min, max], e.g. "440" or "432.5".
+ * Returns 0 on success, -1 on trailing garbage, a sign, an empty string, a
+ * non-finite value or a range miss.
+ */
+int parse_double(const char *text, double min, double max, double *out);
+
+/*
  * Parse a duration: "90", "12.5", "1:30" (mm:ss) or "1:02:03" (hh:mm:ss).
  * Returns 0 on success, -1 on malformed input or a negative result.
  */
