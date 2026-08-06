@@ -43,7 +43,9 @@ struct aud_render
 void aud_render_defaults(aud_render_options *opts)
 {
   if (opts == NULL)
+  {
     return;
+  }
 
   memset(opts, 0, sizeof(*opts));
   opts->mode = AUD_VIZ_MODE_BARS;
@@ -92,7 +94,9 @@ static int partial_path(char *dst, size_t size, const char *final)
   written = snprintf(NULL, 0, "%.*s.%.*s.partial%s", (int)dir_len, final, (int)stem_len,
                      base, ext);
   if (written < 0 || (size_t)written >= size)
+  {
     return -1;
+  }
 
   snprintf(dst, size, "%.*s.%.*s.partial%s", (int)dir_len, final, (int)stem_len, base,
            ext);
@@ -149,7 +153,9 @@ aud_render *aud_render_start(const aud_render_options *opts)
   r->total_frames =
       (r->reader.frames * r->fps + r->reader.rate - 1u) / (uint64_t)r->reader.rate;
   if (r->total_frames == 0)
+  {
     r->total_frames = 1;
+  }
 
   r->chunk = malloc(RENDER_CHUNK_FRAMES * sizeof(*r->chunk));
   if (r->chunk == NULL)
@@ -178,7 +184,9 @@ aud_render *aud_render_start(const aud_render_options *opts)
   r->ffmpeg = ffmpeg_start_rendering(r->partial, r->width, r->height, r->fps,
                                      opts->silent ? NULL : opts->wav_path);
   if (r->ffmpeg == NULL)
-    goto fail; /* ffmpeg_start_rendering has already said why */
+  {
+    goto fail;
+  } /* ffmpeg_start_rendering has already said why */
 
   aud_info("rendering %s: %ux%u at %u fps, %s%s", r->output, r->width, r->height, r->fps,
            aud_viz_mode_name(opts->mode), opts->silent ? ", no audio" : "");
@@ -262,9 +270,13 @@ int aud_render_step(aud_render *r, double budget)
   double started;
 
   if (r == NULL || r->failed)
+  {
     return -1;
+  }
   if (r->frame >= r->total_frames)
+  {
     return 1;
+  }
 
   started = GetTime();
 
@@ -284,7 +296,9 @@ int aud_render_step(aud_render *r, double budget)
 double aud_render_progress(const aud_render *r)
 {
   if (r == NULL || r->total_frames == 0)
+  {
     return 0.0;
+  }
 
   return (double)r->frame / (double)r->total_frames;
 }
@@ -299,7 +313,9 @@ int aud_render_finish(aud_render *r, int cancel)
   int rc = 0;
 
   if (r == NULL)
+  {
     return -1;
+  }
 
   if (r->ffmpeg != NULL)
   {
@@ -330,10 +346,14 @@ int aud_render_finish(aud_render *r, int cancel)
   }
 
   if (r->target_ready)
+  {
     UnloadRenderTexture(r->target);
+  }
   aud_viz_destroy(r->viz);
   if (r->reader_open)
+  {
     wav_read_close(&r->reader);
+  }
   free(r->chunk);
   free(r);
 

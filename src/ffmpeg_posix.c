@@ -40,16 +40,22 @@ static int write_all(int fd, const void *buf, size_t bytes)
     if (n < 0)
     {
       if (errno == EINTR)
-        continue; /* a signal arrived mid-write, not a failure */
+      {
+        continue;
+      } /* a signal arrived mid-write, not a failure */
       /*
        * EPIPE only says ffmpeg is gone, not why. ffmpeg_end_rendering() is
        * about to reap it and report the actual reason, so leading with a
        * broken pipe here would just bury the useful message.
        */
       if (errno == EPIPE)
+      {
         aud_debug("ffmpeg: the pipe closed early, ffmpeg has exited");
+      }
       else
+      {
         aud_perror("ffmpeg: cannot write a frame to the pipe");
+      }
       return -1;
     }
     if (n == 0)
@@ -74,10 +80,14 @@ static int write_all(int fd, const void *buf, size_t bytes)
 static const char *safe_path(const char *path, char *buf, size_t size)
 {
   if (path == NULL || path[0] != '-')
+  {
     return path;
+  }
 
   if ((size_t)snprintf(buf, size, "./%s", path) >= size)
-    return NULL; /* too long to disarm; the caller reports it */
+  {
+    return NULL;
+  } /* too long to disarm; the caller reports it */
   return buf;
 }
 
@@ -148,13 +158,16 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
      * unconditionally would shut the pipe ffmpeg is about to read from.
      */
     if (pipefd[READ_END] != STDIN_FILENO)
+    {
       close(pipefd[READ_END]);
+    }
     close(pipefd[WRITE_END]);
 
     snprintf(resolution, sizeof(resolution), "%zux%zu", width, height);
     snprintf(framerate, sizeof(framerate), "%zu", fps);
 
     if (sound_file_path != NULL)
+    {
       execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
 
              /* input 0: our frames, arriving on stdin */
@@ -169,7 +182,9 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
              "yuv420p", "-shortest", output_path,
 
              NULL);
+    }
     else
+    {
       /*
        * Silent: one input and -an, rather than muxing a track and muting it.
        * There is no second input to be shorter than the video, so -shortest
@@ -183,6 +198,7 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
              "-an", "-c:v", "libx264", "-vb", "2500k", "-pix_fmt", "yuv420p", output_path,
 
              NULL);
+    }
 
     /* only reached if execlp failed */
     fprintf(stderr, "\nffmpeg child: cannot run ffmpeg: %s\n", strerror(errno));
@@ -190,7 +206,9 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
   }
 
   if (close(pipefd[READ_END]) < 0)
+  {
     aud_perror("ffmpeg: cannot close the read end of the pipe");
+  }
 
   /*
    * Without this, ffmpeg exiting early turns the next frame write into a
@@ -238,7 +256,9 @@ int ffmpeg_send_frame_flipped(FFMPEG *ffmpeg, const void *data, size_t width,
   for (size_t y = height; y > 0; y--)
   {
     if (write_all(ffmpeg->pipe, rows + (y - 1) * width, width * sizeof(uint32_t)) != 0)
+    {
       return -1;
+    }
   }
   return 0;
 }
@@ -250,7 +270,9 @@ int ffmpeg_end_rendering(FFMPEG *ffmpeg, int cancel)
   int rc = 0;
 
   if (ffmpeg == NULL)
+  {
     return -1;
+  }
 
   pipe_fd = ffmpeg->pipe;
   pid = ffmpeg->pid;
@@ -258,10 +280,14 @@ int ffmpeg_end_rendering(FFMPEG *ffmpeg, int cancel)
 
   /* closing the pipe is ffmpeg's end-of-stream signal, so it must come first */
   if (close(pipe_fd) < 0)
+  {
     aud_perror("ffmpeg: cannot close the write end of the pipe");
+  }
 
   if (cancel)
+  {
     kill(pid, SIGKILL);
+  }
 
   for (;;)
   {
@@ -270,7 +296,9 @@ int ffmpeg_end_rendering(FFMPEG *ffmpeg, int cancel)
     if (waitpid(pid, &wstatus, 0) < 0)
     {
       if (errno == EINTR)
+      {
         continue;
+      }
       aud_perror("ffmpeg: cannot wait for the ffmpeg process");
       return -1;
     }

@@ -56,9 +56,13 @@ static int write_header(wav_writer *w, uint32_t data_bytes)
   wav_build_header(header, data_bytes, w->rate, w->channels, w->bits);
 
   if (fseek(w->file, 0, SEEK_SET) != 0)
+  {
     return -1;
+  }
   if (fwrite(header, 1, sizeof(header), w->file) != sizeof(header))
+  {
     return -1;
+  }
   return 0;
 }
 
@@ -76,7 +80,9 @@ int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
   /* "x" fails with EEXIST rather than truncating someone's earlier take. */
   w->file = fopen(path, overwrite ? "wb" : "wbx");
   if (w->file == NULL)
+  {
     return -1;
+  }
 
   w->path = path;
   w->rate = rate;
@@ -103,10 +109,14 @@ int wav_write(wav_writer *w, const void *data, size_t bytes)
     return -1;
   }
   if (bytes == 0)
+  {
     return 0;
+  }
 
   if (fwrite(data, 1, bytes, w->file) != bytes)
+  {
     return -1;
+  }
 
   w->data_bytes += bytes;
   return 0;
@@ -123,7 +133,9 @@ int wav_close(wav_writer *w)
   int saved = 0;
 
   if (w->file == NULL)
+  {
     return 0;
+  }
 
   if ((w->data_bytes & 1u) != 0)
   {
@@ -149,19 +161,25 @@ int wav_close(wav_writer *w)
 
   w->file = NULL;
   if (rc != 0)
+  {
     errno = saved;
+  }
   return rc;
 }
 
 void wav_discard(wav_writer *w)
 {
   if (w->file == NULL)
+  {
     return;
+  }
 
   fclose(w->file);
   w->file = NULL;
   if (w->path != NULL)
+  {
     remove(w->path);
+  }
 }
 
 double wav_duration(const wav_writer *w)
@@ -169,7 +187,9 @@ double wav_duration(const wav_writer *w)
   uint32_t block_align = (uint32_t)w->channels * (w->bits / 8u);
 
   if (block_align == 0 || w->rate == 0)
+  {
     return 0.0;
+  }
   return (double)(w->data_bytes / block_align) / (double)w->rate;
 }
 
@@ -255,7 +275,9 @@ int wav_read_open(wav_reader *r, const char *path)
     off_t skip;
 
     if (read_exact(r->file, head, sizeof(head)) != 0)
-      break; /* ran out of chunks */
+    {
+      break;
+    } /* ran out of chunks */
     size = get_u32(head + 4);
     /* RIFF chunks are word aligned; an odd body is followed by a pad byte. */
     skip = (off_t)size + (size & 1u);
@@ -286,7 +308,9 @@ int wav_read_open(wav_reader *r, const char *path)
       r->bits = get_u16(fmt + 14);
       /* WAVE_FORMAT_EXTENSIBLE hides the real tag in the SubFormat GUID. */
       if (tag == WAV_FORMAT_EXTENSIBLE && size >= 40u)
+      {
         tag = get_u16(fmt + 24);
+      }
       have_fmt = 1;
     }
     else if (memcmp(head, "data", 4) == 0)
@@ -299,9 +323,13 @@ int wav_read_open(wav_reader *r, const char *path)
       }
       data_bytes = size;
       if (have_fmt)
-        break; /* nothing after this point can matter */
-      if (fseeko(r->file, skip, SEEK_CUR) != 0)
+      {
         break;
+      } /* nothing after this point can matter */
+      if (fseeko(r->file, skip, SEEK_CUR) != 0)
+      {
+        break;
+      }
     }
     else if (fseeko(r->file, skip, SEEK_CUR) != 0)
     {
@@ -309,7 +337,9 @@ int wav_read_open(wav_reader *r, const char *path)
     }
 
     if (have_fmt && data_offset >= 0)
+    {
       break;
+    }
   }
 
   if (!have_fmt)
@@ -440,14 +470,20 @@ static void decode_mono(const wav_reader *r, float *dst, const unsigned char *sr
     double sum = 0.0;
 
     for (unsigned c = 0; c < ch; c++)
+    {
       sum += decode_sample(r, p + (size_t)c * width);
+    }
 
     /* float WAV is allowed to exceed full scale; the analyser expects it not to */
     sum /= ch;
     if (sum > 1.0)
+    {
       sum = 1.0;
+    }
     if (sum < -1.0)
+    {
       sum = -1.0;
+    }
     dst[f] = (float)sum;
   }
 }
@@ -464,7 +500,9 @@ static void decode_interleaved(const wav_reader *r, float *dst, const unsigned c
     const unsigned char *p = src + (size_t)f * r->block;
 
     for (unsigned c = 0; c < ch; c++)
+    {
       dst[(size_t)f * ch + c] = (float)decode_sample(r, p + (size_t)c * width);
+    }
   }
 }
 
@@ -482,12 +520,18 @@ static long read_decoded(wav_reader *r, float *dst, size_t frames, int mono)
     return -1;
   }
   if (frames == 0 || r->position >= r->frames)
+  {
     return 0;
+  }
 
   if ((uint64_t)frames > r->frames - r->position)
+  {
     frames = (size_t)(r->frames - r->position);
+  }
   if (frames > (size_t)LONG_MAX)
+  {
     frames = (size_t)LONG_MAX;
+  }
 
   while (done < frames)
   {
@@ -495,7 +539,9 @@ static long read_decoded(wav_reader *r, float *dst, size_t frames, int mono)
     size_t got;
 
     if (want > r->raw_frames)
+    {
       want = r->raw_frames;
+    }
 
     got = fread(r->raw, r->block, want, r->file);
     if (got == 0)
@@ -514,9 +560,13 @@ static long read_decoded(wav_reader *r, float *dst, size_t frames, int mono)
     }
 
     if (mono)
+    {
       decode_mono(r, dst + done, r->raw, got);
+    }
     else
+    {
       decode_interleaved(r, dst + done * r->channels, r->raw, got);
+    }
     done += got;
     r->position += got;
   }
@@ -537,17 +587,23 @@ long wav_read_frames(wav_reader *r, float *interleaved, size_t frames)
 double wav_read_duration(const wav_reader *r)
 {
   if (r == NULL || r->rate == 0)
+  {
     return 0.0;
+  }
   return (double)r->frames / (double)r->rate;
 }
 
 void wav_read_close(wav_reader *r)
 {
   if (r == NULL)
+  {
     return;
+  }
 
   if (r->file != NULL)
+  {
     fclose(r->file);
+  }
   r->file = NULL;
   free(r->raw);
   r->raw = NULL;

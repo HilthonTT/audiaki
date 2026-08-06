@@ -28,7 +28,9 @@ static int terminal_cols(void)
   struct winsize ws;
 
   if (ioctl(STDERR_FILENO, TIOCGWINSZ, &ws) == 0 && ws.ws_col > 0)
+  {
     return (int)ws.ws_col;
+  }
   return METER_DEFAULT_WIDTH + METER_READOUT_COLS;
 }
 
@@ -38,9 +40,13 @@ static int terminal_width(void)
   int width = terminal_cols() - 40;
 
   if (width < METER_MIN_WIDTH)
+  {
     return METER_MIN_WIDTH;
+  }
   if (width > METER_MAX_WIDTH)
+  {
     return METER_MAX_WIDTH;
+  }
   return width;
 }
 
@@ -58,7 +64,9 @@ static int terminal_is_utf8(void)
     const char *value = getenv(vars[i]);
 
     if (value == NULL || *value == '\0')
+    {
       continue;
+    }
     /* the first variable that is set decides, as it does for locale lookup */
     return strstr(value, "UTF-8") != NULL || strstr(value, "utf8") != NULL ||
            strstr(value, "UTF8") != NULL || strstr(value, "utf-8") != NULL;
@@ -79,13 +87,19 @@ size_t meter_fit_bands(const aud_meter *m)
   int cols;
 
   if (!m->enabled)
+  {
     return 0;
+  }
 
   cols = terminal_cols() - METER_READOUT_COLS;
   if (cols < (int)AUD_SPECTRUM_MIN_BANDS)
+  {
     cols = (int)AUD_SPECTRUM_MIN_BANDS;
+  }
   if (cols > (int)AUD_SPECTRUM_MAX_BANDS)
+  {
     cols = (int)AUD_SPECTRUM_MAX_BANDS;
+  }
   return (size_t)cols;
 }
 
@@ -96,9 +110,13 @@ size_t meter_fit_bands(const aud_meter *m)
 static void track_peak(aud_meter *m, double peak)
 {
   if (peak > m->hold_peak)
+  {
     m->hold_peak = peak;
+  }
   if (peak >= AUD_CLIP_THRESHOLD)
+  {
     m->clipped = 1;
+  }
 }
 
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns)
@@ -112,27 +130,41 @@ void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns)
   track_peak(m, peak);
 
   if (!m->enabled)
+  {
     return;
+  }
 
   db = aud_format_dbfs(peak);
   filled = (int)((db + METER_RANGE_DB) / METER_RANGE_DB * m->width);
   if (filled < 0)
+  {
     filled = 0;
+  }
   if (filled > m->width)
+  {
     filled = m->width;
+  }
 
   hold_pos =
       (int)((aud_format_dbfs(m->hold_peak) + METER_RANGE_DB) / METER_RANGE_DB * m->width);
   if (hold_pos < 0)
+  {
     hold_pos = 0;
+  }
   if (hold_pos >= m->width)
+  {
     hold_pos = m->width - 1;
+  }
 
   memset(bar, ' ', (size_t)m->width);
   for (int i = 0; i < filled; i++)
+  {
     bar[i] = '#';
+  }
   if (hold_pos >= filled)
-    bar[hold_pos] = '|'; /* peak hold marker */
+  {
+    bar[hold_pos] = '|';
+  } /* peak hold marker */
   bar[m->width] = '\0';
 
   minutes = (int)seconds / 60;
@@ -159,10 +191,14 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
   track_peak(m, peak);
 
   if (!m->enabled || bands == NULL || n == 0)
+  {
     return;
+  }
 
   if (n > AUD_SPECTRUM_MAX_BANDS)
+  {
     n = AUD_SPECTRUM_MAX_BANDS;
+  }
 
   for (size_t b = 0; b < n; b++)
   {
@@ -170,9 +206,13 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
     int level;
 
     if (v < 0.0)
+    {
       v = 0.0;
+    }
     if (v > 1.0)
+    {
       v = 1.0;
+    }
     level = (int)(v * (double)METER_BLOCK_LEVELS + 0.5);
 
     if (!m->unicode)
@@ -222,15 +262,23 @@ void meter_draw_tuner(aud_meter *m, const aud_tuner_reading *reading)
   int centre;
 
   if (!m->enabled || reading == NULL)
+  {
     return;
+  }
 
   if (width > METER_MAX_WIDTH)
+  {
     width = METER_MAX_WIDTH;
+  }
   /* an even scale has no middle column for the note itself to sit on */
   if ((width % 2) == 0)
+  {
     width--;
+  }
   if (width < 9)
+  {
     width = 9;
+  }
   centre = width / 2;
 
   memset(bar, '.', (size_t)width);
@@ -245,21 +293,33 @@ void meter_draw_tuner(aud_meter *m, const aud_tuner_reading *reading)
     int needle;
 
     if (offset < -1.0)
+    {
       offset = -1.0;
+    }
     if (offset > 1.0)
+    {
       offset = 1.0;
+    }
 
     needle = centre + (int)lround(offset * (double)centre);
     if (needle < 0)
+    {
       needle = 0;
+    }
     if (needle >= width)
+    {
       needle = width - 1;
+    }
     bar[needle] = '#';
 
     if (fabs(reading->cents) <= AUD_TUNER_IN_TUNE_CENTS)
+    {
       snprintf(cents, sizeof(cents), "in tune");
+    }
     else
+    {
       snprintf(cents, sizeof(cents), "%+.0f cents", reading->cents);
+    }
 
     snprintf(freq, sizeof(freq), "%.1f Hz", reading->frequency);
   }
@@ -284,7 +344,9 @@ void meter_clear(aud_meter *m)
   int cols;
 
   if (!m->line_dirty)
+  {
     return;
+  }
 
   /*
    * Overwrite the line rather than relying on an erase escape sequence. One
@@ -293,7 +355,9 @@ void meter_clear(aud_meter *m)
    */
   cols = terminal_cols() - 1;
   if (cols < METER_DEFAULT_WIDTH)
+  {
     cols = METER_DEFAULT_WIDTH;
+  }
   fprintf(stderr, "\r%*s\r", cols, "");
   fflush(stderr);
   m->line_dirty = 0;

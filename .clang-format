@@ -10,6 +10,8 @@ AllowShortFunctionsOnASingleLine: None
 AllowShortIfStatementsOnASingleLine: Never
 AllowShortLoopsOnASingleLine: false
 AllowShortBlocksOnASingleLine: Never
+# Every if/else/for/while body is a braced block, even a single statement.
+InsertBraces: true
 AlignEscapedNewlines: Left
 AlignAfterOpenBracket: Align
 AlignConsecutiveMacros: false

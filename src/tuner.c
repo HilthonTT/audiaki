@@ -64,7 +64,9 @@ static const char *const note_names[12] = {
 const char *aud_tuner_note_name(int midi)
 {
   if (midi < 0 || midi > 127)
+  {
     return "--";
+  }
 
   return note_names[midi % 12];
 }
@@ -72,7 +74,9 @@ const char *aud_tuner_note_name(int midi)
 double aud_tuner_note_frequency(int midi, double a4_hz)
 {
   if (midi < 0 || midi > 127 || !(a4_hz > 0.0))
+  {
     return 0.0;
+  }
 
   return a4_hz * pow(2.0, ((double)midi - 69.0) / 12.0);
 }
@@ -83,23 +87,31 @@ void aud_tuner_describe(double frequency, double a4_hz, aud_tuner_reading *out)
   int nearest;
 
   if (out == NULL)
+  {
     return;
+  }
 
   memset(out, 0, sizeof(*out));
   out->note = "--";
   out->level_db = AUD_DBFS_FLOOR;
 
   if (!(frequency > 0.0) || !(a4_hz > 0.0))
+  {
     return;
+  }
 
   /* MIDI note numbers are twelve to the octave, which makes this exact */
   midi = 69.0 + 12.0 * log2(frequency / a4_hz);
   if (!(midi >= 0.0) || midi > 127.0)
+  {
     return;
+  }
 
   nearest = (int)floor(midi + 0.5);
   if (nearest > 127)
+  {
     nearest = 127;
+  }
 
   out->voiced = 1;
   out->frequency = frequency;
@@ -114,7 +126,9 @@ void aud_tuner_describe(double frequency, double a4_hz, aud_tuner_reading *out)
 void aud_tuner_note_label(const aud_tuner_reading *reading, char *dst, size_t size)
 {
   if (dst == NULL || size == 0)
+  {
     return;
+  }
 
   if (reading == NULL || !reading->voiced)
   {
@@ -130,7 +144,9 @@ void aud_tuner_note_label(const aud_tuner_reading *reading, char *dst, size_t si
 void aud_tuner_config_defaults(aud_tuner_config *cfg, unsigned rate)
 {
   if (cfg == NULL)
+  {
     return;
+  }
 
   memset(cfg, 0, sizeof(*cfg));
   cfg->rate = rate;
@@ -143,7 +159,9 @@ void aud_tuner_config_defaults(aud_tuner_config *cfg, unsigned rate)
    */
   cfg->max_hz = TUNER_DEFAULT_MAX_HZ;
   if (cfg->max_hz > (double)rate * 0.45)
+  {
     cfg->max_hz = (double)rate * 0.45;
+  }
   cfg->threshold = TUNER_DEFAULT_THRESHOLD;
   cfg->gate_db = TUNER_DEFAULT_GATE_DB;
   cfg->glide = TUNER_DEFAULT_GLIDE;
@@ -181,11 +199,15 @@ aud_tuner *aud_tuner_create(const aud_tuner_config *cfg)
 
   t->tau_max = (size_t)((double)cfg->rate / cfg->min_hz);
   if (t->tau_max > TUNER_MAX_TAU)
-    t->tau_max = TUNER_MAX_TAU; /* raises the low end rather than failing */
+  {
+    t->tau_max = TUNER_MAX_TAU;
+  } /* raises the low end rather than failing */
 
   t->tau_min = (size_t)((double)cfg->rate / cfg->max_hz);
   if (t->tau_min < 2)
+  {
     t->tau_min = 2;
+  }
 
   if (t->tau_min + 1 >= t->tau_max)
   {
@@ -202,7 +224,9 @@ aud_tuner *aud_tuner_create(const aud_tuner_config *cfg)
   t->integration = t->tau_max * 2u;
   need = t->integration + t->tau_max;
   for (t->window = 1024u; t->window < need; t->window *= 2u)
+  {
     ;
+  }
 
   /*
    * The rounding above leaves slack, and it has to sit at the old end of the
@@ -231,7 +255,9 @@ aud_tuner *aud_tuner_create(const aud_tuner_config *cfg)
 void aud_tuner_destroy(aud_tuner *t)
 {
   if (t == NULL)
+  {
     return;
+  }
 
   free(t->history);
   free(t->scratch);
@@ -252,7 +278,9 @@ void aud_tuner_push(aud_tuner *t, const float *mono, size_t frames)
   size_t n;
 
   if (t == NULL || mono == NULL || frames == 0)
+  {
     return;
+  }
 
   n = t->window;
 
@@ -274,11 +302,15 @@ void aud_tuner_push_pcm(aud_tuner *t, const void *buf, size_t frames, unsigned c
   unsigned bytes;
 
   if (t == NULL || p == NULL || frames == 0 || channels == 0)
+  {
     return;
+  }
 
   bytes = aud_format_hw_bytes(fmt);
   if (bytes == 0)
+  {
     return;
+  }
 
   while (frames > 0)
   {
@@ -361,11 +393,15 @@ static size_t first_dip(const aud_tuner *t)
   for (size_t tau = t->tau_min; tau <= t->tau_max; tau++)
   {
     if (t->cmnd[tau] >= t->cfg.threshold)
+    {
       continue;
+    }
 
     /* the crossing is on the way into the dip; walk down to its bottom */
     while (tau + 1u <= t->tau_max && t->cmnd[tau + 1u] < t->cmnd[tau])
+    {
       tau++;
+    }
 
     return tau;
   }
@@ -385,17 +421,25 @@ static double refine(const aud_tuner *t, size_t tau)
   double delta;
 
   if (tau < 1u || tau + 1u > t->tau_max)
+  {
     return (double)tau;
+  }
 
   a = t->cmnd[tau - 1u] - 2.0 * t->cmnd[tau] + t->cmnd[tau + 1u];
   if (!(a > 0.0))
+  {
     return (double)tau;
+  }
 
   delta = (t->cmnd[tau - 1u] - t->cmnd[tau + 1u]) / (2.0 * a);
   if (delta < -1.0)
+  {
     delta = -1.0;
+  }
   if (delta > 1.0)
+  {
     delta = 1.0;
+  }
 
   return (double)tau + delta;
 }
@@ -407,7 +451,9 @@ static double window_level_db(const aud_tuner *t)
   double sum = 0.0;
 
   for (size_t i = 0; i < t->integration; i++)
+  {
     sum += (double)x[i] * (double)x[i];
+  }
 
   return aud_format_dbfs(sqrt(sum / (double)t->integration));
 }
@@ -418,7 +464,9 @@ static double window_level_db(const aud_tuner *t)
 static double smoothing_step(double dt, double tau)
 {
   if (!(tau > 0.0) || !(dt > 0.0))
+  {
     return 1.0;
+  }
 
   return 1.0 - exp(-dt / tau);
 }
@@ -457,15 +505,21 @@ int aud_tuner_analyse(aud_tuner *t, double dt, aud_tuner_reading *out)
   size_t tau;
 
   if (out == NULL)
+  {
     out = &scratch;
+  }
 
   aud_tuner_describe(0.0, 0.0, out); /* unvoiced, with every field cleared */
 
   if (t == NULL)
+  {
     return 0;
+  }
 
   if (dt < 0.0)
+  {
     dt = 0.0;
+  }
 
   level_db = window_level_db(t);
 
@@ -489,9 +543,13 @@ int aud_tuner_analyse(aud_tuner *t, double dt, aud_tuner_reading *out)
         detected = hz;
         t->confidence = 1.0 - t->cmnd[tau];
         if (t->confidence < 0.0)
+        {
           t->confidence = 0.0;
+        }
         if (t->confidence > 1.0)
+        {
           t->confidence = 1.0;
+        }
       }
     }
   }

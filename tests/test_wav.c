@@ -29,7 +29,9 @@ static long slurp(const char *path, unsigned char *buf, size_t cap)
   size_t n;
 
   if (f == NULL)
+  {
     return -1;
+  }
   n = fread(buf, 1, cap, f);
   fclose(f);
   return (long)n;
@@ -168,7 +170,9 @@ static int write_take(const char *path, uint32_t rate, uint16_t channels, uint16
   wav_writer w;
 
   if (wav_open(&w, path, rate, channels, bits, 1) != 0)
+  {
     return -1;
+  }
   if (wav_write(&w, payload, bytes) != 0)
   {
     wav_discard(&w);
@@ -251,7 +255,9 @@ TEST(the_per_channel_reader_does_not_clamp_float)
 
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
   fclose(f);
 
@@ -354,7 +360,9 @@ TEST(reader_skips_unknown_chunks)
   f = fopen(g_path, "wb");
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
   fclose(f);
 
@@ -432,7 +440,9 @@ TEST(reader_survives_a_lying_header)
   f = fopen(g_path, "wb");
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
   fclose(f);
 

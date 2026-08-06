@@ -43,9 +43,13 @@ void aud_json_string(FILE *out, const char *s)
        * not, and escaping it makes a file path harder to read for no gain.
        */
       if (*p < 0x20u)
+      {
         fprintf(out, "\\u%04x", (unsigned)*p);
+      }
       else
+      {
         fputc((int)*p, out);
+      }
       break;
     }
   }

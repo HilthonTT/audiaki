@@ -12,7 +12,9 @@ static void render_string(char *buf, size_t size, const char *s)
 
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   aud_json_string(f, s);
   fclose(f);
 }
@@ -23,7 +25,9 @@ static void render_number(char *buf, size_t size, double v, int decimals)
 
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   aud_json_number(f, v, decimals);
   fclose(f);
 }

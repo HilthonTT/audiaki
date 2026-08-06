@@ -33,7 +33,9 @@ struct aud_spectrum
 void aud_spectrum_config_defaults(aud_spectrum_config *cfg, unsigned rate, size_t bands)
 {
   if (cfg == NULL)
+  {
     return;
+  }
 
   memset(cfg, 0, sizeof(*cfg));
   cfg->rate = rate;
@@ -69,7 +71,9 @@ static void map_bands(aud_spectrum *s)
   double ratio;
 
   if (top <= cfg->min_hz)
+  {
     top = cfg->min_hz * 2.0;
+  }
   ratio = top / cfg->min_hz;
 
   for (size_t b = 0; b < cfg->bands; b++)
@@ -83,15 +87,25 @@ static void map_bands(aud_spectrum *s)
     size_t hi = (size_t)(f1 / bin_hz);
 
     if (lo < 1)
-      lo = 1; /* bin 0 is DC: a guitar interface's offset, not a note */
+    {
+      lo = 1;
+    } /* bin 0 is DC: a guitar interface's offset, not a note */
     if (hi <= lo)
+    {
       hi = lo + 1;
+    }
     if (lo > usable)
+    {
       lo = usable;
+    }
     if (hi > usable)
+    {
       hi = usable;
+    }
     if (hi <= lo)
+    {
       lo = hi > 0 ? hi - 1 : 0;
+    }
 
     s->lo[b] = lo;
     s->hi[b] = hi;
@@ -152,7 +166,9 @@ aud_spectrum *aud_spectrum_create(const aud_spectrum_config *cfg)
 void aud_spectrum_destroy(aud_spectrum *s)
 {
   if (s == NULL)
+  {
     return;
+  }
 
   free(s->history);
   free(s->window);
@@ -181,7 +197,9 @@ void aud_spectrum_push(aud_spectrum *s, const float *mono, size_t frames)
   size_t n;
 
   if (s == NULL || mono == NULL || frames == 0)
+  {
     return;
+  }
 
   n = s->cfg.fft_size;
 
@@ -209,11 +227,15 @@ void aud_spectrum_push_pcm(aud_spectrum *s, const void *buf, size_t frames,
   size_t chunk;
 
   if (s == NULL || p == NULL || frames == 0 || channels == 0)
+  {
     return;
+  }
 
   bytes = aud_format_hw_bytes(fmt);
   if (bytes == 0)
+  {
     return;
+  }
 
   chunk = s->cfg.fft_size; /* scratch capacity */
 
@@ -233,7 +255,9 @@ void aud_spectrum_push_pcm(aud_spectrum *s, const void *buf, size_t frames,
 static double smoothing_step(double dt, double tau)
 {
   if (!(tau > 0.0) || !(dt > 0.0))
+  {
     return 1.0;
+  }
   return 1.0 - exp(-dt / tau);
 }
 
@@ -244,7 +268,9 @@ const float *aud_spectrum_analyse(aud_spectrum *s, double dt)
   double fall;
 
   if (s == NULL)
+  {
     return NULL;
+  }
 
   n = s->cfg.fft_size;
 
@@ -275,15 +301,21 @@ const float *aud_spectrum_analyse(aud_spectrum *s, double dt)
     {
       double mag = (double)aud_fft_magnitude(s->re[k], s->im[k]) * s->norm;
       if (mag > peak)
+      {
         peak = mag;
+      }
     }
 
     db = peak > 0.0 ? 20.0 * log10(peak) : s->cfg.floor_db;
     target = (db - s->cfg.floor_db) / -s->cfg.floor_db;
     if (target < 0.0)
+    {
       target = 0.0;
+    }
     if (target > 1.0)
+    {
       target = 1.0;
+    }
 
     step = target > (double)s->values[b] ? rise : fall;
     s->values[b] = (float)((double)s->values[b] + (target - (double)s->values[b]) * step);

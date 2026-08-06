@@ -19,7 +19,9 @@ static unsigned log2_exact(size_t n)
   unsigned bits = 0;
 
   while ((n >> bits) > 1u)
+  {
     bits++;
+  }
   return bits;
 }
 
@@ -28,7 +30,9 @@ static size_t reverse_bits(size_t value, unsigned bits)
   size_t out = 0;
 
   for (unsigned i = 0; i < bits; i++)
+  {
     out = (out << 1) | ((value >> i) & (size_t)1);
+  }
   return out;
 }
 
@@ -37,7 +41,9 @@ void aud_fft_forward(float *re, float *im, size_t n)
   unsigned bits;
 
   if (re == NULL || im == NULL || !aud_fft_is_pow2(n))
+  {
     return;
+  }
 
   bits = log2_exact(n);
 
@@ -90,7 +96,9 @@ void aud_fft_forward(float *re, float *im, size_t n)
 void aud_fft_hann(float *window, size_t n)
 {
   if (window == NULL || n == 0)
+  {
     return;
+  }
 
   if (n == 1)
   {
@@ -99,7 +107,9 @@ void aud_fft_hann(float *window, size_t n)
   }
 
   for (size_t i = 0; i < n; i++)
+  {
     window[i] = (float)(0.5 * (1.0 - cos(2.0 * AUD_PI * (double)i / (double)n)));
+  }
 }
 
 float aud_fft_magnitude(float re, float im)

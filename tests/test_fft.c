@@ -38,7 +38,9 @@ TEST(dc_lands_in_bin_zero)
   /* a constant signal is all bin 0, with magnitude n */
   CHECK_EQ_DBL(aud_fft_magnitude(re[0], im[0]), 8.0, 1e-4);
   for (size_t k = 1; k < 8; k++)
+  {
     CHECK_EQ_DBL(aud_fft_magnitude(re[k], im[k]), 0.0, 1e-4);
+  }
 }
 
 TEST(impulse_is_flat)
@@ -54,7 +56,9 @@ TEST(impulse_is_flat)
 
   /* a unit impulse at t = 0 transforms to 1.0 in every bin */
   for (size_t k = 0; k < 16; k++)
+  {
     CHECK_EQ_DBL(aud_fft_magnitude(re[k], im[k]), 1.0, 1e-5);
+  }
 }
 
 TEST(sine_lands_in_its_own_bin)
@@ -80,7 +84,9 @@ TEST(sine_lands_in_its_own_bin)
   for (size_t k = 0; k < n; k++)
   {
     if (k == bin || k == n - bin)
+    {
       continue;
+    }
     CHECK_EQ_DBL(aud_fft_magnitude(re[k], im[k]), 0.0, 1e-3);
   }
 }
@@ -112,7 +118,9 @@ TEST(hann_window_shape)
   /* the coherent gain the analyser's normalisation assumes */
   double sum = 0.0;
   for (size_t i = 0; i < 8; i++)
+  {
     sum += (double)w[i];
+  }
   CHECK_EQ_DBL(sum, 4.0, 1e-5);
 }
 
@@ -121,7 +129,9 @@ TEST(hann_window_shape)
 static void fill_sine(float *dst, size_t frames, double hz, unsigned rate, double amp)
 {
   for (size_t i = 0; i < frames; i++)
+  {
     dst[i] = (float)(amp * sin(2.0 * AUD_TEST_PI * hz * (double)i / (double)rate));
+  }
 }
 
 TEST(spectrum_rejects_bad_config)
@@ -149,13 +159,17 @@ TEST(spectrum_is_silent_before_any_audio)
   s = aud_spectrum_create(&cfg);
   CHECK(s != NULL);
   if (s == NULL)
+  {
     return;
+  }
 
   CHECK_EQ_INT(aud_spectrum_bands(s), 16);
 
   v = aud_spectrum_analyse(s, 1.0 / 60.0);
   for (size_t b = 0; b < 16; b++)
+  {
     CHECK_EQ_DBL(v[b], 0.0, 1e-6);
+  }
 
   aud_spectrum_destroy(s);
 }
@@ -174,7 +188,9 @@ TEST(spectrum_peaks_at_the_input_frequency)
   s = aud_spectrum_create(&cfg);
   CHECK(s != NULL);
   if (s == NULL)
+  {
     return;
+  }
 
   audio = malloc(cfg.fft_size * sizeof(*audio));
   CHECK(audio != NULL);
@@ -193,7 +209,9 @@ TEST(spectrum_peaks_at_the_input_frequency)
   for (size_t b = 1; b < bands; b++)
   {
     if (v[b] > v[loudest])
+    {
       loudest = b;
+    }
   }
 
   /*
@@ -226,7 +244,9 @@ TEST(spectrum_decays_towards_silence)
   s = aud_spectrum_create(&cfg);
   CHECK(s != NULL);
   if (s == NULL)
+  {
     return;
+  }
 
   audio = calloc(cfg.fft_size, sizeof(*audio));
   CHECK(audio != NULL);
@@ -243,7 +263,9 @@ TEST(spectrum_decays_towards_silence)
   for (size_t b = 0; b < 16; b++)
   {
     if (v[b] > loud)
+    {
       loud = v[b];
+    }
   }
   CHECK(loud > 0.5);
 
@@ -251,10 +273,14 @@ TEST(spectrum_decays_towards_silence)
   memset(audio, 0, cfg.fft_size * sizeof(*audio));
   aud_spectrum_push(s, audio, cfg.fft_size);
   for (int i = 0; i < 60; i++)
+  {
     v = aud_spectrum_analyse(s, 1.0 / 60.0);
+  }
 
   for (size_t b = 0; b < 16; b++)
+  {
     CHECK(v[b] < 0.05);
+  }
 
   free(audio);
   aud_spectrum_destroy(s);
@@ -272,7 +298,9 @@ TEST(spectrum_accepts_pcm_directly)
   s = aud_spectrum_create(&cfg);
   CHECK(s != NULL);
   if (s == NULL)
+  {
     return;
+  }
 
   frames = cfg.fft_size;
   pcm = malloc(frames * 2 * sizeof(*pcm)); /* stereo */
@@ -297,7 +325,9 @@ TEST(spectrum_accepts_pcm_directly)
   for (size_t b = 0; b < 16; b++)
   {
     if (from_pcm[b] > loudest)
+    {
       loudest = from_pcm[b];
+    }
   }
   CHECK(loudest > 0.8);
 

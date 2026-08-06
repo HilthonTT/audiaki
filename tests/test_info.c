@@ -18,7 +18,9 @@ static int write_take(uint32_t rate, uint16_t channels, uint16_t bits,
   wav_writer w;
 
   if (wav_open(&w, g_path, rate, channels, bits, 1) != 0)
+  {
     return -1;
+  }
   if (wav_write(&w, payload, bytes) != 0)
   {
     wav_discard(&w);
@@ -116,9 +118,13 @@ TEST(the_noise_floor_ignores_the_loud_part)
   static int16_t samples[2000];
 
   for (size_t i = 0; i < 1000; i++)
+  {
     samples[i] = (i % 2 == 0) ? 100 : -100;
+  }
   for (size_t i = 1000; i < 2000; i++)
+  {
     samples[i] = (i % 2 == 0) ? 30000 : -30000;
+  }
 
   CHECK_EQ_INT(write_take(1000, 1, 16, samples, sizeof(samples)), 0);
   CHECK_EQ_INT(aud_info_analyse(g_path, &r), 0);
@@ -144,7 +150,9 @@ TEST(a_truncated_take_is_reported_as_short)
 
   CHECK(f != NULL);
   if (f == NULL)
+  {
     return;
+  }
   CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
   fclose(f);
 

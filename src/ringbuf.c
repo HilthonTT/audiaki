@@ -17,7 +17,9 @@ static size_t round_up_pow2(size_t n)
   while (p < n)
   {
     if (p > SIZE_MAX / 2)
+    {
       return 0;
+    }
     p *= 2;
   }
   return p;
@@ -63,7 +65,9 @@ int aud_ringbuf_init(aud_ringbuf *rb, size_t min_slots)
 void aud_ringbuf_free(aud_ringbuf *rb)
 {
   if (rb == NULL)
+  {
     return;
+  }
 
   free(rb->data);
   rb->data = NULL;
@@ -76,7 +80,9 @@ void aud_ringbuf_free(aud_ringbuf *rb)
 size_t aud_ringbuf_capacity(const aud_ringbuf *rb)
 {
   if (rb == NULL || rb->data == NULL)
+  {
     return 0;
+  }
 
   return rb->capacity - 1;
 }
@@ -91,7 +97,9 @@ size_t aud_ringbuf_available(const aud_ringbuf *rb)
   size_t r;
 
   if (rb == NULL || rb->data == NULL)
+  {
     return 0;
+  }
 
   w = atomic_load_explicit(&rb->write, memory_order_acquire);
   r = atomic_load_explicit(&rb->read, memory_order_acquire);
@@ -101,7 +109,9 @@ size_t aud_ringbuf_available(const aud_ringbuf *rb)
 size_t aud_ringbuf_space(const aud_ringbuf *rb)
 {
   if (rb == NULL || rb->data == NULL)
+  {
     return 0;
+  }
 
   return aud_ringbuf_capacity(rb) - aud_ringbuf_available(rb);
 }
@@ -113,11 +123,15 @@ static void store(aud_ringbuf *rb, size_t w, const float *src, size_t count)
   size_t first = rb->capacity - offset;
 
   if (first > count)
+  {
     first = count;
+  }
 
   memcpy(rb->data + offset, src, first * sizeof(*rb->data));
   if (count > first)
+  {
     memcpy(rb->data, src + first, (count - first) * sizeof(*rb->data));
+  }
 }
 
 /* Copy out of the ring at `r`, splitting at the wrap. Does not publish. */
@@ -127,11 +141,15 @@ static void load(const aud_ringbuf *rb, size_t r, float *dst, size_t count)
   size_t first = rb->capacity - offset;
 
   if (first > count)
+  {
     first = count;
+  }
 
   memcpy(dst, rb->data + offset, first * sizeof(*rb->data));
   if (count > first)
+  {
     memcpy(dst + first, rb->data, (count - first) * sizeof(*rb->data));
+  }
 }
 
 size_t aud_ringbuf_write(aud_ringbuf *rb, const float *src, size_t count)
@@ -140,13 +158,19 @@ size_t aud_ringbuf_write(aud_ringbuf *rb, const float *src, size_t count)
   size_t space;
 
   if (rb == NULL || rb->data == NULL || src == NULL || count == 0)
+  {
     return 0;
+  }
 
   space = aud_ringbuf_space(rb);
   if (count > space)
+  {
     count = space;
+  }
   if (count == 0)
+  {
     return 0;
+  }
 
   w = atomic_load_explicit(&rb->write, memory_order_relaxed);
   store(rb, w, src, count);
@@ -163,7 +187,9 @@ size_t aud_ringbuf_write_overwrite(aud_ringbuf *rb, const float *src, size_t cou
   size_t space;
 
   if (rb == NULL || rb->data == NULL || src == NULL || count == 0)
+  {
     return 0;
+  }
 
   capacity = aud_ringbuf_capacity(rb);
 
@@ -193,13 +219,19 @@ size_t aud_ringbuf_read(aud_ringbuf *rb, float *dst, size_t count)
   size_t have;
 
   if (rb == NULL || rb->data == NULL || dst == NULL || count == 0)
+  {
     return 0;
+  }
 
   have = aud_ringbuf_available(rb);
   if (count > have)
+  {
     count = have;
+  }
   if (count == 0)
+  {
     return 0;
+  }
 
   r = atomic_load_explicit(&rb->read, memory_order_relaxed);
   load(rb, r, dst, count);
@@ -215,13 +247,19 @@ size_t aud_ringbuf_skip(aud_ringbuf *rb, size_t count)
   size_t have;
 
   if (rb == NULL || rb->data == NULL || count == 0)
+  {
     return 0;
+  }
 
   have = aud_ringbuf_available(rb);
   if (count > have)
+  {
     count = have;
+  }
   if (count == 0)
+  {
     return 0;
+  }
 
   r = atomic_load_explicit(&rb->read, memory_order_relaxed);
   atomic_store_explicit(&rb->read, r + count, memory_order_release);
@@ -231,7 +269,9 @@ size_t aud_ringbuf_skip(aud_ringbuf *rb, size_t count)
 void aud_ringbuf_reset(aud_ringbuf *rb)
 {
   if (rb == NULL || rb->data == NULL)
+  {
     return;
+  }
 
   atomic_store_explicit(&rb->read, 0, memory_order_relaxed);
   atomic_store_explicit(&rb->write, 0, memory_order_release);

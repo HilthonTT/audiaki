@@ -8,7 +8,9 @@
 static void fill(float *buf, size_t n, float base)
 {
   for (size_t i = 0; i < n; i++)
+  {
     buf[i] = base + (float)i;
+  }
 }
 
 TEST(init_rounds_capacity_up_to_a_power_of_two)
@@ -54,7 +56,9 @@ TEST(a_write_comes_back_out_in_order)
   CHECK_EQ_INT(aud_ringbuf_available(&rb), 0);
 
   for (size_t i = 0; i < 16; i++)
+  {
     CHECK_EQ_DBL(out[i], in[i], 0.0);
+  }
 
   aud_ringbuf_free(&rb);
 }

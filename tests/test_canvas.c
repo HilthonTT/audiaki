@@ -49,7 +49,9 @@ TEST(clear_and_bytes)
   for (size_t y = 0; y < 3; y++)
   {
     for (size_t x = 0; x < 4; x++)
+    {
       CHECK_EQ_INT(pixel_at(&c, x, y), color);
+    }
   }
 
   aud_canvas_free(&c);

@@ -34,7 +34,9 @@ void aud_monitor_config_defaults(aud_monitor_config *cfg, unsigned rate,
                                  unsigned channels)
 {
   if (cfg == NULL)
+  {
     return;
+  }
 
   memset(cfg, 0, sizeof(*cfg));
   cfg->name = AUD_MONITOR_DEFAULT_DEVICE;
@@ -193,7 +195,9 @@ aud_monitor *aud_monitor_open(const aud_monitor_config *cfg)
   {
     aud_warn("monitor: cannot open playback device '%s': %s", name, snd_strerror(err));
     if (err == -EBUSY)
+    {
       aud_info("the output is held exclusively by another program");
+    }
     free(m);
     return NULL;
   }
@@ -225,7 +229,9 @@ aud_monitor *aud_monitor_open(const aud_monitor_config *cfg)
 void aud_monitor_close(aud_monitor *m)
 {
   if (m == NULL)
+  {
     return;
+  }
 
   if (m->pcm != NULL)
   {
@@ -259,9 +265,13 @@ static void stage_samples(int16_t *dst, const float *src, size_t samples, float 
     float v = src[i] * gain;
 
     if (v > 1.0f)
+    {
       v = 1.0f;
+    }
     else if (v < -1.0f)
+    {
       v = -1.0f;
+    }
 
     /*
      * 32767 rather than 32768: scaling by the negative full scale would let a
@@ -275,10 +285,14 @@ static void stage_samples(int16_t *dst, const float *src, size_t samples, float 
 static int recover(aud_monitor *m, int err)
 {
   if (err == -EPIPE)
+  {
     m->underruns++;
+  }
 
   if (snd_pcm_recover(m->pcm, err, 1 /* silent */) == 0)
+  {
     return 0;
+  }
 
   aud_warn("monitor: playback failed: %s", snd_strerror(err));
   m->failed = 1;
@@ -290,18 +304,26 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, f
   snd_pcm_sframes_t avail;
 
   if (m == NULL || m->failed)
+  {
     return -1;
+  }
   if (interleaved == NULL || frames == 0)
+  {
     return 0;
+  }
 
   avail = snd_pcm_avail_update(m->pcm);
   if (avail < 0)
   {
     if (recover(m, (int)avail) != 0)
+    {
       return -1;
+    }
     avail = snd_pcm_avail_update(m->pcm);
     if (avail < 0)
-      return 0; /* try again with the next period */
+    {
+      return 0;
+    } /* try again with the next period */
   }
 
   /*
@@ -332,7 +354,9 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, f
         return 0;
       }
       if (recover(m, (int)wrote) != 0)
+      {
         return -1;
+      }
       m->dropped += (unsigned long)frames;
       return 0;
     }
@@ -347,9 +371,13 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, f
 void aud_monitor_flush(aud_monitor *m)
 {
   if (m == NULL || m->pcm == NULL || m->failed)
+  {
     return;
+  }
 
   snd_pcm_drop(m->pcm);
   if (snd_pcm_prepare(m->pcm) < 0)
+  {
     m->failed = 1;
+  }
 }

@@ -103,7 +103,9 @@ static const char *const mode_names[AUD_VIZ_MODE_COUNT] = {
 const char *aud_viz_mode_name(aud_viz_mode mode)
 {
   if (mode < 0 || mode >= AUD_VIZ_MODE_COUNT)
+  {
     return "unknown";
+  }
 
   return mode_names[mode];
 }
@@ -111,7 +113,9 @@ const char *aud_viz_mode_name(aud_viz_mode mode)
 int aud_viz_mode_from_name(const char *name, aud_viz_mode *out)
 {
   if (name == NULL || out == NULL)
+  {
     return -1;
+  }
 
   for (int i = 0; i < AUD_VIZ_MODE_COUNT; i++)
   {
@@ -122,7 +126,9 @@ int aud_viz_mode_from_name(const char *name, aud_viz_mode *out)
     {
       char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a - 'A' + 'a') : *a;
       if (ca != *b)
+      {
         break;
+      }
       a++;
       b++;
     }
@@ -216,13 +222,19 @@ aud_viz *aud_viz_create(unsigned rate, size_t bands)
   aud_viz *v;
 
   if (bands < AUD_SPECTRUM_MIN_BANDS)
+  {
     bands = AUD_SPECTRUM_MIN_BANDS;
+  }
   if (bands > AUD_SPECTRUM_MAX_BANDS)
+  {
     bands = AUD_SPECTRUM_MAX_BANDS;
+  }
 
   v = calloc(1, sizeof(*v));
   if (v == NULL)
+  {
     return NULL;
+  }
 
   aud_spectrum_config_defaults(&cfg, rate, bands);
   v->spectrum = aud_spectrum_create(&cfg);
@@ -277,12 +289,18 @@ aud_viz *aud_viz_create(unsigned rate, size_t bands)
 void aud_viz_destroy(aud_viz *v)
 {
   if (v == NULL)
+  {
     return;
+  }
 
   if (v->glow_ready)
+  {
     UnloadTexture(v->glow);
+  }
   if (v->fall_ready)
+  {
     UnloadTexture(v->fall);
+  }
 
   aud_spectrum_destroy(v->spectrum);
   aud_tuner_destroy(v->tuner);
@@ -295,7 +313,9 @@ void aud_viz_destroy(aud_viz *v)
 void aud_viz_push(aud_viz *v, const float *mono, size_t frames)
 {
   if (v == NULL || mono == NULL || frames == 0)
+  {
     return;
+  }
 
   aud_spectrum_push(v->spectrum, mono, frames);
   aud_tuner_push(v->tuner, mono, frames);
@@ -334,7 +354,9 @@ static void push_column(aud_viz *v)
   Rectangle dst;
 
   if (!v->fall_ready || v->values == NULL)
+  {
     return;
+  }
 
   v->fall_head = (v->fall_head + 1) % VIZ_FALL_COLUMNS;
 
@@ -364,7 +386,9 @@ static void push_column(aud_viz *v)
 void aud_viz_update(aud_viz *v, float dt)
 {
   if (v == NULL)
+  {
     return;
+  }
 
   /*
    * The transform runs here, not in the draw call, so a frame that draws the
@@ -383,7 +407,9 @@ void aud_viz_update(aud_viz *v, float dt)
    * - paying for a needle nobody is looking at would slow every render down.
    */
   if (v->mode != AUD_VIZ_MODE_TUNER)
+  {
     return;
+  }
 
   v->tuner_clock += dt;
   if (v->tuner_clock >= VIZ_TUNER_INTERVAL)
@@ -401,7 +427,9 @@ size_t aud_viz_bands(const aud_viz *v)
 void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode)
 {
   if (v == NULL || mode < 0 || mode >= AUD_VIZ_MODE_COUNT)
+  {
     return;
+  }
 
   v->mode = mode;
 
@@ -411,7 +439,9 @@ void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode)
    * it would be the reading from whenever it was last looked at.
    */
   if (mode == AUD_VIZ_MODE_TUNER)
+  {
     v->tuner_clock = VIZ_TUNER_INTERVAL;
+  }
 }
 
 aud_viz_mode aud_viz_mode_get(const aud_viz *v)
@@ -422,7 +452,9 @@ aud_viz_mode aud_viz_mode_get(const aud_viz *v)
 aud_viz_mode aud_viz_cycle_mode(aud_viz *v)
 {
   if (v == NULL)
+  {
     return AUD_VIZ_MODE_BARS;
+  }
 
   aud_viz_set_mode(v, (aud_viz_mode)((v->mode + 1) % AUD_VIZ_MODE_COUNT));
   return v->mode;
@@ -443,9 +475,13 @@ static void draw_glow(const aud_viz *v, float cx, float cy, float size, Color ti
 static Color with_alpha(Color c, float alpha)
 {
   if (alpha < 0.0f)
+  {
     alpha = 0.0f;
+  }
   if (alpha > 1.0f)
+  {
     alpha = 1.0f;
+  }
 
   c.a = (unsigned char)(alpha * 255.0f + 0.5f);
   return c;
@@ -458,7 +494,9 @@ static void draw_cap(const aud_viz *v, size_t band, float cx, float cy, float sl
   float halo = slot * VIZ_CAP_HALO;
 
   if (halo < VIZ_HALO_MIN_PX)
+  {
     halo = VIZ_HALO_MIN_PX;
+  }
 
   /* louder bands bloom wider, which is what gives the display its dynamics */
   draw_glow(v, cx, cy, halo * (0.55f + 0.45f * value),
@@ -483,7 +521,9 @@ static void draw_bars(const aud_viz *v, Rectangle area, const float *values)
   float baseline = area.y + area.height;
 
   if (stem_w < 1.0f)
+  {
     stem_w = 1.0f;
+  }
 
   /* stems: a soft additive wash first, then the solid hairline over it */
   BeginBlendMode(BLEND_ADDITIVE);
@@ -494,7 +534,9 @@ static void draw_bars(const aud_viz *v, Rectangle area, const float *values)
     Rectangle r;
 
     if (h < VIZ_MIN_HEIGHT)
+    {
       h = VIZ_MIN_HEIGHT;
+    }
 
     r.x = cx - glow_w / 2.0f;
     r.y = baseline - h;
@@ -510,7 +552,9 @@ static void draw_bars(const aud_viz *v, Rectangle area, const float *values)
     float cx = area.x + slot * ((float)b + 0.5f);
 
     if (h < VIZ_MIN_HEIGHT)
+    {
       h = VIZ_MIN_HEIGHT;
+    }
 
     DrawRectangleRec((Rectangle){cx - stem_w / 2.0f, baseline - h, stem_w, h},
                      v->palette[b]);
@@ -522,7 +566,9 @@ static void draw_bars(const aud_viz *v, Rectangle area, const float *values)
     float h = values[b] * area.height;
 
     if (h < VIZ_MIN_HEIGHT)
+    {
       h = VIZ_MIN_HEIGHT;
+    }
 
     draw_cap(v, b, area.x + slot * ((float)b + 0.5f), baseline - h, slot, values[b]);
   }
@@ -540,7 +586,9 @@ static void draw_mirror(const aud_viz *v, Rectangle area, const float *values)
   float reach = area.height / 2.0f;
 
   if (stem_w < 1.0f)
+  {
     stem_w = 1.0f;
+  }
 
   for (size_t b = 0; b < v->bands; b++)
   {
@@ -548,7 +596,9 @@ static void draw_mirror(const aud_viz *v, Rectangle area, const float *values)
     float cx = area.x + slot * ((float)b + 0.5f);
 
     if (h < VIZ_MIN_HEIGHT)
+    {
       h = VIZ_MIN_HEIGHT;
+    }
 
     DrawRectangleRec((Rectangle){cx - stem_w / 2.0f, centre - h, stem_w, h * 2.0f},
                      v->palette[b]);
@@ -561,7 +611,9 @@ static void draw_mirror(const aud_viz *v, Rectangle area, const float *values)
     float cx = area.x + slot * ((float)b + 0.5f);
 
     if (h < VIZ_MIN_HEIGHT)
+    {
       h = VIZ_MIN_HEIGHT;
+    }
 
     draw_cap(v, b, cx, centre - h, slot, values[b]);
     draw_cap(v, b, cx, centre + h, slot, values[b]);
@@ -587,7 +639,9 @@ static void draw_radial(const aud_viz *v, Rectangle area, const float *values)
   float slot = span * 0.02f; /* what a cap's glow is sized against here */
 
   if (thickness < 1.5f)
+  {
     thickness = 1.5f;
+  }
 
   /* the ring the spokes stand on, so the centre is not an empty hole */
   DrawCircleLines((int)cx, (int)cy, inner - 3.0f, with_alpha(v->palette[0], 0.18f));
@@ -602,7 +656,9 @@ static void draw_radial(const aud_viz *v, Rectangle area, const float *values)
     Vector2 to;
 
     if (len < VIZ_MIN_HEIGHT)
+    {
       len = VIZ_MIN_HEIGHT;
+    }
 
     from.x = cx + ca * inner;
     from.y = cy + sa * inner;
@@ -619,7 +675,9 @@ static void draw_radial(const aud_viz *v, Rectangle area, const float *values)
     float len = values[b] * reach;
 
     if (len < VIZ_MIN_HEIGHT)
+    {
       len = VIZ_MIN_HEIGHT;
+    }
 
     draw_cap(v, b, cx + cosf(angle) * (inner + len), cy + sinf(angle) * (inner + len),
              slot, values[b]);
@@ -645,7 +703,9 @@ static size_t scope_trigger(const aud_viz *v)
   {
     /* ages run backwards in time, so age+1 is the earlier sample */
     if (wave_at(v, age + 1) <= 0.0f && wave_at(v, age) > 0.0f)
+    {
       return age;
+    }
   }
 
   return newest; /* silence, or no crossing in range: draw the latest anyway */
@@ -665,9 +725,13 @@ static void draw_scope(const aud_viz *v, Rectangle area)
     float sample = wave_at(v, age);
 
     if (sample > 1.0f)
+    {
       sample = 1.0f;
+    }
     if (sample < -1.0f)
+    {
       sample = -1.0f;
+    }
 
     points[i].x = area.x + area.width * t;
     points[i].y = centre - sample * reach;
@@ -745,9 +809,13 @@ static void draw_centred(const char *text, float cx, float y, int size, Color ti
 static float clampf(float v, float lo, float hi)
 {
   if (v < lo)
+  {
     return lo;
+  }
   if (v > hi)
+  {
     return hi;
+  }
   return v;
 }
 
@@ -823,9 +891,13 @@ static void draw_tuner(const aud_viz *v, Rectangle area)
     DrawRectangleRec((Rectangle){nx - 2.0f, track.y, 4.0f, track.height}, tint);
 
     if (in_tune)
+    {
       snprintf(line, sizeof(line), "in tune");
+    }
     else
+    {
       snprintf(line, sizeof(line), "%+.0f cents", r->cents);
+    }
     draw_centred(line, cx, track.y + track.height + (float)read_size * 0.7f, read_size,
                  tint);
 
@@ -859,7 +931,9 @@ static void draw_tuner(const aud_viz *v, Rectangle area)
 void aud_viz_draw(const aud_viz *v, Rectangle area)
 {
   if (v == NULL || area.width <= 0.0f || area.height <= 0.0f)
+  {
     return;
+  }
 
   /*
    * The tuner is text and a needle, so it needs neither the glow sprite nor a
@@ -873,7 +947,9 @@ void aud_viz_draw(const aud_viz *v, Rectangle area)
   }
 
   if (!v->glow_ready || v->values == NULL)
+  {
     return;
+  }
 
   switch (v->mode)
   {
@@ -888,7 +964,9 @@ void aud_viz_draw(const aud_viz *v, Rectangle area)
     return;
   case AUD_VIZ_MODE_WATERFALL:
     if (v->fall_ready)
+    {
       draw_waterfall(v, area);
+    }
     return;
   case AUD_VIZ_MODE_TUNER: /* handled above, before the spectrum is needed */
   case AUD_VIZ_MODE_BARS:

@@ -47,7 +47,9 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   int rc = -1;
 
   if (stats != NULL)
+  {
     memset(stats, 0, sizeof(*stats));
+  }
 
   if (hw_bytes == 0 || wav_bytes == 0)
   {
@@ -59,7 +61,9 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   {
     limit_frames = (uint64_t)(opts->duration * (double)dev->rate + 0.5);
     if (limit_frames == 0)
+    {
       limit_frames = 1;
+    }
   }
 
   hw_buf_bytes = (size_t)dev->period_frames * dev->channels * hw_bytes;
@@ -105,9 +109,13 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
                (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite) != 0)
   {
     if (errno == EEXIST)
+    {
       aud_error("%s already exists (pass --force to overwrite)", opts->output_path);
+    }
     else
+    {
       aud_perror("cannot create %s", opts->output_path);
+    }
     goto out;
   }
 
@@ -116,9 +124,13 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   aud_debug("period %lu frames (%.1f ms), buffer %lu frames", dev->period_frames,
             1000.0 * (double)dev->period_frames / dev->rate, dev->buffer_frames);
   if (opts->duration > 0.0)
+  {
     aud_info("stopping after %.2f s (Ctrl+C stops early)", opts->duration);
+  }
   else
+  {
     aud_info("press Ctrl+C to stop");
+  }
 
   while (!aud_signals_stop_requested())
   {
@@ -130,13 +142,19 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
 
     /* read only what is still missing so -t lands on an exact frame count */
     if (limit_frames != 0 && frames_written + want > limit_frames)
+    {
       want = (unsigned long)(limit_frames - frames_written);
+    }
 
     got = aud_device_read(dev, hw_buf, want, &xruns);
     if (got < 0)
+    {
       goto finish;
+    }
     if (got == 0)
+    {
       continue;
+    }
 
     samples = (size_t)got * dev->channels;
     nbytes = samples * wav_bytes;
@@ -149,7 +167,9 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
 
     if (repack)
+    {
       aud_format_repack(out_buf, hw_buf, samples, dev->format);
+    }
 
     if (wav_write(&wav, out_buf, nbytes) != 0)
     {
@@ -163,7 +183,9 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
      * device delivered, and out_buf may alias it anyway.
      */
     if (spectrum != NULL)
+    {
       aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
+    }
 
     frames_written += (uint64_t)got;
     elapsed = (double)frames_written / dev->rate;
@@ -191,7 +213,9 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
 
     if (limit_frames != 0 && frames_written >= limit_frames)
+    {
       break;
+    }
   }
 
   rc = 0;
@@ -213,7 +237,9 @@ finish:
              (double)(frames_written * dev->channels * wav_bytes) / (1024.0 * 1024.0),
              xruns, meter_clipped(&meter) ? ", clipping detected" : "");
     if (meter_clipped(&meter))
+    {
       aud_warn("input clipped - lower the level on the device and record again");
+    }
   }
 
   if (stats != NULL)
@@ -228,7 +254,9 @@ finish:
 out:
   aud_spectrum_destroy(spectrum);
   if (repack)
+  {
     free(out_buf);
+  }
   free(hw_buf);
   return rc;
 }

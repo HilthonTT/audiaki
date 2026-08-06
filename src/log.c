@@ -30,7 +30,9 @@ static void emit(const char *prefix, const char *fmt, va_list ap)
 {
   fputs(AUDIAKI_NAME ": ", stderr);
   if (prefix != NULL)
+  {
     fputs(prefix, stderr);
+  }
   vfprintf(stderr, fmt, ap);
   fputc('\n', stderr);
 }
@@ -48,7 +50,9 @@ void aud_warn(const char *fmt, ...)
   va_list ap;
 
   if (g_level < AUD_LOG_NORMAL)
+  {
     return;
+  }
   va_start(ap, fmt);
   emit("warning: ", fmt, ap);
   va_end(ap);
@@ -59,7 +63,9 @@ void aud_info(const char *fmt, ...)
   va_list ap;
 
   if (g_level < AUD_LOG_NORMAL)
+  {
     return;
+  }
   va_start(ap, fmt);
   emit(NULL, fmt, ap);
   va_end(ap);
@@ -70,7 +76,9 @@ void aud_debug(const char *fmt, ...)
   va_list ap;
 
   if (g_level < AUD_LOG_VERBOSE)
+  {
     return;
+  }
   va_start(ap, fmt);
   emit("debug: ", fmt, ap);
   va_end(ap);

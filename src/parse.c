@@ -14,18 +14,26 @@ int parse_uint(const char *text, unsigned min, unsigned max, unsigned *out)
   unsigned long value;
 
   if (text == NULL || out == NULL || *text == '\0')
+  {
     return -1;
+  }
   /* strtoul happily wraps "-1" into ULONG_MAX; reject signs outright. */
   if (*text < '0' || *text > '9')
+  {
     return -1;
+  }
 
   errno = 0;
   value = strtoul(text, &end, 10);
   if (errno != 0 || end == text || *end != '\0')
+  {
     return -1;
+  }
   if (value > (unsigned long)UINT_MAX || value < (unsigned long)min ||
       value > (unsigned long)max)
+  {
     return -1;
+  }
 
   *out = (unsigned)value;
   return 0;
@@ -51,15 +59,21 @@ int parse_size(const char *text, unsigned min, unsigned max, unsigned *out_width
   size_t len;
 
   if (text == NULL || out_width == NULL || out_height == NULL || *text == '\0')
+  {
     return -1;
+  }
 
   for (size_t i = 0; i < sizeof(shorthand) / sizeof(shorthand[0]); i++)
   {
     if (strcmp(text, shorthand[i].name) != 0)
+    {
       continue;
+    }
     if (shorthand[i].width < min || shorthand[i].width > max ||
         shorthand[i].height < min || shorthand[i].height > max)
+    {
       return -1;
+    }
     *out_width = shorthand[i].width;
     *out_height = shorthand[i].height;
     return 0;
@@ -67,19 +81,27 @@ int parse_size(const char *text, unsigned min, unsigned max, unsigned *out_width
 
   len = strlen(text);
   if (len >= sizeof(buf))
+  {
     return -1;
+  }
   memcpy(buf, text, len + 1);
 
   cross = strchr(buf, 'x');
   if (cross == NULL)
+  {
     cross = strchr(buf, 'X');
+  }
   if (cross == NULL || cross == buf)
+  {
     return -1;
+  }
   *cross = '\0';
 
   if (parse_uint(buf, min, max, &width) != 0 ||
       parse_uint(cross + 1, min, max, &height) != 0)
+  {
     return -1;
+  }
 
   *out_width = width;
   *out_height = height;
@@ -92,17 +114,25 @@ int parse_double(const char *text, double min, double max, double *out)
   double value;
 
   if (text == NULL || out == NULL || *text == '\0')
+  {
     return -1;
+  }
   /* a leading digit rules out "-1", "+1", "inf" and " 1" in one test */
   if (*text < '0' || *text > '9')
+  {
     return -1;
+  }
 
   errno = 0;
   value = strtod(text, &end);
   if (errno != 0 || end == text || *end != '\0' || !isfinite(value))
+  {
     return -1;
+  }
   if (value < min || value > max)
+  {
     return -1;
+  }
 
   *out = value;
   return 0;
@@ -123,11 +153,15 @@ int parse_duration(const char *text, double *out_seconds)
   double total = 0.0;
 
   if (text == NULL || out_seconds == NULL || *text == '\0')
+  {
     return -1;
+  }
 
   len = strlen(text);
   if (len >= sizeof(buf))
+  {
     return -1;
+  }
   memcpy(buf, text, len + 1);
 
   /* split on ':' in place, most significant field first */
@@ -135,9 +169,13 @@ int parse_duration(const char *text, double *out_seconds)
   for (char *p = buf; *p != '\0'; p++)
   {
     if (*p != ':')
+    {
       continue;
+    }
     if (n_fields == sizeof(fields) / sizeof(fields[0]))
+    {
       return -1;
+    }
     *p = '\0';
     fields[n_fields++] = p + 1;
   }
@@ -146,10 +184,14 @@ int parse_duration(const char *text, double *out_seconds)
   {
     double value;
     if (parse_field(fields[i], &value) != 0)
+    {
       return -1;
+    }
     /* only the leading field may exceed 59 ("90" seconds, "90:00" minutes) */
     if (i > 0 && value >= 60.0)
+    {
       return -1;
+    }
     total = total * 60.0 + value;
   }
 

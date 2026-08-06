@@ -83,7 +83,9 @@ aud_format aud_format_from_name(const char *name)
   };
 
   if (name == NULL)
+  {
     return AUD_FORMAT_UNKNOWN;
+  }
 
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
   {
@@ -93,12 +95,16 @@ aud_format aud_format_from_name(const char *name)
     {
       char ca = (*a >= 'A' && *a <= 'Z') ? (char)(*a - 'A' + 'a') : *a;
       if (ca != *b)
+      {
         break;
+      }
       a++;
       b++;
     }
     if (*a == '\0' && *b == '\0')
+    {
       return table[i].fmt;
+    }
   }
   return AUD_FORMAT_UNKNOWN;
 }
@@ -109,7 +115,9 @@ void aud_format_repack(void *dst, const void *src, size_t samples, aud_format fm
   const unsigned char *in = (const unsigned char *)src;
 
   if (fmt != AUD_FORMAT_S24_LE)
+  {
     return;
+  }
 
   /* 4 byte container -> 3 packed little-endian bytes, dropping the pad byte. */
   for (size_t i = 0; i < samples; i++)
@@ -134,7 +142,9 @@ static double peak_s16(const unsigned char *p, size_t n)
     memcpy(&s, p + i * 2, 2);
     int32_t v = (s < 0) ? -(int32_t)s : (int32_t)s;
     if (v > worst)
+    {
       worst = v;
+    }
   }
   return (double)worst / 32768.0;
 }
@@ -150,7 +160,9 @@ static double peak_s24_3(const unsigned char *p, size_t n)
     int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
     int32_t v = (s < 0) ? -s : s;
     if (v > worst)
+    {
       worst = v;
+    }
   }
   return (double)worst / 8388608.0;
 }
@@ -166,7 +178,9 @@ static double peak_s24_4(const unsigned char *p, size_t n)
     int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
     int32_t v = (s < 0) ? -s : s;
     if (v > worst)
+    {
       worst = v;
+    }
   }
   return (double)worst / 8388608.0;
 }
@@ -181,9 +195,13 @@ static double peak_s32(const unsigned char *p, size_t n)
     /* -INT32_MIN overflows, so widen before taking the absolute value */
     double v = (double)s;
     if (v < 0.0)
+    {
       v = -v;
+    }
     if (v > worst)
+    {
       worst = v;
+    }
   }
   return worst / 2147483648.0;
 }
@@ -195,7 +213,9 @@ double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_fo
   double peak;
 
   if (p == NULL || n == 0)
+  {
     return 0.0;
+  }
 
   switch (fmt)
   {
@@ -295,7 +315,9 @@ void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned cha
   const unsigned char *p = (const unsigned char *)src;
 
   if (dst == NULL || frames == 0)
+  {
     return;
+  }
 
   if (p == NULL || channels == 0)
   {
@@ -380,7 +402,9 @@ void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned ch
   size_t n = frames * (size_t)channels;
 
   if (dst == NULL || frames == 0 || channels == 0)
+  {
     return;
+  }
 
   if (p == NULL)
   {
@@ -412,7 +436,9 @@ void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned ch
 double aud_format_dbfs(double peak)
 {
   if (!(peak > 0.0))
+  {
     return AUD_DBFS_FLOOR;
+  }
 
   double db = 20.0 * log10(peak);
   return db < AUD_DBFS_FLOOR ? AUD_DBFS_FLOOR : db;

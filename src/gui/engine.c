@@ -65,7 +65,9 @@ void aud_engine_config_defaults(aud_engine_config *cfg)
   aud_device_config dev;
 
   if (cfg == NULL)
+  {
     return;
+  }
 
   aud_device_config_defaults(&dev);
   memset(cfg, 0, sizeof(*cfg));
@@ -96,12 +98,16 @@ static int close_take(aud_engine *e)
   int rc;
 
   if (!e->take_open)
+  {
     return 0;
+  }
 
   e->take_open = 0;
   rc = wav_close(&e->wav);
   if (rc != 0)
+  {
     set_error(e, "cannot finalise %s: %s", e->path, strerror(errno));
+  }
   return rc;
 }
 
@@ -132,7 +138,9 @@ static void sync_monitor(aud_engine *e)
     pthread_mutex_lock(&e->lock);
     e->monitoring = e->monitor != NULL;
     if (e->monitor == NULL)
+    {
       set_error(e, "cannot open the monitor output");
+    }
     pthread_mutex_unlock(&e->lock);
   }
   else if (!want && e->monitor != NULL)
@@ -152,7 +160,9 @@ static void feed_monitor(aud_engine *e, size_t frames)
   float gain;
 
   if (e->monitor == NULL)
+  {
     return;
+  }
 
   gain = (float)atomic_load_explicit(&e->monitor_gain, memory_order_relaxed) /
          (float)ENGINE_GAIN_SCALE;
@@ -190,7 +200,9 @@ static int write_period(aud_engine *e, size_t frames)
   }
 
   if (e->repack)
+  {
     aud_format_repack(e->out_buf, e->hw_buf, samples, e->dev.format);
+  }
 
   if (wav_write(&e->wav, e->out_buf, nbytes) != 0)
   {
@@ -226,7 +238,9 @@ static void *capture_thread(void *arg)
       break;
     }
     if (got == 0)
+    {
       continue;
+    }
 
     peak = aud_format_peak(e->hw_buf, (size_t)got, e->dev.channels, e->dev.format);
 
@@ -247,11 +261,15 @@ static void *capture_thread(void *arg)
     if (e->state == AUD_ENGINE_RECORDING)
     {
       if (peak >= AUD_CLIP_THRESHOLD)
+      {
         e->clipped = 1;
+      }
       write_period(e, (size_t)got);
     }
     if (e->monitor != NULL)
+    {
       e->monitor_dropped = aud_monitor_dropped(e->monitor);
+    }
 
     pthread_mutex_unlock(&e->lock);
   }
@@ -296,7 +314,9 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   dev_cfg.periods = cfg->periods;
 
   if (aud_device_open_capture(&e->dev, &dev_cfg) != 0)
+  {
     goto fail_lock;
+  }
 
   e->monitor_device = cfg->monitor_device;
   e->repack = aud_format_needs_repack(e->dev.format);
@@ -323,7 +343,9 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
 
   visual_slots = (size_t)(ENGINE_VISUAL_SECONDS * (double)e->dev.rate);
   if (visual_slots < period * 4)
+  {
     visual_slots = period * 4;
+  }
   if (aud_ringbuf_init(&e->visual, visual_slots) != 0)
   {
     aud_error("cannot allocate the display buffer");
@@ -347,7 +369,9 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
 
 fail_buffers:
   if (e->repack)
+  {
     free(e->out_buf);
+  }
   free(e->hw_buf);
   free(e->mono);
   free(e->inter);
@@ -362,11 +386,15 @@ fail_lock:
 void aud_engine_destroy(aud_engine *e)
 {
   if (e == NULL)
+  {
     return;
+  }
 
   atomic_store_explicit(&e->running, 0, memory_order_release);
   if (e->thread_started)
+  {
     pthread_join(e->thread, NULL);
+  }
 
   /* the thread is gone, so the lock is uncontended, but keep the discipline */
   pthread_mutex_lock(&e->lock);
@@ -378,7 +406,9 @@ void aud_engine_destroy(aud_engine *e)
   aud_device_close(&e->dev);
 
   if (e->repack)
+  {
     free(e->out_buf);
+  }
   free(e->hw_buf);
   free(e->mono);
   free(e->inter);
@@ -412,7 +442,9 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
   int rc = -1;
 
   if (e == NULL || path == NULL || path[0] == '\0')
+  {
     return -1;
+  }
 
   pthread_mutex_lock(&e->lock);
 
@@ -439,9 +471,13 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
                (uint16_t)aud_format_wav_bits(e->dev.format), overwrite) != 0)
   {
     if (errno == EEXIST)
+    {
       set_error(e, "%s already exists", e->path);
+    }
     else
+    {
       set_error(e, "cannot create %s: %s", e->path, strerror(errno));
+    }
     goto out;
   }
 
@@ -461,22 +497,30 @@ out:
 void aud_engine_pause(aud_engine *e)
 {
   if (e == NULL)
+  {
     return;
+  }
 
   pthread_mutex_lock(&e->lock);
   if (e->state == AUD_ENGINE_RECORDING)
+  {
     e->state = AUD_ENGINE_PAUSED;
+  }
   pthread_mutex_unlock(&e->lock);
 }
 
 void aud_engine_resume(aud_engine *e)
 {
   if (e == NULL)
+  {
     return;
+  }
 
   pthread_mutex_lock(&e->lock);
   if (e->state == AUD_ENGINE_PAUSED)
+  {
     e->state = AUD_ENGINE_RECORDING;
+  }
   pthread_mutex_unlock(&e->lock);
 }
 
@@ -485,12 +529,16 @@ int aud_engine_stop(aud_engine *e)
   int rc;
 
   if (e == NULL)
+  {
     return -1;
+  }
 
   pthread_mutex_lock(&e->lock);
   rc = close_take(e);
   if (e->state != AUD_ENGINE_FAILED)
+  {
     e->state = AUD_ENGINE_IDLE;
+  }
   pthread_mutex_unlock(&e->lock);
 
   return rc;
@@ -499,11 +547,15 @@ int aud_engine_stop(aud_engine *e)
 void aud_engine_status_get(aud_engine *e, aud_engine_status *out)
 {
   if (out == NULL)
+  {
     return;
+  }
 
   memset(out, 0, sizeof(*out));
   if (e == NULL)
+  {
     return;
+  }
 
   pthread_mutex_lock(&e->lock);
 
@@ -525,7 +577,9 @@ void aud_engine_status_get(aud_engine *e, aud_engine_status *out)
 void aud_engine_set_monitor(aud_engine *e, int enabled)
 {
   if (e == NULL)
+  {
     return;
+  }
 
   atomic_store_explicit(&e->monitor_want, enabled ? 1 : 0, memory_order_relaxed);
 }
@@ -535,13 +589,19 @@ void aud_engine_set_monitor_gain(aud_engine *e, float gain)
   int scaled;
 
   if (e == NULL)
+  {
     return;
+  }
 
   scaled = (int)(gain * (float)ENGINE_GAIN_SCALE + 0.5f);
   if (scaled < 0)
+  {
     scaled = 0;
+  }
   if (scaled > ENGINE_GAIN_MAX)
+  {
     scaled = ENGINE_GAIN_MAX;
+  }
 
   atomic_store_explicit(&e->monitor_gain, scaled, memory_order_relaxed);
 }
@@ -549,7 +609,9 @@ void aud_engine_set_monitor_gain(aud_engine *e, float gain)
 float aud_engine_monitor_gain(const aud_engine *e)
 {
   if (e == NULL)
+  {
     return 0.0f;
+  }
 
   return (float)atomic_load_explicit(&e->monitor_gain, memory_order_relaxed) /
          (float)ENGINE_GAIN_SCALE;
@@ -558,7 +620,9 @@ float aud_engine_monitor_gain(const aud_engine *e)
 int aud_engine_monitor_wanted(const aud_engine *e)
 {
   if (e == NULL)
+  {
     return 0;
+  }
 
   return atomic_load_explicit(&e->monitor_want, memory_order_relaxed);
 }
@@ -566,7 +630,9 @@ int aud_engine_monitor_wanted(const aud_engine *e)
 size_t aud_engine_read_visual(aud_engine *e, float *mono, size_t max)
 {
   if (e == NULL)
+  {
     return 0;
+  }
 
   return aud_ringbuf_read(&e->visual, mono, max);
 }

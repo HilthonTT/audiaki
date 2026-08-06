@@ -70,7 +70,9 @@ static int run_record(const aud_options *opts)
   }
 
   if (aud_device_open_capture(&dev, &cfg) != 0)
+  {
     return EXIT_FAILURE;
+  }
 
   rec_opts.output_path = output;
   rec_opts.duration = opts->duration;
@@ -107,7 +109,9 @@ static int run_tune(const aud_options *opts)
   }
 
   if (aud_device_open_capture(&dev, &cfg) != 0)
+  {
     return EXIT_FAILURE;
+  }
 
   tune_opts.a4_hz = opts->a4_hz;
   tune_opts.show_meter = opts->show_meter;
@@ -171,12 +175,18 @@ static int run_info(const aud_options *opts)
   aud_info_report report;
 
   if (aud_info_analyse(opts->input_path, &report) != 0)
+  {
     return EXIT_FAILURE;
+  }
 
   if (opts->json)
+  {
     aud_info_print_json(stdout, opts->input_path, &report);
+  }
   else
+  {
     aud_info_print(stdout, opts->input_path, &report);
+  }
 
   return EXIT_SUCCESS;
 }
@@ -187,7 +197,9 @@ int main(int argc, char *argv[])
   int rc = cli_parse(argc, argv, &opts);
 
   if (rc != 0)
+  {
     return rc;
+  }
 
   aud_log_set_level(opts.log_level);
 

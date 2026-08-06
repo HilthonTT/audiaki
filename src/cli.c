@@ -355,9 +355,13 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     case '?':
     default:
       if (optopt != 0)
+      {
         aud_error("unknown option '-%c'", optopt);
+      }
       else
+      {
         aud_error("unknown option '%s'", argv[optind - 1]);
+      }
       aud_info("run '" AUDIAKI_NAME " --help' for usage");
       return CLI_EXIT_USAGE;
     }

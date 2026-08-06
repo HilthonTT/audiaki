@@ -29,7 +29,9 @@
 static double clip_level(const wav_reader *r)
 {
   if (r->is_float)
+  {
     return 1.0;
+  }
   return 1.0 - 1.0 / ldexp(1.0, (int)r->bits - 1) - 1e-9;
 }
 
@@ -39,7 +41,9 @@ static int compare_double(const void *a, const void *b)
   double y = *(const double *)b;
 
   if (x < y)
+  {
     return -1;
+  }
   return x > y ? 1 : 0;
 }
 
@@ -74,10 +78,14 @@ int aud_info_analyse(const char *path, aud_info_report *out)
   if (wav_read_open(&r, path) != 0)
   {
     if (r.error != NULL && errno != 0)
+    {
       aud_error("cannot read %s: %s (%s)", path, r.error, strerror(errno));
+    }
     else
+    {
       aud_error("cannot read %s: %s", path,
                 r.error != NULL ? r.error : "unrecognised file");
+    }
     return -1;
   }
 
@@ -97,9 +105,13 @@ int aud_info_analyse(const char *path, aud_info_report *out)
    */
   window_frames = r.rate / INFO_WINDOW_DIVISOR;
   if (window_frames == 0)
+  {
     window_frames = 1;
+  }
   if (r.frames / window_frames > INFO_MAX_WINDOWS)
+  {
     window_frames = (size_t)(r.frames / INFO_MAX_WINDOWS) + 1;
+  }
   window_cap = (size_t)(r.frames / window_frames) + 2;
 
   chunk = malloc(INFO_CHUNK_FRAMES * channels * sizeof(*chunk));
@@ -120,7 +132,9 @@ int aud_info_analyse(const char *path, aud_info_report *out)
       goto out;
     }
     if (got == 0)
+    {
       break;
+    }
 
     for (long f = 0; f < got; f++)
     {
@@ -132,17 +146,23 @@ int aud_info_analyse(const char *path, aud_info_report *out)
         sum[c] += v;
         sumsq[c] += v * v;
         if (magnitude > peak[c])
+        {
           peak[c] = magnitude;
+        }
         if (magnitude >= threshold)
+        {
           clipped++;
+        }
         window_sumsq += v * v;
       }
 
       if (++window_have == window_frames)
       {
         if (window_count < window_cap)
+        {
           windows[window_count++] =
               sqrt(window_sumsq / (double)(window_frames * channels));
+        }
         window_sumsq = 0.0;
         window_have = 0;
       }
@@ -153,7 +173,9 @@ int aud_info_analyse(const char *path, aud_info_report *out)
 
   /* a trailing partial window still describes real audio, so keep it */
   if (window_have > 0 && window_count < window_cap)
+  {
     windows[window_count++] = sqrt(window_sumsq / (double)(window_have * channels));
+  }
 
   out->rate = r.rate;
   out->channels = r.channels;
@@ -171,7 +193,9 @@ int aud_info_analyse(const char *path, aud_info_report *out)
     out->channel_rms[c] = frames > 0 ? sqrt(sumsq[c] / (double)frames) : 0.0;
     out->channel_dc[c] = frames > 0 ? sum[c] / (double)frames : 0.0;
     if (peak[c] > out->peak)
+    {
       out->peak = peak[c];
+    }
     out->rms += sumsq[c];
   }
   out->rms = out->samples > 0 ? sqrt(out->rms / (double)out->samples) : 0.0;
@@ -202,11 +226,17 @@ static void format_clock(char *dst, size_t size, double seconds)
   double rest = rounded - (double)(whole - whole % 60ul);
 
   if (hours > 0)
+  {
     snprintf(dst, size, "%u:%02u:%05.2f", hours, minutes, rest);
+  }
   else if (minutes > 0)
+  {
     snprintf(dst, size, "%02u:%05.2f", minutes, rest);
+  }
   else
+  {
     snprintf(dst, size, "%.2f", rest);
+  }
 }
 
 static const char *encoding_name(const aud_info_report *r)
@@ -219,7 +249,9 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   char clock[32];
 
   if (out == NULL || r == NULL)
+  {
     return;
+  }
 
   format_clock(clock, sizeof(clock), r->duration);
 
@@ -230,8 +262,10 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   fprintf(out, "duration:    %s  (%llu frames)\n", clock, (unsigned long long)r->frames);
 
   if (r->header_frames > r->frames)
+  {
     fprintf(out, "truncated:   header claims %llu frames, %llu are present\n",
             (unsigned long long)r->header_frames, (unsigned long long)r->frames);
+  }
 
   fprintf(out, "peak:        %.1f dBFS\n", aud_format_dbfs(r->peak));
   fprintf(out, "rms:         %.1f dBFS\n", aud_format_dbfs(r->rms));
@@ -241,10 +275,12 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   if (r->channels > 1)
   {
     for (unsigned c = 0; c < r->channels; c++)
+    {
       fprintf(out, "%s ch %u: peak %6.1f dBFS  rms %6.1f dBFS  dc %+.5f\n",
               c == 0 ? "channels:   " : "            ", c + 1,
               aud_format_dbfs(r->channel_peak[c]), aud_format_dbfs(r->channel_rms[c]),
               r->channel_dc[c]);
+    }
   }
   else if (r->channels == 1)
   {
@@ -255,7 +291,9 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
 void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
 {
   if (out == NULL || r == NULL)
+  {
     return;
+  }
 
   fputs("{\n  \"file\": ", out);
   aud_json_string(out, path);

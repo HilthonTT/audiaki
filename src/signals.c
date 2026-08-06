@@ -21,9 +21,13 @@ int aud_signals_install_stop(void)
   sigemptyset(&sa.sa_mask);
 
   if (sigaction(SIGINT, &sa, NULL) != 0)
+  {
     return -1;
+  }
   if (sigaction(SIGTERM, &sa, NULL) != 0)
+  {
     return -1;
+  }
   return 0;
 }
 

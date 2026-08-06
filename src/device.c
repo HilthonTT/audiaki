@@ -61,10 +61,14 @@ static int open_pcm(const char *name, snd_pcm_t **out)
   {
     aud_error("cannot open capture device '%s': %s", name, snd_strerror(err));
     if (err == -EBUSY)
+    {
       aud_info("the device is in use - PipeWire or PulseAudio may hold it "
                "exclusively; try -D plughw:CARD=<name>,DEV=0");
+    }
     else if (err == -ENOENT)
+    {
       aud_info("run '" AUDIAKI_NAME " --list' to see the available capture devices");
+    }
     return -1;
   }
   return 0;
@@ -77,7 +81,9 @@ static aud_format select_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hw,
   if (wanted != AUD_FORMAT_UNKNOWN)
   {
     if (snd_pcm_hw_params_test_format(pcm, hw, to_alsa_format(wanted)) == 0)
+    {
       return wanted;
+    }
     aud_error("device does not support format %s", aud_format_name(wanted));
     return AUD_FORMAT_UNKNOWN;
   }
@@ -85,7 +91,9 @@ static aud_format select_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hw,
   for (size_t i = 0; i < sizeof(candidate_formats) / sizeof(candidate_formats[0]); i++)
   {
     if (snd_pcm_hw_params_test_format(pcm, hw, to_alsa_format(candidate_formats[i])) == 0)
+    {
       return candidate_formats[i];
+    }
   }
 
   aud_error("no supported capture format found (run --probe to see what the "
@@ -105,7 +113,9 @@ int aud_device_open_capture(aud_device *dev, const aud_device_config *cfg)
   memset(dev, 0, sizeof(*dev));
 
   if (open_pcm(cfg->name, &dev->pcm) != 0)
+  {
     return -1;
+  }
 
   snd_pcm_hw_params_alloca(&hw);
 
@@ -124,7 +134,9 @@ int aud_device_open_capture(aud_device *dev, const aud_device_config *cfg)
 
   dev->format = select_format(dev->pcm, hw, cfg->format);
   if (dev->format == AUD_FORMAT_UNKNOWN)
+  {
     goto fail;
+  }
 
   if ((err = snd_pcm_hw_params_set_format(dev->pcm, hw, to_alsa_format(dev->format))) < 0)
   {
@@ -141,7 +153,9 @@ int aud_device_open_capture(aud_device *dev, const aud_device_config *cfg)
     snd_pcm_hw_params_any(dev->pcm, hw);
     if (snd_pcm_hw_params_get_channels_min(hw, &cmin) == 0 &&
         snd_pcm_hw_params_get_channels_max(hw, &cmax) == 0)
+    {
       aud_info("device supports %u..%u channels", cmin, cmax);
+    }
     goto fail;
   }
 
@@ -152,7 +166,9 @@ int aud_device_open_capture(aud_device *dev, const aud_device_config *cfg)
     goto fail;
   }
   if (rate != cfg->rate)
+  {
     aud_warn("requested %u Hz, device negotiated %u Hz", cfg->rate, rate);
+  }
 
   period = cfg->period_frames;
   dir = 0;
@@ -204,7 +220,9 @@ fail:
 void aud_device_close(aud_device *dev)
 {
   if (dev->pcm == NULL)
+  {
     return;
+  }
 
   snd_pcm_close(dev->pcm);
   dev->pcm = NULL;
@@ -215,10 +233,14 @@ long aud_device_read(aud_device *dev, void *buf, unsigned long frames, unsigned 
   snd_pcm_sframes_t got = snd_pcm_readi(dev->pcm, buf, (snd_pcm_uframes_t)frames);
 
   if (got >= 0)
+  {
     return (long)got;
+  }
 
   if (got == -EPIPE && xruns != NULL)
+  {
     (*xruns)++;
+  }
 
   /* snd_pcm_recover handles EPIPE, ESTRPIPE and EINTR; anything else is fatal */
   got = snd_pcm_recover(dev->pcm, (int)got, 1 /* silent */);
@@ -251,7 +273,9 @@ int aud_device_probe(const char *name, int json)
   int err;
 
   if (open_pcm(name, &pcm) != 0)
+  {
     return -1;
+  }
 
   snd_pcm_hw_params_alloca(&hw);
   if ((err = snd_pcm_hw_params_any(pcm, hw)) < 0)
@@ -280,7 +304,9 @@ int aud_device_probe(const char *name, int json)
     for (int f = 0; f <= SND_PCM_FORMAT_LAST; f++)
     {
       if (snd_pcm_hw_params_test_format(pcm, hw, (snd_pcm_format_t)f) != 0)
+      {
         continue;
+      }
       fputs(first ? "" : ", ", stdout);
       aud_json_string(stdout, snd_pcm_format_name((snd_pcm_format_t)f));
       first = 0;
@@ -300,7 +326,9 @@ int aud_device_probe(const char *name, int json)
     for (int f = 0; f <= SND_PCM_FORMAT_LAST; f++)
     {
       if (snd_pcm_hw_params_test_format(pcm, hw, (snd_pcm_format_t)f) == 0)
+      {
         printf(" %s", snd_pcm_format_name((snd_pcm_format_t)f));
+      }
     }
     printf("\n");
 
@@ -324,7 +352,9 @@ static int push_entry(aud_device_entry **list, int count, const char *name,
   aud_device_entry *grown = realloc(*list, (size_t)(count + 1) * sizeof(**list));
 
   if (grown == NULL)
+  {
     return -1;
+  }
 
   *list = grown;
   snprintf(grown[count].name, sizeof(grown[count].name), "%s", name);
@@ -386,7 +416,9 @@ int aud_device_enumerate(aud_device_entry **out)
       snd_pcm_info_set_subdevice(pcm_info, 0);
       snd_pcm_info_set_stream(pcm_info, SND_PCM_STREAM_CAPTURE);
       if (snd_ctl_pcm_info(ctl, pcm_info) < 0)
-        continue; /* playback-only PCM */
+      {
+        continue;
+      } /* playback-only PCM */
 
       snprintf(device_name, sizeof(device_name), "hw:CARD=%s,DEV=%d",
                snd_ctl_card_info_get_id(card_info), device);
@@ -405,7 +437,9 @@ int aud_device_enumerate(aud_device_entry **out)
 
   next_card:
     if (snd_card_next(&card) < 0)
+    {
       break;
+    }
   }
 
   *out = list;
@@ -418,12 +452,18 @@ int aud_device_list(int json)
   int found = aud_device_enumerate(&list);
 
   if (found < 0)
+  {
     return -1;
+  }
 
   if (json)
+  {
     fputs("[", stdout);
+  }
   else
+  {
     printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
+  }
 
   for (int i = 0; i < found; i++)
   {
@@ -444,9 +484,13 @@ int aud_device_list(int json)
   }
 
   if (json)
+  {
     fputs(found > 0 ? "\n]\n" : "]\n", stdout);
+  }
   else if (found == 0)
+  {
     aud_warn("no capture devices found");
+  }
 
   free(list);
   return 0;

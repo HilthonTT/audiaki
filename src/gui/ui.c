@@ -17,9 +17,13 @@ static Color mix(Color a, Color b, float t)
   Color out;
 
   if (t < 0.0f)
+  {
     t = 0.0f;
+  }
   if (t > 1.0f)
+  {
     t = 1.0f;
+  }
 
   out.r = (unsigned char)((float)a.r + ((float)b.r - (float)a.r) * t);
   out.g = (unsigned char)((float)a.g + ((float)b.g - (float)a.g) * t);
@@ -103,7 +107,9 @@ static int clickable(Rectangle bounds, const char *label, Color tint, int enable
   aud_ui_text_centred(bounds, UI_FONT, text, label);
 
   if (enabled && hover)
+  {
     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+  }
 
   return hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
 }
@@ -132,7 +138,9 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
   int hover;
 
   if (value == NULL || !(span > 0.0f) || usable <= 0.0f)
+  {
     return 0;
+  }
 
   hover = enabled && hovering(bounds);
 
@@ -142,9 +150,13 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
     float next;
 
     if (want < 0.0f)
+    {
       want = 0.0f;
+    }
     if (want > 1.0f)
+    {
       want = 1.0f;
+    }
 
     next = min + want * span;
     if (next != *value)
@@ -156,9 +168,13 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
 
   t = (*value - min) / span;
   if (t < 0.0f)
+  {
     t = 0.0f;
+  }
   if (t > 1.0f)
+  {
     t = 1.0f;
+  }
   knob_x = bounds.x + knob_r + usable * t;
 
   track.x = bounds.x + knob_r;
@@ -179,7 +195,9 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
              enabled ? (hover ? WHITE : AUD_UI_TEXT) : fade_to(AUD_UI_MUTED, 0.5f));
 
   if (hover)
+  {
     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+  }
 
   return changed;
 }
@@ -191,9 +209,13 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
 static Color meter_color(float t)
 {
   if (t < 0.7f)
+  {
     return AUD_UI_OK;
+  }
   if (t < 0.92f)
+  {
     return AUD_UI_WARN;
+  }
   return AUD_UI_RECORD;
 }
 
@@ -202,9 +224,13 @@ void aud_ui_meter(Rectangle bounds, float level, float peak_hold)
   float roundness = 1.0f;
 
   if (level < 0.0f)
+  {
     level = 0.0f;
+  }
   if (level > 1.0f)
+  {
     level = 1.0f;
+  }
 
   DrawRectangleRounded(bounds, roundness, 6, AUD_UI_BG);
 
@@ -236,10 +262,14 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
   float strength;
 
   if (labels == NULL || selected == NULL || count <= 0 || bounds.width <= 0.0f)
+  {
     return 0;
+  }
 
   if (*selected < 0 || *selected >= count)
+  {
     *selected = 0;
+  }
 
   over = enabled && hovering(bounds);
   seg = bounds.width / (float)count;
@@ -247,7 +277,9 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
   /* faded until pointed at, so it stays out of the way of the visualiser */
   strength = (!dim || over) ? 1.0f : 0.45f;
   if (!enabled)
+  {
     strength *= 0.5f;
+  }
 
   DrawRectangleRounded(bounds, 0.4f, 8, fade_to(AUD_UI_PANEL, 0.55f * strength));
   DrawRectangleRoundedLines(bounds, 0.4f, 8, fade_to(AUD_UI_EDGE, 0.7f * strength));
@@ -274,7 +306,9 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
     aud_ui_text_centred(cell, 16, text, labels[i]);
 
     if (cell_hover)
+    {
       SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+    }
 
     if (cell_hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) && i != *selected)
     {
@@ -312,7 +346,9 @@ static void text_fit(float x, float y, int size, Color color, const char *text,
     buf[--len] = '\0';
     if (len + 3 < sizeof(buf) &&
         (float)MeasureText(TextFormat("%s...", buf), size) <= max_width)
+    {
       break;
+    }
   }
 
   DrawText(TextFormat("%s...", buf), (int)x, (int)y, size, color);
@@ -322,9 +358,13 @@ static void text_fit(float x, float y, int size, Color color, const char *text,
 static void clamp_scroll(int *scroll, int count, int rows)
 {
   if (*scroll > count - rows)
+  {
     *scroll = count - rows;
+  }
   if (*scroll < 0)
+  {
     *scroll = 0;
+  }
 }
 
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,
@@ -339,12 +379,18 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
   const char *label;
 
   if (items == NULL || selected == NULL || open == NULL || scroll == NULL || count <= 0)
+  {
     return 0;
+  }
 
   if (*selected < 0 || *selected >= count)
+  {
     *selected = 0;
+  }
   if (!enabled)
+  {
     *open = 0;
+  }
   was_open = *open;
 
   hover = enabled && hovering(bounds);
@@ -371,25 +417,37 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
 
     /* raylib wants triangle vertices counter-clockwise or it culls them */
     if (*open)
+    {
       DrawTriangle(a, b, c, enabled ? AUD_UI_MUTED : fade_to(AUD_UI_MUTED, 0.45f));
+    }
     else
+    {
       DrawTriangle(b, a, c, enabled ? AUD_UI_MUTED : fade_to(AUD_UI_MUTED, 0.45f));
+    }
   }
 
   if (hover)
+  {
     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+  }
 
   if (hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+  {
     *open = !*open;
+  }
 
   if (!*open)
+  {
     return 0;
+  }
 
   rows = count < AUD_UI_DROPDOWN_MAX_ROWS ? count : AUD_UI_DROPDOWN_MAX_ROWS;
 
   /* opening: bring the current selection into view rather than jumping to the top */
   if (!was_open && *selected >= rows)
+  {
     *scroll = *selected - rows + 1;
+  }
   clamp_scroll(scroll, count, rows);
 
   {
@@ -453,7 +511,9 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
     /* a click anywhere else closes it, which is what every other menu does */
     if (!clicked_inside && IsMouseButtonReleased(MOUSE_BUTTON_LEFT) &&
         !CheckCollisionPointRec(GetMousePosition(), panel) && !hover)
+    {
       *open = 0;
+    }
   }
 
   return changed;
@@ -467,10 +527,14 @@ void aud_ui_format_clock(char *dst, size_t size, double seconds)
   unsigned tenths;
 
   if (dst == NULL || size == 0)
+  {
     return;
+  }
 
   if (!(seconds > 0.0))
+  {
     seconds = 0.0;
+  }
 
   total = (unsigned)(seconds * 10.0 + 0.5);
   tenths = total % 10u;
@@ -478,7 +542,9 @@ void aud_ui_format_clock(char *dst, size_t size, double seconds)
   minutes = total / 600u;
 
   if (minutes > 99u)
-    minutes = 99u; /* the layout is sized for two digits */
+  {
+    minutes = 99u;
+  } /* the layout is sized for two digits */
 
   snprintf(dst, size, "%02u:%02u.%u", minutes, secs, tenths);
 }

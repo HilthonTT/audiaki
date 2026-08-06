@@ -64,7 +64,9 @@ static int same_name(const char *given, const char *known)
     char c = (*given >= 'A' && *given <= 'Z') ? (char)(*given - 'A' + 'a') : *given;
 
     if (c != *known)
+    {
       return 0;
+    }
     given++;
     known++;
   }
@@ -80,7 +82,9 @@ int aud_visualize_style_from_name(const char *name, aud_viz_style *out)
   };
 
   if (name == NULL || out == NULL)
+  {
     return -1;
+  }
 
   for (size_t i = 0; i < sizeof(table) / sizeof(table[0]); i++)
   {
@@ -112,7 +116,9 @@ static void draw_bars(aud_canvas *c, const float *bands, const float *caps, size
   double reflection;
 
   if (span < 1)
+  {
     span = 1;
+  }
 
   /*
    * Shrink the reflection if the strip below the baseline cannot hold it, so a
@@ -121,22 +127,32 @@ static void draw_bars(aud_canvas *c, const float *bands, const float *caps, size
    */
   reflection = (double)(height - baseline - 1) / (double)span;
   if (reflection > VIZ_REFLECTION)
+  {
     reflection = VIZ_REFLECTION;
+  }
   if (reflection < 0.0)
+  {
     reflection = 0.0;
+  }
 
   draw_background(c);
   aud_canvas_fill_rect(c, 0, baseline, width, 1, VIZ_BASELINE_COLOR);
 
   slot = width / (long)n;
   if (slot < 1)
+  {
     slot = 1;
+  }
   gap = slot / 6;
   if (gap < 1)
+  {
     gap = 1;
+  }
   bar_w = slot - gap;
   if (bar_w < 1)
+  {
     bar_w = 1;
+  }
 
   for (size_t b = 0; b < n; b++)
   {
@@ -165,8 +181,10 @@ static void draw_bars(aud_canvas *c, const float *bands, const float *caps, size
 
     /* peak marker: hangs at the recent maximum and sinks back down */
     if (cap_h > bar_h)
+    {
       aud_canvas_fill_rect(c, x, baseline - cap_h - (long)VIZ_CAP_THICKNESS, bar_w,
                            (long)VIZ_CAP_THICKNESS, aud_canvas_hsv(hue, 0.35, 1.0, 0xFF));
+    }
   }
 }
 
@@ -197,7 +215,9 @@ static void draw_scope(aud_canvas *c, const float *window, size_t n)
   aud_canvas_fill_rect(c, 0, centre, width, 1, VIZ_BASELINE_COLOR);
 
   if (n == 0)
+  {
     return;
+  }
 
   for (long x = 0; x < width; x++)
   {
@@ -208,18 +228,26 @@ static void draw_scope(aud_canvas *c, const float *window, size_t n)
     double level;
 
     if (to <= from)
+    {
       to = from + 1;
+    }
     if (to > n)
+    {
       to = n;
+    }
 
     for (size_t i = from; i < to; i++)
     {
       double v = (double)window[i];
 
       if (v < lo)
+      {
         lo = v;
+      }
       if (v > hi)
+      {
         hi = v;
+      }
     }
 
     /*
@@ -253,7 +281,9 @@ static void draw_waveform(aud_canvas *c, const float *lo, const float *hi, size_
     uint32_t color = aud_canvas_hsv(VIZ_HUE_LOW + VIZ_HUE_SPAN * t, 0.70, 0.95, 0xFF);
 
     if (x >= playhead)
+    {
       color = aud_canvas_shade(color, VIZ_UNPLAYED_SHADE);
+    }
     draw_column(c, x, centre, half, (double)lo[x], (double)hi[x], color);
   }
 
@@ -277,7 +307,9 @@ static int scan_envelope(const char *path, uint64_t frames, float *lo, float *hi
   int rc = -1;
 
   if (frames == 0 || columns == 0)
+  {
     return -1;
+  }
 
   if (wav_read_open(&r, path) != 0)
   {
@@ -303,7 +335,9 @@ static int scan_envelope(const char *path, uint64_t frames, float *lo, float *hi
       goto out;
     }
     if (got == 0)
+    {
       break;
+    }
 
     for (long f = 0; f < got; f++)
     {
@@ -311,11 +345,17 @@ static int scan_envelope(const char *path, uint64_t frames, float *lo, float *hi
       float v = chunk[f];
 
       if (col >= columns)
+      {
         col = columns - 1;
+      }
       if (v < lo[col])
+      {
         lo[col] = v;
+      }
       if (v > hi[col])
+      {
         hi[col] = v;
+      }
       index++;
     }
   }
@@ -346,7 +386,9 @@ static void scope_push(float *ring, size_t len, const float *src, size_t n)
 static void draw_progress(uint64_t frame, uint64_t total)
 {
   if (aud_log_get_level() < AUD_LOG_NORMAL || !isatty(STDERR_FILENO))
+  {
     return;
+  }
 
   fprintf(stderr, "\r rendering %3.0f%%  frame %llu/%llu",
           100.0 * (double)frame / (double)total, (unsigned long long)frame,
@@ -357,7 +399,9 @@ static void draw_progress(uint64_t frame, uint64_t total)
 static void clear_progress(void)
 {
   if (aud_log_get_level() < AUD_LOG_NORMAL || !isatty(STDERR_FILENO))
+  {
     return;
+  }
 
   fprintf(stderr, "\r%50s\r", "");
   fflush(stderr);
@@ -366,7 +410,9 @@ static void clear_progress(void)
 void aud_visualize_defaults(aud_visualize_options *opts)
 {
   if (opts == NULL)
+  {
     return;
+  }
 
   memset(opts, 0, sizeof(*opts));
   opts->width = AUD_VIZ_DEFAULT_WIDTH;
@@ -406,11 +452,15 @@ int aud_visualize_render(const aud_visualize_options *opts)
   if (wav_read_open(&reader, opts->input_path) != 0)
   {
     if (reader.error != NULL && errno != 0)
+    {
       aud_error("cannot read %s: %s (%s)", opts->input_path, reader.error,
                 strerror(errno));
+    }
     else
+    {
       aud_error("cannot read %s: %s", opts->input_path,
                 reader.error != NULL ? reader.error : "unrecognised file");
+    }
     return -1;
   }
 
@@ -426,7 +476,9 @@ int aud_visualize_render(const aud_visualize_options *opts)
   total_video_frames =
       (reader.frames * opts->fps + reader.rate - 1u) / (uint64_t)reader.rate;
   if (total_video_frames == 0)
+  {
     total_video_frames = 1;
+  }
 
   if (aud_canvas_init(&canvas, opts->width, opts->height) != 0)
   {
@@ -465,7 +517,9 @@ int aud_visualize_render(const aud_visualize_options *opts)
   case AUD_VIZ_STYLE_SCOPE:
     scope_frames = (size_t)(VIZ_SCOPE_SECONDS * (double)reader.rate);
     if (scope_frames < 2u)
+    {
       scope_frames = 2u;
+    }
     scope = calloc(scope_frames, sizeof(*scope));
     if (scope == NULL)
     {
@@ -494,12 +548,16 @@ int aud_visualize_render(const aud_visualize_options *opts)
 
   if (env_lo != NULL && scan_envelope(opts->input_path, total_audio_frames, env_lo,
                                       env_hi, opts->width) != 0)
+  {
     goto out;
+  }
 
   ffmpeg = ffmpeg_start_rendering(opts->output_path, opts->width, opts->height, opts->fps,
                                   opts->input_path);
   if (ffmpeg == NULL)
+  {
     goto out;
+  }
 
   dt = 1.0 / (double)opts->fps;
 
@@ -539,9 +597,13 @@ int aud_visualize_render(const aud_visualize_options *opts)
       }
 
       if (spec != NULL)
+      {
         aud_spectrum_push(spec, chunk, (size_t)got);
+      }
       if (scope != NULL)
+      {
         scope_push(scope, scope_frames, chunk, (size_t)got);
+      }
       need -= (size_t)got;
     }
     consumed = target;
@@ -554,7 +616,9 @@ int aud_visualize_render(const aud_visualize_options *opts)
       {
         float fallen = caps[b] - (float)(VIZ_CAP_FALL * dt);
         if (fallen < 0.0f)
+        {
           fallen = 0.0f;
+        }
         caps[b] = bands[b] > fallen ? bands[b] : fallen;
       }
 
@@ -577,7 +641,9 @@ int aud_visualize_render(const aud_visualize_options *opts)
     }
 
     if (frame % opts->fps == 0)
+    {
       draw_progress(frame, total_video_frames);
+    }
   }
 
   clear_progress();

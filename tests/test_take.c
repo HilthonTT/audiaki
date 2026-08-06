@@ -94,7 +94,9 @@ TEST(next_skips_the_takes_that_already_exist)
   f = fopen(path, "wb");
   CHECK(f != NULL);
   if (f != NULL)
+  {
     fclose(f);
+  }
 
   /* now it is taken, so the next call moves on rather than clobbering it */
   CHECK_EQ_INT(aud_take_next(path, sizeof(path), g_prefix), 0);

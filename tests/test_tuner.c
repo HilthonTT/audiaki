@@ -32,7 +32,9 @@ static aud_tuner *make_tuner(double a4_hz)
 static void add_partial(float *dst, size_t n, double hz, double amplitude)
 {
   for (size_t i = 0; i < n; i++)
+  {
     dst[i] += (float)(amplitude * sin(2.0 * AUD_TEST_PI * hz * (double)i / TEST_RATE));
+  }
 }
 
 /* How far apart two frequencies are, in cents. */
@@ -215,7 +217,9 @@ static double detect_cents_error(aud_tuner *t, double hz, aud_tuner_reading *out
 
   CHECK(buf != NULL);
   if (buf == NULL)
+  {
     return 1.0e9;
+  }
 
   add_partial(buf, TEST_SAMPLES, hz, 0.5);
   aud_tuner_push(t, buf, TEST_SAMPLES);
@@ -223,7 +227,9 @@ static double detect_cents_error(aud_tuner *t, double hz, aud_tuner_reading *out
 
   aud_tuner_analyse(t, 0.05, out);
   if (!out->voiced)
+  {
     return 1.0e9;
+  }
 
   return cents_between(out->frequency, hz);
 }
@@ -295,7 +301,9 @@ TEST(detects_a_missing_fundamental)
   CHECK(t != NULL);
   CHECK(buf != NULL);
   if (t == NULL || buf == NULL)
+  {
     return;
+  }
 
   add_partial(buf, TEST_SAMPLES, HZ_E2 * 2.0, 0.5);
   add_partial(buf, TEST_SAMPLES, HZ_E2 * 3.0, 0.3);
@@ -322,7 +330,9 @@ TEST(silence_is_not_a_note)
   CHECK(t != NULL);
 
   for (size_t i = 0; i < TEST_SAMPLES; i++)
+  {
     quiet[i] = 0.0f;
+  }
 
   aud_tuner_push(t, quiet, TEST_SAMPLES);
   CHECK(aud_tuner_analyse(t, 0.05, &r) == 0);
@@ -354,13 +364,17 @@ TEST(a_reading_outlives_the_note)
   t = aud_tuner_create(&cfg);
   CHECK(t != NULL);
   if (t == NULL)
+  {
     return;
+  }
 
   detect_cents_error(t, HZ_A2, &r);
   CHECK(r.voiced);
 
   for (size_t i = 0; i < TEST_SAMPLES; i++)
+  {
     quiet[i] = 0.0f;
+  }
 
   /* silence, but not for long enough to have let go of the note */
   aud_tuner_push(t, quiet, TEST_SAMPLES);

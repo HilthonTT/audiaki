@@ -31,7 +31,9 @@ static void report_change(const aud_tuner_reading *reading, int *last_midi)
     return;
   }
   if (reading->midi == *last_midi)
+  {
     return;
+  }
 
   *last_midi = reading->midi;
   aud_tuner_note_label(reading, label, sizeof(label));
@@ -92,9 +94,13 @@ int aud_tune_run(aud_device *dev, const aud_tune_options *opts)
     double elapsed;
 
     if (got < 0)
+    {
       goto out;
+    }
     if (got == 0)
+    {
       continue;
+    }
 
     aud_tuner_push_pcm(tuner, buf, (size_t)got, dev->channels, dev->format);
 
@@ -102,7 +108,9 @@ int aud_tune_run(aud_device *dev, const aud_tune_options *opts)
     elapsed = (double)frames / dev->rate;
 
     if (elapsed < next_at)
+    {
       continue;
+    }
 
     /*
      * Smooth against captured time rather than TUNE_INTERVAL, so the needle
@@ -111,9 +119,13 @@ int aud_tune_run(aud_device *dev, const aud_tune_options *opts)
     aud_tuner_analyse(tuner, elapsed - last_at, &reading);
 
     if (meter.enabled)
+    {
       meter_draw_tuner(&meter, &reading);
+    }
     else
+    {
       report_change(&reading, &last_midi);
+    }
 
     last_at = elapsed;
     next_at = elapsed + TUNE_INTERVAL;

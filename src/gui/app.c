@@ -195,7 +195,9 @@ static int parse_args(app *a, int argc, char **argv)
     value = argv[++i];
 
     if (strcmp(arg, "-D") == 0 || strcmp(arg, "--device") == 0)
+    {
       a->cfg.device = value;
+    }
     else if (strcmp(arg, "-r") == 0 || strcmp(arg, "--rate") == 0)
     {
       if (parse_uint(value, AUD_RATE_MIN, AUD_RATE_MAX, &a->cfg.rate) != 0)
@@ -215,7 +217,9 @@ static int parse_args(app *a, int argc, char **argv)
       }
     }
     else if (strcmp(arg, "-o") == 0 || strcmp(arg, "--take") == 0)
+    {
       snprintf(a->prefix, sizeof(a->prefix), "%s", value);
+    }
     else if (strcmp(arg, "-s") == 0 || strcmp(arg, "--style") == 0)
     {
       aud_viz_mode mode;
@@ -278,20 +282,28 @@ static void app_load_devices(app *a)
 
     snprintf(a->device_name[slot], sizeof(a->device_name[slot]), "%s", found[i].name);
     if (found[i].description[0] != '\0')
+    {
       snprintf(a->device_label[slot], sizeof(a->device_label[slot]), "%s: %s",
                found[i].card, found[i].description);
+    }
     else
+    {
       snprintf(a->device_label[slot], sizeof(a->device_label[slot]), "%s", found[i].card);
+    }
     a->device_count++;
   }
   free(found);
 
   if (count > 0 && a->device_count == APP_MAX_DEVICES)
+  {
     aud_warn("more than %d capture devices; the rest are not offered in the window",
              APP_MAX_DEVICES - 1);
+  }
 
   for (int i = 0; i < a->device_count; i++)
+  {
     a->device_labels[i] = a->device_label[i];
+  }
 
   /*
    * Point the selection at whatever -D asked for, so the dropdown opens
@@ -383,7 +395,9 @@ static void app_switch_device(app *a, int previous)
   a->device_selected = previous;
 
   if (app_open_engine(a) == 0)
+  {
     aud_engine_set_monitor(a->engine, monitoring);
+  }
 }
 
 /* Move everything the capture thread has produced into the analyser. */
@@ -395,7 +409,9 @@ static void app_pump_audio(app *a)
   {
     aud_viz_push(a->viz, a->drain, got);
     if (got < APP_DRAIN)
+    {
       break;
+    }
   }
 
   aud_viz_update(a->viz, GetFrameTime());
@@ -423,9 +439,13 @@ static void app_track_peak(app *a, float peak, float dt)
 
   a->peak_hold -= APP_PEAK_FALL * dt;
   if (a->peak_hold < peak)
+  {
     a->peak_hold = peak;
+  }
   if (a->peak_hold < 0.0f)
+  {
     a->peak_hold = 0.0f;
+  }
 }
 
 /*
@@ -438,7 +458,9 @@ static void app_begin_take(app *a)
   char path[AUD_ENGINE_PATH_MAX];
 
   if (aud_take_next(path, sizeof(path), a->prefix) != 0)
+  {
     return;
+  }
 
   a->render_note[0] = '\0';
   aud_engine_start(a->engine, path, 0);
@@ -458,12 +480,16 @@ static void app_stop_take(app *a, const aud_engine_status *st)
   snprintf(take, sizeof(take), "%s", st->path);
 
   if (aud_engine_stop(a->engine) != 0)
-    return; /* the failure is already in the status line */
+  {
+    return;
+  } /* the failure is already in the status line */
 
   a->render_note[0] = '\0';
 
   if (!a->want_video || take[0] == '\0' || a->render != NULL)
+  {
     return;
+  }
 
   if (aud_take_with_extension(video, sizeof(video), take, ".mp4") != 0)
   {
@@ -483,8 +509,10 @@ static void app_stop_take(app *a, const aud_engine_status *st)
 
   a->render = aud_render_start(&opts);
   if (a->render == NULL)
+  {
     snprintf(a->render_note, sizeof(a->render_note),
              "could not start the video render - is ffmpeg installed?");
+  }
 }
 
 /* Advance an in-flight render, and report how it went once it ends. */
@@ -493,11 +521,15 @@ static void app_pump_render(app *a)
   int state;
 
   if (a->render == NULL)
+  {
     return;
+  }
 
   state = aud_render_step(a->render, APP_RENDER_BUDGET);
   if (state == 0)
+  {
     return;
+  }
 
   if (state < 0)
   {
@@ -510,9 +542,13 @@ static void app_pump_render(app *a)
 
     snprintf(name, sizeof(name), "%s", aud_render_output(a->render));
     if (aud_render_finish(a->render, 0) == 0)
+    {
       snprintf(a->render_note, sizeof(a->render_note), "wrote %.200s", name);
+    }
     else
+    {
       snprintf(a->render_note, sizeof(a->render_note), "the video render failed");
+    }
   }
 
   a->render = NULL;
@@ -521,7 +557,9 @@ static void app_pump_render(app *a)
 static void app_cancel_render(app *a)
 {
   if (a->render == NULL)
+  {
     return;
+  }
 
   aud_render_finish(a->render, 1);
   a->render = NULL;
@@ -534,7 +572,9 @@ static void app_toggle_record(app *a, const aud_engine_status *st)
   {
   case AUD_ENGINE_IDLE:
     if (a->render == NULL) /* the renderer has the drawing thread */
+    {
       app_begin_take(a);
+    }
     return;
   case AUD_ENGINE_RECORDING:
     aud_engine_pause(a->engine);
@@ -557,7 +597,9 @@ static Rectangle header_picker(Rectangle r)
 
   picker.width = 260.0f;
   if (picker.width > r.width * 0.4f)
+  {
     picker.width = r.width * 0.4f;
+  }
   picker.height = 32.0f;
   picker.x = r.x + r.width - picker.width;
   picker.y = r.y + (r.height - picker.height) / 2.0f;
@@ -633,14 +675,20 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   /* a render holds the drawing thread, so no new take can start under it */
   if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD,
                     usable && !live && !rendering))
+  {
     app_begin_take(a);
+  }
 
   if (aud_ui_button(pause, paused ? "Resume" : "Pause", AUD_UI_WARN, live))
   {
     if (paused)
+    {
       aud_engine_resume(a->engine);
+    }
     else
+    {
       aud_engine_pause(a->engine);
+    }
   }
 
   /*
@@ -650,7 +698,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   if (rendering)
   {
     if (aud_ui_button(stop, "Cancel", AUD_UI_WARN, !a->device_menu_open))
+    {
       app_cancel_render(a);
+    }
   }
   else if (aud_ui_button(stop, "Stop", AUD_UI_ACCENT, live))
   {
@@ -678,7 +728,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
     int settable = usable && !live && !rendering;
 
     if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT, settable))
+    {
       a->want_video = !a->want_video;
+    }
 
     /*
      * What goes in that video, so it sits next to the control that turns it on
@@ -688,14 +740,20 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
      */
     if (aud_ui_toggle(audio, a->want_video_audio ? "Audio" : "No audio",
                       a->want_video_audio, AUD_UI_ACCENT, settable && a->want_video))
+    {
       a->want_video_audio = !a->want_video_audio;
+    }
 
     if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted,
                       AUD_UI_OK, usable))
+    {
       aud_engine_set_monitor(a->engine, !wanted);
+    }
 
     if (aud_ui_slider(slider, &a->monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
+    {
       aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
+    }
   }
 }
 
@@ -790,11 +848,15 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
      * the end of a very long path should not push the size off the window.
      */
     if (st->xruns > 0)
+    {
       snprintf(right, sizeof(right), "%.200s   %.1f MiB   %u xrun(s)", name,
                (double)st->bytes / (1024.0 * 1024.0), st->xruns);
+    }
     else
+    {
       snprintf(right, sizeof(right), "%.200s   %.1f MiB", name,
                (double)st->bytes / (1024.0 * 1024.0));
+    }
 
     aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
   }
@@ -878,7 +940,9 @@ static void draw_frame(app *a, const aud_engine_status *st)
       Rectangle tabs;
 
       if (tabs_w > stage.width - 24.0f)
+      {
         tabs_w = stage.width - 24.0f;
+      }
 
       tabs.x = stage.x + stage.width - 12.0f - tabs_w;
       tabs.y = stage.y + 12.0f;
@@ -887,7 +951,9 @@ static void draw_frame(app *a, const aud_engine_status *st)
 
       if (aud_ui_tabs(tabs, a->style_labels, AUD_VIZ_MODE_COUNT, &a->style_selected,
                       !a->device_menu_open, 1))
+      {
         aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
+      }
     }
   }
 
@@ -902,10 +968,14 @@ static void draw_frame(app *a, const aud_engine_status *st)
   if (aud_ui_dropdown(header_picker(header), a->device_labels, a->device_count,
                       &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
                       !live))
+  {
     app_switch_device(a, previous);
+  }
 
   if (live && a->device_menu_open)
+  {
     a->device_menu_open = 0;
+  }
 }
 
 static void handle_keys(app *a, const aud_engine_status *st)
@@ -914,29 +984,43 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (a->device_menu_open)
   {
     if (IsKeyPressed(KEY_ESCAPE))
+    {
       a->device_menu_open = 0;
+    }
     return;
   }
 
   if (IsKeyPressed(KEY_SPACE))
+  {
     app_toggle_record(a, st);
+  }
 
   if (IsKeyPressed(KEY_S))
   {
     if (a->render != NULL)
+    {
       app_cancel_render(a);
+    }
     else if (st->state != AUD_ENGINE_IDLE)
+    {
       app_stop_take(a, st);
+    }
   }
 
   if (IsKeyPressed(KEY_M))
+  {
     aud_engine_set_monitor(a->engine, !aud_engine_monitor_wanted(a->engine));
+  }
 
   if (IsKeyPressed(KEY_V))
+  {
     a->style_selected = (int)aud_viz_cycle_mode(a->viz);
+  }
 
   if (IsKeyPressed(KEY_F))
+  {
     ToggleFullscreen();
+  }
 }
 
 int main(int argc, char *argv[])
@@ -953,11 +1037,15 @@ int main(int argc, char *argv[])
   a.video_fps = AUD_RENDER_DEFAULT_FPS;
 
   for (int i = 0; i < AUD_VIZ_MODE_COUNT; i++)
+  {
     a.style_labels[i] = aud_viz_mode_name((aud_viz_mode)i);
+  }
 
   rc = parse_args(&a, argc, argv);
   if (rc != 0)
+  {
     return rc < 0 ? EXIT_SUCCESS : rc;
+  }
 
   /* raylib is chatty on stdout by default; audiaki reports through log.h */
   SetTraceLogLevel(aud_log_get_level() == AUD_LOG_VERBOSE ? LOG_INFO : LOG_WARNING);
