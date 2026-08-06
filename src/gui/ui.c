@@ -318,23 +318,34 @@ static void text_fit(float x, float y, int size, Color color, const char *text,
   DrawText(TextFormat("%s...", buf), (int)x, (int)y, size, color);
 }
 
+/* Clamp `*scroll` so the rows it exposes are all real ones. */
+static void clamp_scroll(int *scroll, int count, int rows)
+{
+  if (*scroll > count - rows)
+    *scroll = count - rows;
+  if (*scroll < 0)
+    *scroll = 0;
+}
+
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,
-                    int *open, int enabled)
+                    int *open, int *scroll, int enabled)
 {
   int hover;
   int changed = 0;
   int rows;
+  int was_open;
   float roundness;
   Color edge;
   const char *label;
 
-  if (items == NULL || selected == NULL || open == NULL || count <= 0)
+  if (items == NULL || selected == NULL || open == NULL || scroll == NULL || count <= 0)
     return 0;
 
   if (*selected < 0 || *selected >= count)
     *selected = 0;
   if (!enabled)
     *open = 0;
+  was_open = *open;
 
   hover = enabled && hovering(bounds);
   roundness = UI_CORNER / bounds.height;
@@ -376,16 +387,28 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
 
   rows = count < AUD_UI_DROPDOWN_MAX_ROWS ? count : AUD_UI_DROPDOWN_MAX_ROWS;
 
+  /* opening: bring the current selection into view rather than jumping to the top */
+  if (!was_open && *selected >= rows)
+    *scroll = *selected - rows + 1;
+  clamp_scroll(scroll, count, rows);
+
   {
     Rectangle panel = {bounds.x, bounds.y + bounds.height + 4.0f, bounds.width,
                        (float)rows * bounds.height + 8.0f};
     int clicked_inside = 0;
+
+    if (count > rows && CheckCollisionPointRec(GetMousePosition(), panel))
+    {
+      *scroll -= (int)GetMouseWheelMove();
+      clamp_scroll(scroll, count, rows);
+    }
 
     DrawRectangleRounded(panel, 8.0f / panel.height, 8, AUD_UI_PANEL);
     DrawRectangleRoundedLines(panel, 8.0f / panel.height, 8, AUD_UI_ACCENT);
 
     for (int i = 0; i < rows; i++)
     {
+      int item = *scroll + i;
       Rectangle row = {panel.x + 4.0f, panel.y + 4.0f + (float)i * bounds.height,
                        panel.width - 8.0f, bounds.height};
       int row_hover = hovering(row);
@@ -397,24 +420,34 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
         text = WHITE;
         SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
       }
-      else if (i == *selected)
+      else if (item == *selected)
       {
         text = AUD_UI_ACCENT;
       }
 
-      text_fit(row.x + 6.0f, row.y + (row.height - 18.0f) / 2.0f, 18, text, items[i],
+      text_fit(row.x + 6.0f, row.y + (row.height - 18.0f) / 2.0f, 18, text, items[item],
                row.width - 12.0f);
 
       if (row_hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
       {
         clicked_inside = 1;
-        if (i != *selected)
+        if (item != *selected)
         {
-          *selected = i;
+          *selected = item;
           changed = 1;
         }
         *open = 0;
       }
+    }
+
+    /* a hint that there is more, so a long list does not look like a short one */
+    if (count > rows)
+    {
+      char more[48]; /* three int32s, their separators and the terminator */
+
+      snprintf(more, sizeof(more), "%d-%d of %d", *scroll + 1, *scroll + rows, count);
+      aud_ui_text_right(panel.x + panel.width - 8.0f, panel.y + panel.height + 2.0f, 14,
+                        AUD_UI_MUTED, more);
     }
 
     /* a click anywhere else closes it, which is what every other menu does */

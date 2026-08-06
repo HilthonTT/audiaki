@@ -77,6 +77,16 @@ void aud_format_to_mono(float *dst, const void *src, size_t frames, unsigned cha
 void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned channels,
                          aud_format fmt);
 
+/*
+ * The peak at which a buffer counts as clipped.
+ *
+ * Not 1.0. Signed PCM is asymmetric: the most negative sample normalises to
+ * exactly -1.0, but the most positive is one step short - 32767/32768 for
+ * 16 bit, and closer still at 32 - so a test against 1.0 catches a take that
+ * clipped downwards and silently misses one that clipped upwards.
+ */
+#define AUD_CLIP_THRESHOLD 0.999
+
 /* Convert a normalised peak to dBFS, clamped at AUD_DBFS_FLOOR. */
 #define AUD_DBFS_FLOOR (-99.0)
 double aud_format_dbfs(double peak);

@@ -43,6 +43,7 @@ struct aud_tuner
   size_t integration; /* samples each lag is compared over */
   size_t tau_min;
   size_t tau_max;
+  size_t offset; /* where the analysis span starts; see analysis_window() */
 
   double smoothed_hz;  /* what is actually reported; 0 when nothing is */
   double since_voiced; /* seconds since the last detection */
@@ -203,6 +204,15 @@ aud_tuner *aud_tuner_create(const aud_tuner_config *cfg)
   for (t->window = 1024u; t->window < need; t->window *= 2u)
     ;
 
+  /*
+   * The rounding above leaves slack, and it has to sit at the old end of the
+   * buffer rather than the new one. Analysing from index zero would leave the
+   * newest window - need samples - nearly 18 ms at 44.1 kHz - out of every
+   * reading, so both the pitch and the gate would describe a moment that has
+   * already passed.
+   */
+  t->offset = t->window - need;
+
   t->history = calloc(t->window, sizeof(*t->history));
   t->scratch = calloc(t->window, sizeof(*t->scratch));
   t->diff = calloc(t->tau_max + 1u, sizeof(*t->diff));
@@ -285,6 +295,16 @@ void aud_tuner_push_pcm(aud_tuner *t, const void *buf, size_t frames, unsigned c
 /* -- YIN ------------------------------------------------------------------- */
 
 /*
+ * The newest integration + tau_max samples, which is the span every step below
+ * works on. Not t->history itself: the buffer is longer than the analysis needs
+ * and the newest samples live at its end.
+ */
+static const float *analysis_window(const aud_tuner *t)
+{
+  return t->history + t->offset;
+}
+
+/*
  * Step 2 of the YIN paper: how different the window is from itself `tau`
  * samples later. A periodic signal is least different from itself one period
  * on, so the period shows up as a dip - and unlike a spectrum peak, that dip
@@ -292,7 +312,7 @@ void aud_tuner_push_pcm(aud_tuner *t, const void *buf, size_t frames, unsigned c
  */
 static void difference(aud_tuner *t)
 {
-  const float *x = t->history;
+  const float *x = analysis_window(t);
 
   t->diff[0] = 0.0;
 
@@ -383,10 +403,11 @@ static double refine(const aud_tuner *t, size_t tau)
 /* RMS of the analysis window, in dBFS. */
 static double window_level_db(const aud_tuner *t)
 {
+  const float *x = analysis_window(t);
   double sum = 0.0;
 
   for (size_t i = 0; i < t->integration; i++)
-    sum += (double)t->history[i] * (double)t->history[i];
+    sum += (double)x[i] * (double)x[i];
 
   return aud_format_dbfs(sqrt(sum / (double)t->integration));
 }

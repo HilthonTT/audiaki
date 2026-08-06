@@ -105,9 +105,13 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
 #define AUD_UI_DROPDOWN_MAX_ROWS 8
 
 /*
- * A dropdown over `items`. `*selected` is the chosen index and `*open` the
- * caller's open/closed state, both written through. Returns non-zero on the
- * frame the selection changes.
+ * A dropdown over `items`. `*selected` is the chosen index, `*open` the
+ * caller's open/closed state and `*scroll` the index of the top visible row,
+ * all written through. Returns non-zero on the frame the selection changes.
+ *
+ * A list longer than AUD_UI_DROPDOWN_MAX_ROWS scrolls on the mouse wheel, and
+ * opens showing whatever is currently selected rather than the top - otherwise
+ * the entries past the first screenful could never be reached at all.
  *
  * The open list is drawn over whatever is beneath it, so this has to be called
  * after the widgets it covers. It does not block their input: a caller with an
@@ -115,7 +119,7 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
  * threading a focus stack through an immediate mode interface.
  */
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,
-                    int *open, int enabled);
+                    int *open, int *scroll, int enabled);
 
 /* A panel background with a one pixel border. */
 void aud_ui_panel(Rectangle bounds);

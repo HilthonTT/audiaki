@@ -9,6 +9,17 @@
 #define AUDIAKI_PARSE_H
 
 /*
+ * Sanity bounds on the capture geometry - anything outside these is a typo
+ * rather than a request. Here rather than in either parser because the CLI and
+ * the desktop app both take -r and -c, and a value one of them rejects should
+ * not be one the other passes down to libasound.
+ */
+#define AUD_RATE_MIN 4000u
+#define AUD_RATE_MAX 768000u
+#define AUD_CHANNELS_MIN 1u
+#define AUD_CHANNELS_MAX 64u
+
+/*
  * Parse a decimal unsigned integer in [min, max]. Returns 0 on success and
  * -1 on trailing garbage, a negative sign, an empty string or a range miss.
  */

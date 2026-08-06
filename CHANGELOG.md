@@ -120,6 +120,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the renderer can be interrupted too. `aud_recorder_install_signals()` and
   `aud_recorder_stop_requested()` still work as before.
 
+### Fixed
+
+- The tuner analysed the oldest samples in its buffer rather than the newest.
+  The analysis span is `2 * tau_max + tau_max` samples but the buffer is that
+  rounded up to a power of two, and the slack sat at the new end, so the
+  newest 790 samples at 44.1 kHz - nearly 18 ms - were left out of every
+  reading. Both the pitch and the gate that decides whether anything is being
+  played described a moment that had already passed; a note is now picked up
+  about 18 ms sooner. Affects `--tune` and the desktop app's tuner style.
+- The desktop app missed clipping that ran into the positive rail. Signed PCM
+  is asymmetric - the most negative sample normalises to exactly -1.0 but the
+  most positive is one step short, 32767/32768 at 16 bit - so the engine's
+  `peak >= 1.0` test only ever fired on a take that clipped downwards. Both the
+  terminal meter and the app now share one `AUD_CLIP_THRESHOLD`.
+- `--duration` is bounded, so `-t 1e308` is rejected instead of overflowing the
+  conversion to a frame count. Being undefined behaviour it did not record for
+  a very long time: the value converted to zero and the recorder wrote a single
+  frame.
+- Rendering to or from a path beginning with `-` works. ffmpeg reads any
+  argument starting with a dash as an option and there is no `--` to stop it,
+  so `-take01.wav` was parsed as flags and the render failed with
+  "Unrecognized option". Such paths are now passed as `./-take01.wav`.
+- The desktop app's device dropdown can reach every device. It drew only the
+  first `AUD_UI_DROPDOWN_MAX_ROWS` entries with no way to scroll, so on a
+  machine with more than eight capture devices the rest could not be selected
+  at all - including the one named by `-D`, which is appended last. The list
+  now scrolls on the mouse wheel and opens on the current selection.
+- `audiaki-gui` validates `-r` and `-c` the way the recorder does. They went
+  through bare `strtoul`, so `-c -5` became 4294967291 and `-r abc` became 0
+  before being handed to libasound. The bounds now live in one place.
+- The ffmpeg child no longer closes its own stdin if the pipe's read end lands
+  on file descriptor 0, which can happen when audiaki is started with stdin
+  already closed.
+
 ## [0.2.0] - 2026-08-04
 
 The single-file recorder grew into a structured project. Behaviour is

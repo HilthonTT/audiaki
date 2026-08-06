@@ -4,6 +4,7 @@
 #include "log.h"
 
 #include <errno.h>
+#include <limits.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -63,17 +64,53 @@ static int write_all(int fd, const void *buf, size_t bytes)
   return 0;
 }
 
+/*
+ * ffmpeg reads any argument starting with '-' as an option, so a perfectly
+ * legal path like "-take01.wav" would be parsed as flags rather than opened.
+ * There is no "--" to end the option list, so the fix is to make the path
+ * explicitly relative. Returns `path` itself when it needs no help; otherwise
+ * writes "./path" into `buf`.
+ */
+static const char *safe_path(const char *path, char *buf, size_t size)
+{
+  if (path == NULL || path[0] != '-')
+    return path;
+
+  if ((size_t)snprintf(buf, size, "./%s", path) >= size)
+    return NULL; /* too long to disarm; the caller reports it */
+  return buf;
+}
+
 FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t height,
                                size_t fps, const char *sound_file_path)
 {
   FFMPEG *ffmpeg;
   int pipefd[2];
   pid_t child;
+  char out_buf[PATH_MAX + 3];
+  char snd_buf[PATH_MAX + 3];
 
   /* sound_file_path may be NULL: that is a video with no audio track */
   if (output_path == NULL || width == 0 || height == 0 || fps == 0)
   {
     aud_error("ffmpeg: invalid render parameters");
+    return NULL;
+  }
+
+  if (sound_file_path != NULL)
+  {
+    sound_file_path = safe_path(sound_file_path, snd_buf, sizeof(snd_buf));
+    if (sound_file_path == NULL)
+    {
+      aud_error("ffmpeg: the audio path is too long");
+      return NULL;
+    }
+  }
+
+  output_path = safe_path(output_path, out_buf, sizeof(out_buf));
+  if (output_path == NULL)
+  {
+    aud_error("ffmpeg: the output path is too long");
     return NULL;
   }
 
@@ -105,7 +142,13 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
               strerror(errno));
       _exit(1);
     }
-    close(pipefd[READ_END]);
+    /*
+     * Guarded: if stdin was already closed when audiaki started, pipe() is free
+     * to hand back fd 0 as the read end, dup2() is then a no-op, and closing it
+     * unconditionally would shut the pipe ffmpeg is about to read from.
+     */
+    if (pipefd[READ_END] != STDIN_FILENO)
+      close(pipefd[READ_END]);
     close(pipefd[WRITE_END]);
 
     snprintf(resolution, sizeof(resolution), "%zux%zu", width, height);

@@ -11,11 +11,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* sanity bounds - anything outside these is a typo rather than a request */
-#define RATE_MIN 4000u
-#define RATE_MAX 768000u
-#define CHANNELS_MIN 1u
-#define CHANNELS_MAX 64u
+/* sanity bounds - anything outside these is a typo rather than a request.
+ * The rate and channel bounds live in parse.h, which the desktop app's own
+ * argument handling shares. */
 #define PERIOD_MIN 32u
 #define PERIOD_MAX 1048576u
 #define PERIODS_MIN 2u
@@ -24,6 +22,18 @@
 #define VIZ_DIM_MAX 7680u
 #define VIZ_FPS_MIN 1u
 #define VIZ_FPS_MAX 240u
+
+/*
+ * 30 days. Not a limit anyone will meet: the 4 GB WAV ceiling stops even
+ * 4 kHz mono - the narrowest stream this accepts - after about six days, so
+ * the recorder always runs out of file before it runs out of clock.
+ *
+ * It is here because --duration reaches recorder.c as duration * rate cast to
+ * a frame count, and a double too large for that conversion is undefined
+ * behaviour rather than a long recording. Unbounded, '-t 1e308' does not
+ * record for a very long time; it converts to zero and records one frame.
+ */
+#define DURATION_MAX 2592000.0
 
 /* defaults mirrored from device.h without pulling in <alsa/asoundlib.h> */
 #define CLI_DEFAULT_DEVICE "default"
@@ -211,14 +221,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       opts->device = optarg;
       break;
     case 'r':
-      if (parse_uint(optarg, RATE_MIN, RATE_MAX, &opts->rate) != 0)
+      if (parse_uint(optarg, AUD_RATE_MIN, AUD_RATE_MAX, &opts->rate) != 0)
       {
         bad_value("--rate", optarg, "a sample rate in Hz");
         return CLI_EXIT_USAGE;
       }
       break;
     case 'c':
-      if (parse_uint(optarg, CHANNELS_MIN, CHANNELS_MAX, &opts->channels) != 0)
+      if (parse_uint(optarg, AUD_CHANNELS_MIN, AUD_CHANNELS_MAX, &opts->channels) != 0)
       {
         bad_value("--channels", optarg, "1..64");
         return CLI_EXIT_USAGE;
@@ -233,7 +243,8 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       }
       break;
     case 't':
-      if (parse_duration(optarg, &opts->duration) != 0 || opts->duration <= 0.0)
+      if (parse_duration(optarg, &opts->duration) != 0 || opts->duration <= 0.0 ||
+          opts->duration > DURATION_MAX)
       {
         bad_value("--duration", optarg, "SS, MM:SS or HH:MM:SS");
         return CLI_EXIT_USAGE;

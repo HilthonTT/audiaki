@@ -15,7 +15,6 @@
 #define METER_MAX_WIDTH 60
 #define METER_DEFAULT_WIDTH 30
 #define METER_RANGE_DB 60.0 /* bottom of the scale, in dBFS */
-#define METER_CLIP_THRESHOLD 0.999
 
 /*
  * Columns the spectrum line needs for everything that is not a bar:
@@ -98,7 +97,7 @@ static void track_peak(aud_meter *m, double peak)
 {
   if (peak > m->hold_peak)
     m->hold_peak = peak;
-  if (peak >= METER_CLIP_THRESHOLD)
+  if (peak >= AUD_CLIP_THRESHOLD)
     m->clipped = 1;
 }
 

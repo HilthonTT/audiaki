@@ -86,6 +86,7 @@ typedef struct
   int device_count;
   int device_selected;
   int device_menu_open;
+  int device_menu_scroll; /* top visible row, for a list longer than the menu */
 
   /* the visualiser style selector, mirroring the mode held by aud_viz */
   const char *style_labels[AUD_VIZ_MODE_COUNT];
@@ -196,9 +197,23 @@ static int parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "-D") == 0 || strcmp(arg, "--device") == 0)
       a->cfg.device = value;
     else if (strcmp(arg, "-r") == 0 || strcmp(arg, "--rate") == 0)
-      a->cfg.rate = (unsigned)strtoul(value, NULL, 10);
+    {
+      if (parse_uint(value, AUD_RATE_MIN, AUD_RATE_MAX, &a->cfg.rate) != 0)
+      {
+        aud_error("bad sample rate '%s' (%u to %u Hz)", value, AUD_RATE_MIN,
+                  AUD_RATE_MAX);
+        return 2;
+      }
+    }
     else if (strcmp(arg, "-c") == 0 || strcmp(arg, "--channels") == 0)
-      a->cfg.channels = (unsigned)strtoul(value, NULL, 10);
+    {
+      if (parse_uint(value, AUD_CHANNELS_MIN, AUD_CHANNELS_MAX, &a->cfg.channels) != 0)
+      {
+        aud_error("bad channel count '%s' (%u to %u)", value, AUD_CHANNELS_MIN,
+                  AUD_CHANNELS_MAX);
+        return 2;
+      }
+    }
     else if (strcmp(arg, "-o") == 0 || strcmp(arg, "--take") == 0)
       snprintf(a->prefix, sizeof(a->prefix), "%s", value);
     else if (strcmp(arg, "-s") == 0 || strcmp(arg, "--style") == 0)
@@ -239,11 +254,6 @@ static int parse_args(app *a, int argc, char **argv)
     }
   }
 
-  if (a->cfg.rate == 0 || a->cfg.channels == 0)
-  {
-    aud_error("rate and channels must be greater than zero");
-    return 2;
-  }
   return 0;
 }
 
@@ -890,7 +900,8 @@ static void draw_frame(app *a, const aud_engine_status *st)
    * capture stream, and doing that mid-take would truncate the recording.
    */
   if (aud_ui_dropdown(header_picker(header), a->device_labels, a->device_count,
-                      &a->device_selected, &a->device_menu_open, !live))
+                      &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
+                      !live))
     app_switch_device(a, previous);
 
   if (live && a->device_menu_open)

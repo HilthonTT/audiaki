@@ -246,7 +246,7 @@ static void *capture_thread(void *arg)
     e->xruns = xruns;
     if (e->state == AUD_ENGINE_RECORDING)
     {
-      if (peak >= 1.0)
+      if (peak >= AUD_CLIP_THRESHOLD)
         e->clipped = 1;
       write_period(e, (size_t)got);
     }
