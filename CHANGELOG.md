@@ -12,16 +12,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - The desktop app's device list follows the hardware. `device` gained a watch
-  on `/dev/snd` - the directory the kernel puts a card's nodes in the moment it
-  registers one, which is exactly the set `--list` reports - and the window
-  rebuilds its dropdown a moment after anything appears or disappears there. An
-  interface plugged in shows up without a restart, and one unplugged leaves the
-  list. The pause before rebuilding lets a card finish registering all of its
-  nodes rather than enumerating one that is half there, and the new list is
-  only swapped in when it actually differs, so an open menu cannot shuffle
-  under the pointer that is about to click a row. Where inotify is unavailable
-  the watch sweeps every couple of seconds instead, which callers cannot tell
-  apart.
+  that re-walks ALSA every couple of seconds - about 0.3 ms for two cards - and
+  the window rebuilds its dropdown whenever the answer differs, so an interface
+  plugged in shows up without a restart and one unplugged leaves the list. The
+  watch also listens on `/dev/snd`, the directory the kernel puts a card's
+  nodes in the moment it registers one, which brings a plugged-in device up in
+  well under a second where those events are delivered; they are not everywhere
+  - a sandbox or a container can hold its own mount of devtmpfs, where the
+  nodes come and go exactly as they do outside and no watch on them ever fires
+  - so the sweep is the mechanism and inotify only shortens the wait. The
+  rebuilt list is only swapped in when it actually differs, so an open menu
+  cannot shuffle under the pointer that is about to click a row.
 - The desktop app opens the capture stream again when the device it was using
   comes back, whether the window came up without it or its stream died with the
   cable. A dead stream cannot be revived, and re-picking the device in the

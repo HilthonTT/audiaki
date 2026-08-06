@@ -89,10 +89,8 @@ typedef struct
   int start_monitor;
 
   /*
-   * The device list, and the watch that keeps it honest. ALSA is re-walked
-   * when a node appears or disappears under /dev/snd rather than on a timer:
-   * plugging an interface in should put it in the menu, and nothing else
-   * should cost a frame.
+   * The device list, and the watch that keeps it honest: plugging an interface
+   * in should put it in the menu without the window being restarted around it.
    */
   app_devices devices;
   aud_device_watch *watch;
@@ -378,11 +376,11 @@ static void app_load_devices(app *a)
 }
 
 /*
- * Re-walk ALSA after the watch saw hardware come or go. The list is only
- * swapped in when it has actually changed, so an unrelated event under
- * /dev/snd cannot shuffle rows under a pointer that is about to click one.
+ * Re-walk ALSA. Returns 1 when the list changed, which is the only time it is
+ * swapped in: the walk happens every couple of seconds, and rebuilding on a
+ * timer would shuffle rows under a pointer that is about to click one.
  */
-static void app_refresh_devices(app *a)
+static int app_refresh_devices(app *a)
 {
   app_devices next;
 
@@ -399,12 +397,13 @@ static void app_refresh_devices(app *a)
     }
     if (same)
     {
-      return;
+      return 0;
     }
   }
 
   aud_debug("capture devices changed: %d offered", next.count);
   app_adopt_devices(a, &next);
+  return 1;
 }
 
 /* Open the device and build the display for whatever it negotiated. */
@@ -498,8 +497,10 @@ static void app_switch_device(app *a, int previous)
  * clicking the row that is already selected changes nothing - so a device that
  * returns has to be picked up here or not at all.
  *
- * Only when ALSA reports it again, so a window waiting for one interface does
- * not fill the terminal with the same failure every time another one moves.
+ * Only when ALSA reports it again, and only off the back of a list that
+ * actually changed: a device that is there but held by another program fails
+ * to open every time it is tried, and trying it on every sweep would fill the
+ * terminal with the same failure twice a second.
  */
 static void app_recover_engine(app *a)
 {
@@ -1224,9 +1225,8 @@ int main(int argc, char *argv[])
   {
     aud_engine_status st;
 
-    if (aud_device_watch_changed(a.watch))
+    if (aud_device_watch_changed(a.watch) && app_refresh_devices(&a))
     {
-      app_refresh_devices(&a);
       app_recover_engine(&a);
     }
 

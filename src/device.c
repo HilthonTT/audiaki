@@ -517,27 +517,37 @@ int aud_device_list(int json)
 #define WATCH_DIR "/dev/snd"
 
 /*
- * Seconds to let a burst of events settle before reporting it. Plugging in one
- * interface creates a control node and a node per PCM, and enumerating between
- * them would find a card that is only half there.
+ * How often to say "look again" of its own accord. This is the mechanism, not
+ * the fallback: inotify on /dev/snd is not delivered everywhere - a sandbox or
+ * a container can hold its own mount of devtmpfs, where nodes appear and
+ * disappear exactly as they do outside and no watch on them ever fires - and a
+ * device list that quietly stops updating in those is worse than one that
+ * costs a re-walk. Enumerating two cards takes about 0.3 ms, which is a fifth
+ * of a frame every other second.
+ */
+#define WATCH_SWEEP 2.0
+
+/*
+ * Seconds to let a burst of inotify events settle before reporting it, when
+ * they do arrive. Plugging in one interface creates a control node and a node
+ * per PCM, and enumerating between them would find a card only half there.
+ * This is what makes a plugged-in device appear in well under a second rather
+ * than whenever the sweep next comes round.
  */
 #define WATCH_SETTLE 0.4
 
 /*
- * A single second look, once the burst has been reported. Cheap insurance for
- * hardware that registers its capture PCM a little after the node that
- * announced it, which is otherwise a device that appears only on the next one.
+ * One more look after a burst has been reported. Cheap insurance for hardware
+ * that registers its capture PCM a little after the node that announced it,
+ * which would otherwise wait for the next sweep.
  */
 #define WATCH_CONFIRM 1.5
 
-/* How often to look anyway when there is no inotify to be woken by. */
-#define WATCH_SWEEP 2.0
-
 struct aud_device_watch
 {
-  int fd;           /* inotify descriptor, or -1 when polling instead */
-  double next_scan; /* monotonic deadline for the next report, 0.0 for none */
-  int confirming;   /* the pending report is the second look, not the first */
+  int fd;           /* inotify descriptor, or -1 when there is none */
+  double next_scan; /* monotonic deadline for the next report */
+  int confirm_left; /* second looks still owed to a burst of events */
 };
 
 static double watch_now(void)
@@ -585,12 +595,12 @@ aud_device_watch *aud_device_watch_create(void)
 
   if (w->fd < 0)
   {
-    aud_debug("cannot watch " WATCH_DIR " (%s); polling for device changes "
-              "every %.0f seconds instead",
-              strerror(errno), WATCH_SWEEP);
-    w->next_scan = watch_now() + WATCH_SWEEP;
+    aud_debug("cannot watch " WATCH_DIR " (%s); device changes will be noticed "
+              "by the sweep alone",
+              strerror(errno));
   }
 
+  w->next_scan = watch_now() + WATCH_SWEEP;
   return w;
 }
 
@@ -619,30 +629,26 @@ int aud_device_watch_changed(aud_device_watch *w)
 
   now = watch_now();
 
+  /* an event pulls the next look in, rather than being the only thing that books one */
   if (w->fd >= 0 && watch_drain(w->fd))
   {
     w->next_scan = now + WATCH_SETTLE;
-    w->confirming = 0;
+    w->confirm_left = 1;
   }
 
-  if (w->next_scan == 0.0 || now < w->next_scan)
+  if (now < w->next_scan)
   {
     return 0;
   }
 
-  if (w->fd < 0)
+  if (w->confirm_left > 0)
   {
-    w->next_scan = now + WATCH_SWEEP; /* nothing wakes us; keep sweeping */
-  }
-  else if (!w->confirming)
-  {
+    w->confirm_left--;
     w->next_scan = now + WATCH_CONFIRM;
-    w->confirming = 1;
   }
   else
   {
-    w->next_scan = 0.0; /* back to sleep until inotify says otherwise */
-    w->confirming = 0;
+    w->next_scan = now + WATCH_SWEEP;
   }
 
   return 1;
