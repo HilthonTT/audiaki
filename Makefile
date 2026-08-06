@@ -172,6 +172,13 @@ debug:
 $(BIN): $(OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
+# The PipeWire and SPA headers use GCC statement expressions, which -Wpedantic
+# rejects in strict ISO mode, so the two backend objects are built without it -
+# the same exception raylib already gets. Everything audiaki itself writes,
+# including the rest of these files, still gets the full warning set.
+$(OBJ_DIR)/device_pipewire.o $(OBJ_DIR)/monitor_pipewire.o: \
+  CFLAGS := $(filter-out -Wpedantic,$(CFLAGS))
+
 $(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
 	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) $(CFLAGS) -c -o $@ $<
 

@@ -1,7 +1,7 @@
 .\" SPDX-License-Identifier: MIT
 .TH AUDIAKI 1 "2026-08-06" "audiaki 1.0.0" "User Commands"
 .SH NAME
-audiaki, audiaki\-gui \- record an ALSA capture device to a WAV file, tune an
+audiaki, audiaki\-gui \- record a capture device to a WAV file, tune an
 instrument on it, and visualise it
 .SH SYNOPSIS
 .B audiaki
@@ -26,9 +26,15 @@ instrument on it, and visualise it
 [\fIOPTION\fR]...
 .SH DESCRIPTION
 .B audiaki
-opens an ALSA capture device, negotiates the widest sample format the hardware
-supports, and streams the audio into a canonical PCM WAV file while drawing a
-live peak meter on standard error.
+opens a capture device, negotiates the widest sample format available, and
+streams the audio into a canonical PCM WAV file while drawing a live peak meter
+on standard error.
+.PP
+It talks to either PipeWire or ALSA, and chooses between them without being
+told: if a PipeWire daemon answers it is used, and otherwise ALSA. See
+.B \-\-backend
+under
+.BR "Common" ", and " BACKENDS .
 .PP
 The WAV header is written with placeholder sizes and patched when recording
 stops, including when it is stopped with
@@ -59,10 +65,18 @@ below.
 .SS Recording
 .TP
 .BR \-D ", " \-\-device " " \fINAME\fR
-ALSA device to capture from. Defaults to the value of
+Capture device, spelled the way the selected backend spells it: an ALSA device
+such as
+.B hw:CARD=Box,DEV=0
+or a PipeWire node name such as
+.BR alsa_input.usb\-Box.analog\-stereo .
+Defaults to the value of
 .B AUDIAKI_DEVICE
 or, when that is unset,
 .BR default .
+Run
+.B \-\-list
+to see what the selected backend offers.
 .TP
 .BR \-r ", " \-\-rate " " \fIHZ\fR
 Sample rate in Hz (default 44100). If the device cannot provide it, the nearest
@@ -185,6 +199,18 @@ choose the device to listen on.
 The reference pitch every note is measured against, 390 to 500 (default 440).
 Set it to play with an ensemble tuned somewhere other than concert pitch.
 .SS Common
+.TP
+.BR \-\-backend " " \fINAME\fR
+Audio system to talk to:
+.BR auto ", " pipewire " or " alsa
+(default
+.BR auto ,
+or the value of
+.BR AUDIAKI_BACKEND ).
+.B auto
+uses PipeWire when its daemon answers and ALSA otherwise. Naming a backend that
+is unavailable is an error rather than a fallback. See
+.BR BACKENDS .
 .TP
 .BR \-\-info " " \fIFILE\fR
 Measure
@@ -370,8 +396,15 @@ no other will open \- it waits on the "no device" screen with the dropdown still
 live, and opens the next interface plugged in.
 .TP
 .B \-D, \-\-device NAME
-ALSA capture device the window opens on. It is preselected in the dropdown, and
+Capture device the window opens on. It is preselected in the dropdown, and
 appears there even when it is not one of the enumerated devices.
+.TP
+.B \-b, \-\-backend NAME
+Audio system to talk to:
+.BR auto ", " pipewire " or " alsa .
+Chosen before the dropdown is first filled, so the list is whichever backend's.
+See
+.BR BACKENDS .
 .TP
 .B \-r, \-\-rate HZ
 Sample rate.
@@ -521,12 +554,50 @@ the input instead of drifting further behind it.
 is only built when the vendored raylib submodule is initialised and the OpenGL
 and X11 development headers are installed. Neither is needed for
 .BR audiaki .
+.SH BACKENDS
+.B audiaki
+reaches the hardware through one of two audio systems.
+.TP
+.B pipewire
+Asks the sound server that owns the card. It shares the interface with anything
+else using it, names devices as the rest of the desktop does, is told at once
+when hardware appears or goes, and provides any format or rate asked for by
+conversion. A PipeWire sink is offered as a capture device too: recording one
+captures what is being played to it, which is how another application's output
+is recorded. Monitoring works at any rate, because the server resamples.
+Requires a running daemon, and a build with the PipeWire headers present.
+.TP
+.B alsa
+Opens the card directly through libasound, with nothing in between. One program
+at a time holds a device, so a busy card fails rather than being shared, and the
+format is whatever the hardware genuinely offers \(em which is what makes
+.B \-\-probe
+meaningful here and advisory under PipeWire. Needs no daemon.
+.PP
+Which one is in use shows in the
+.B backend
+field of
+.BR "\-\-list \-\-json" " and " "\-\-probe \-\-json" ,
+and in
+.B \-v
+output. Run
+.B make help
+to see which backends a build has.
 .SH ENVIRONMENT
 .TP
 .B AUDIAKI_DEVICE
-Default ALSA device, used when
+Default capture device, used when
 .B \-D
 is not given.
+.TP
+.B AUDIAKI_BACKEND
+Default backend
+.RB ( auto ", " pipewire " or " alsa ),
+used when
+.B \-\-backend
+is not given. An unrecognised value warns and is ignored rather than failing, so
+a typo in an exported variable cannot make every invocation \(em including
+.BR \-\-help " \(em" " fail."
 .SH EXIT STATUS
 .TP
 .B 0

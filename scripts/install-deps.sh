@@ -6,6 +6,10 @@
 #
 # Also installs, by default:
 #
+#   the PipeWire development headers, which build the backend that talks to the
+#   sound server rather than to the card. Without them audiaki still builds and
+#   records, through ALSA alone; pass --no-pipewire to skip them.
+#
 #   ffmpeg, which `audiaki --visualize` runs to encode a video. It is not
 #   needed to build audiaki or to record with it; pass --no-ffmpeg to skip it.
 #
@@ -15,19 +19,22 @@
 #   them.
 #
 # Usage: ./scripts/install-deps.sh [--dry-run] [--no-ffmpeg] [--no-gui]
+#                                  [--no-pipewire]
 
 set -eu
 
 DRY_RUN=0
 WANT_FFMPEG=1
 WANT_GUI=1
+WANT_PIPEWIRE=1
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --no-ffmpeg) WANT_FFMPEG=0 ;;
     --no-gui) WANT_GUI=0 ;;
+    --no-pipewire) WANT_PIPEWIRE=0 ;;
     *)
-      echo "usage: $0 [--dry-run] [--no-ffmpeg] [--no-gui]" >&2
+      echo "usage: $0 [--dry-run] [--no-ffmpeg] [--no-gui] [--no-pipewire]" >&2
       exit 2
       ;;
   esac
@@ -56,6 +63,23 @@ FFMPEG=""
 if [ "$WANT_FFMPEG" -eq 1 ]; then
   FFMPEG="ffmpeg"
 fi
+
+# PipeWire's development package brings the SPA headers with it as a dependency
+# everywhere audiaki supports, so only the one name is needed per distribution.
+# Arch has no split -dev packages, so the headers come with the library itself.
+pipewire_packages() {
+  if [ "$WANT_PIPEWIRE" -eq 0 ]; then
+    return
+  fi
+  case "$1" in
+    apt) echo "libpipewire-0.3-dev" ;;
+    dnf) echo "pipewire-devel" ;;
+    pacman) echo "libpipewire" ;;
+    zypper) echo "pipewire-devel" ;;
+    apk) echo "pipewire-dev" ;;
+    *) ;;
+  esac
+}
 
 # The GUI package names are not: every distribution splits and capitalises the
 # X11 libraries differently, so each branch names its own set. raylib is built
@@ -91,25 +115,30 @@ gui_packages() {
 
 if command -v apt-get >/dev/null 2>&1; then
   GUI=$(gui_packages apt)
+  PW=$(pipewire_packages apt)
   run apt-get update
   # shellcheck disable=SC2086
-  run apt-get install -y build-essential pkg-config libasound2-dev $FFMPEG $GUI
+  run apt-get install -y build-essential pkg-config libasound2-dev $PW $FFMPEG $GUI
 elif command -v dnf >/dev/null 2>&1; then
   GUI=$(gui_packages dnf)
+  PW=$(pipewire_packages dnf)
   # shellcheck disable=SC2086
-  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $FFMPEG $GUI
+  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $PW $FFMPEG $GUI
 elif command -v pacman >/dev/null 2>&1; then
   GUI=$(gui_packages pacman)
+  PW=$(pipewire_packages pacman)
   # shellcheck disable=SC2086
-  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $FFMPEG $GUI
+  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $PW $FFMPEG $GUI
 elif command -v zypper >/dev/null 2>&1; then
   GUI=$(gui_packages zypper)
+  PW=$(pipewire_packages zypper)
   # shellcheck disable=SC2086
-  run zypper install -y gcc make pkg-config alsa-devel $FFMPEG $GUI
+  run zypper install -y gcc make pkg-config alsa-devel $PW $FFMPEG $GUI
 elif command -v apk >/dev/null 2>&1; then
   GUI=$(gui_packages apk)
+  PW=$(pipewire_packages apk)
   # shellcheck disable=SC2086
-  run apk add build-base pkgconf alsa-lib-dev $FFMPEG $GUI
+  run apk add build-base pkgconf alsa-lib-dev $PW $FFMPEG $GUI
 else
   cat >&2 <<'EOF'
 error: no supported package manager found.
@@ -119,6 +148,8 @@ Install these yourself and re-run `make`:
   - make
   - pkg-config
   - the ALSA development headers (libasound2-dev / alsa-lib-devel / alsa-lib)
+  - the PipeWire development headers, if you want the PipeWire backend
+    (libpipewire-0.3-dev / pipewire-devel / libpipewire / pipewire-dev)
   - ffmpeg, if you want `audiaki --visualize` to render videos
   - the OpenGL and X11 development headers, if you want the audiaki-gui
     desktop app: GL, X11, Xrandr, Xi, Xcursor, Xinerama and xkbcommon

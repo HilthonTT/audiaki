@@ -136,15 +136,41 @@ int aud_device_watch_changed(aud_device_watch *w)
   return w->ops->watch_changed(w->impl);
 }
 
+/*
+ * Width of the DEVICE column. ALSA's `hw:CARD=x,DEV=n` fits the historic 32
+ * comfortably; PipeWire's node names run past 40, and a fixed column would push
+ * every description out of line. Widening to the longest name keeps the table a
+ * table, and the floor means the ALSA listing prints exactly as it always has.
+ */
+static int list_name_width(const aud_device_entry *list, int count)
+{
+  int width = 32;
+
+  for (int i = 0; i < count; i++)
+  {
+    int len = (int)strlen(list[i].name);
+
+    if (len > width)
+    {
+      width = len;
+    }
+  }
+
+  return width;
+}
+
 int aud_device_list(int json)
 {
   aud_device_entry *list = NULL;
   int found = aud_device_enumerate(&list);
+  int width;
 
   if (found < 0)
   {
     return -1;
   }
+
+  width = list_name_width(list, found);
 
   if (json)
   {
@@ -152,7 +178,7 @@ int aud_device_list(int json)
   }
   else
   {
-    printf("%-32s %s\n", "DEVICE", "DESCRIPTION");
+    printf("%-*s %s\n", width, "DEVICE", "DESCRIPTION");
   }
 
   for (int i = 0; i < found; i++)
@@ -171,7 +197,7 @@ int aud_device_list(int json)
     }
     else
     {
-      printf("%-32s %s: %s\n", list[i].name, list[i].card, list[i].description);
+      printf("%-*s %s: %s\n", width, list[i].name, list[i].card, list[i].description);
     }
   }
 

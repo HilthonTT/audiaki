@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A PipeWire backend. audiaki now talks to the sound server that owns the card
+  on most current desktops, rather than only to the card. It is chosen without
+  being asked: if a daemon answers, audiaki uses it; if none does, ALSA, exactly
+  as before. `--backend auto|pipewire|alsa` and `$AUDIAKI_BACKEND` override the
+  choice, and `audiaki-gui` takes `-b` for the same. Asking for a backend that
+  is not there is an error rather than a silent downgrade - someone who typed
+  `--backend pipewire` wants to hear it was missing, not to find out later that
+  their device names came from somewhere else.
+- Recording another application's output. A PipeWire sink appears in `--list`
+  described as a monitor, and capturing it records what is being played to it -
+  a browser, a synth, a call. Opening the card cannot do this at any setting.
+- Device names that match the rest of the desktop. Under PipeWire `--list`
+  reports `alsa_input.pci-0000_00_1f.3.analog-stereo` and "Built-in Audio
+  Analog Stereo" - the strings the system settings shows - instead of the
+  `hw:CARD=x,DEV=n` that only ALSA uses. The DEVICE column widens to fit them;
+  under ALSA it stays at the 32 it always was, so that listing is unchanged.
+- `backend` module: the two op tables an audio system is reached through, and
+  the selection between them. `device.c` and `monitor.c` became dispatchers
+  over it, with the implementations moving to `device_alsa.c`, `monitor_alsa.c`
+  and their PipeWire counterparts.
+
+### Changed
+
+- `device.h` no longer includes `<alsa/asoundlib.h>`, and the stream handle in
+  `aud_device` is opaque. The header comment claimed ALSA was confined to
+  `device.c` already; it was not, because every file including the header was
+  compiled against libasound whether it used it or not, and `recorder.c` reached
+  through the handle to call `snd_pcm_drop()` directly. That call is now
+  `aud_device_drop()`.
+- Monitoring through PipeWire works at any capture rate, because the server
+  resamples. The ALSA monitor still declines rather than carry an interpolator
+  for a convenience feature, and now says which backend does not have the limit.
+- `--probe` under PipeWire reports what a stream will actually be given and says
+  where that comes from, rather than a hardware capability table. Through a
+  server that converts, the card's own format list no longer decides what a
+  recording can be, and printing it as though it did would be a lie of exactly
+  the kind `--probe` exists to prevent. `--backend alsa --probe` still asks the
+  hardware.
+- `--list --json` and `--probe --json` gained a `backend` field. Additive, so
+  existing filters keep working.
+- The PipeWire headers are optional at build time, the way raylib is. Without
+  `libpipewire-0.3-dev` the two backend files are not compiled and the binary is
+  ALSA-only, which is what keeps CI and headless machines building unchanged.
+  `make help` reports which backends are in.
+
 ## [1.0.0] - 2026-08-06
 
 ### Added

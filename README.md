@@ -5,8 +5,8 @@
 <h1 align="center">audiaki</h1>
 
 <p align="center">
-  Minimal ALSA capture-to-WAV recorder for Linux, with live metering, a
-  spectrum visualiser and a desktop app.
+  Minimal capture-to-WAV recorder for Linux, with live metering, a
+  spectrum visualiser and a desktop app. Talks to PipeWire or ALSA.
 </p>
 
 <p align="center">
@@ -14,9 +14,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-audiaki opens a capture device, picks the best sample format the hardware
-actually supports, and streams it straight into a PCM WAV file with a live
-meter. It can also turn a finished take into a spectrum visualiser video.
+audiaki opens a capture device, picks the best sample format available, and
+streams it straight into a PCM WAV file with a live meter. It can also turn a
+finished take into a spectrum visualiser video.
+
+It talks to PipeWire where there is one and to ALSA where there is not, picking
+whichever answers without being told. Through PipeWire it coexists with whatever
+else has the interface open, names devices the way the rest of the desktop does,
+and can record another application's output; through ALSA it opens the card with
+nothing in between.
 
 Two binaries share one capture and analysis core: `audiaki`, the command line
 recorder, and `audiaki-gui`, a desktop window with a transport, playback
@@ -34,6 +40,8 @@ interfaces, built-in codecs, `plughw` plugins.
 `arecord` is more general. `audiaki` is a single small binary aimed at one job:
 plug in an instrument, get a clean take, see the level while you play.
 
+- Speaks PipeWire as well as ALSA, so it does not have to be told to get out of
+  the way of the browser holding the same interface.
 - Negotiates the widest format the device offers (S32 → S24 → S16) instead of
   defaulting to 16-bit.
 - Live peak meter with peak-hold and a clipping warning, or a live spectrum
@@ -54,8 +62,11 @@ plug in an instrument, get a clean take, see the level while you play.
 
 ## Install
 
-Requires a C11 compiler, `make`, and the ALSA development headers. Rendering a
-video also needs `ffmpeg` on `PATH` at run time — not to build or to record.
+Requires a C11 compiler, `make`, and the ALSA development headers. The PipeWire
+headers (`libpipewire-0.3-dev`) are optional: with them present the PipeWire
+backend is compiled in, without them `make` quietly builds the ALSA-only binary
+and everything else works unchanged. Rendering a video also needs `ffmpeg` on
+`PATH` at run time — not to build or to record.
 
 ```sh
 ./scripts/install-deps.sh   # or install libasound2-dev / alsa-lib-devel yourself
@@ -64,8 +75,9 @@ sudo make install           # installs to /usr/local; override with PREFIX=~/.lo
 ```
 
 The script handles apt, dnf, pacman, zypper and apk, and takes `--dry-run` to
-show what it would install. By default it also pulls in `ffmpeg` and the
-desktop app's OpenGL and X11 headers; `--no-ffmpeg` and `--no-gui` skip those.
+show what it would install. By default it also pulls in the PipeWire headers,
+`ffmpeg`, and the desktop app's OpenGL and X11 headers; `--no-pipewire`,
+`--no-ffmpeg` and `--no-gui` skip those.
 
 ### Building the desktop app
 
@@ -109,7 +121,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 
 | Option | Description |
 | --- | --- |
-| `-D, --device NAME` | ALSA device (default `default`, or `$AUDIAKI_DEVICE`) |
+| `-D, --device NAME` | Capture device (default `default`, or `$AUDIAKI_DEVICE`) |
+| `--backend NAME` | `auto`, `pipewire` or `alsa` (default `auto`, or `$AUDIAKI_BACKEND`) |
 | `-r, --rate HZ` | Sample rate (default 44100) |
 | `-c, --channels N` | Channel count (default 2) |
 | `-f, --format NAME` | Force `s16_le`, `s24_3le`, `s24_le` or `s32_le` |
@@ -136,6 +149,55 @@ audiaki --visualize take01.wav       # render take01.mp4
 Full details: `man audiaki` after installing, or `audiaki --help`. Set
 `AUDIAKI_DEVICE=hw:CARD=Box,DEV=0` to stop typing `-D` every time.
 
+## Backends
+
+audiaki talks to one of two audio systems, and picks without being asked: if a
+PipeWire daemon answers, it uses PipeWire; otherwise ALSA. `--backend` overrides
+that, and `$AUDIAKI_BACKEND` sets a default.
+
+```sh
+audiaki --list                   # whichever answers
+audiaki --backend alsa --list    # the cards, whatever else is running
+audiaki --backend pipewire -t 30 take01.wav
+```
+
+|  | `pipewire` | `alsa` |
+| --- | --- | --- |
+| Shares the interface | Yes, with anything else | No, one program at a time |
+| Device names | `alsa_input.usb-...` — as the desktop shows them | `hw:CARD=Box,DEV=0` |
+| Devices appearing | The server says so, at once | Watches `/dev/snd`, and sweeps |
+| Format | Anything asked for, by conversion | What the hardware offers |
+| Records other apps | Yes, through a sink's monitor | No |
+| Monitoring | Any rate; the server resamples | Only if the output takes the capture rate |
+| Needs | A running daemon | Nothing |
+
+Asking for a backend that is not there is an error rather than a quiet
+downgrade: `--backend pipewire` on a machine with no daemon says so, instead of
+recording through ALSA and leaving you to wonder why the device names changed.
+
+### Recording another application
+
+A PipeWire sink appears in `--list` alongside the inputs, described as a monitor.
+Recording one captures what is being *played* to it — a browser, a synth, a
+video call — which is not something opening the card can do.
+
+```sh
+$ audiaki --list
+DEVICE                                     DESCRIPTION
+alsa_output.pci-0000_00_1f.3.analog-stereo Built-in Audio Analog Stereo: monitor of this output
+alsa_input.pci-0000_00_1f.3.analog-stereo  Built-in Audio Analog Stereo: Audio/Source
+
+$ audiaki -D alsa_output.pci-0000_00_1f.3.analog-stereo -t 30 desktop.wav
+```
+
+### What `--probe` means on each
+
+Under ALSA, `--probe` asks the hardware what it supports, and the answer decides
+what a recording can be. Under PipeWire the server converts, so anything audiaki
+asks for is what it gets and the hardware's own list no longer governs — the
+probe says so rather than printing a capability table that decides nothing. For
+the question "what can this card actually do", use `--backend alsa --probe`.
+
 ## The desktop app
 
 <p align="center">
@@ -145,6 +207,7 @@ Full details: `man audiaki` after installing, or `audiaki --help`. Set
 ```sh
 audiaki-gui                          # open the window on the default device
 audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
+audiaki-gui -b alsa                  # ...through a particular backend
 audiaki-gui -o session               # name takes session-001.wav and up
 audiaki-gui -s waterfall             # start on a particular visualiser
 audiaki-gui -s tuner                 # ...come up as a tuner
@@ -417,8 +480,19 @@ minute. `--bars` applies only to `bars`.
 ## Troubleshooting
 
 **`cannot open capture device 'default': Device or resource busy`**
-PipeWire or PulseAudio holds the card exclusively. Record through the plug
-layer instead: `-D plughw:CARD=Box,DEV=0`.
+Something else holds the card exclusively. This is what the PipeWire backend is
+for — `--backend pipewire` shares the interface instead of competing for it. If
+you need ALSA specifically, record through the plug layer instead:
+`-D plughw:CARD=Box,DEV=0`.
+
+**`the pipewire backend is not answering; is the daemon running?`**
+`--backend pipewire` was asked for on a machine where no daemon replied. Either
+start one or use `--backend alsa`. `auto` never produces this: it falls back on
+its own.
+
+**`this build has no pipewire backend`**
+It was compiled without `libpipewire-0.3-dev`. Install it and rebuild;
+`make help` reports which backends are in.
 
 **`cannot set 2 channel(s)`**
 The device is mono-only, or wants a different count. Run `--probe` to see the
@@ -457,7 +531,10 @@ make STRICT=1   # warnings become errors, as in CI
 src/
   main.c        entry point; dispatches the parsed command
   cli.c/.h      argument parsing and help text
-  device.c/.h   the only code that touches libasound
+  backend.c/.h  which audio system to talk to, and the tables it is reached by
+  device.c/.h   the capture interface, dispatching to the chosen backend
+  device_alsa.c   ...over libasound
+  device_pipewire.c ...over libpipewire, when it was compiled in
   recorder.c/.h capture loop: device -> repack -> WAV
   wav.c/.h      streaming WAV writer, and a tolerant WAV reader
   info.c/.h     measure a finished take: levels, clipping, noise floor
@@ -475,7 +552,9 @@ src/
   ffmpeg_posix.c  its fork/exec/pipe implementation
   signals.c/.h  the shared Ctrl+C flag
   parse.c/.h    strict CLI value parsing
-  monitor.c/.h  ALSA playback, for hearing the input while it records
+  monitor.c/.h  playback, for hearing the input while it records
+  monitor_alsa.c     ...over libasound
+  monitor_pipewire.c ...over libpipewire
   ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
   log.c/.h      stderr diagnostics
   gui/
@@ -488,7 +567,9 @@ docs/           man page
 vendor/raylib/  submodule, only needed for the desktop app
 ```
 
-ALSA lives behind `device.c` and `monitor.c`, so `format`, `wav`, `parse`,
+No audio system appears above `backend.h`: `device.c` and `monitor.c` are
+dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
+`<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
 `fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf` and `jsonout`
 are plain C that builds and tests anywhere — which is what CI does. The
 analysis is shared three ways: the terminal display, the video renderer and the
@@ -502,7 +583,7 @@ the submodule absent.
 - Little-endian hosts only; WAV is little-endian and no byte swapping is done.
 - Plain 44-byte PCM WAV, so recordings stop at the 4 GB RIFF limit
   (about 3.5 hours of 24-bit stereo at 48 kHz).
-- Linux/ALSA only. No PipeWire, JACK or CoreAudio backend.
+- Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
 - The desktop app records to numbered takes in the working directory. There is
@@ -510,9 +591,10 @@ the submodule absent.
 - Video is rendered after the take, so a long take with video on means waiting
   roughly its own length again. Cancelling is always available, and the audio
   is safe on disk regardless.
-- Monitoring needs an output that accepts the capture rate directly. audiaki
-  does not resample, so it declines to monitor rather than play back at the
-  wrong pitch.
+- Monitoring through ALSA needs an output that accepts the capture rate
+  directly: audiaki does not resample, so it declines to monitor rather than
+  play back at the wrong pitch. The PipeWire backend has no such limit, because
+  the server resamples.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between
   40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
   piccolo is not.
