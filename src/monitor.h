@@ -18,18 +18,20 @@
 #ifndef AUDIAKI_MONITOR_H
 #define AUDIAKI_MONITOR_H
 
+#include "backend.h"
+
 #include <stddef.h>
 
 #define AUD_MONITOR_DEFAULT_DEVICE "default"
 
-typedef struct
+struct aud_monitor_config
 {
-  const char *name;       /* ALSA playback device; NULL means the default */
+  const char *name;       /* playback device; NULL means the default */
   unsigned rate;          /* must match the capture stream */
   unsigned channels;      /* must match the capture stream */
   unsigned period_frames; /* how much is handed over per write */
   unsigned periods;       /* periods per buffer; more latency, fewer dropouts */
-} aud_monitor_config;
+};
 
 typedef struct aud_monitor aud_monitor;
 

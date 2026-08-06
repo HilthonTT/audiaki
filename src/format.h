@@ -2,8 +2,9 @@
 /*
  * format.h - sample formats, peak detection and repacking.
  *
- * Deliberately free of any ALSA dependency so the numeric code can be unit
- * tested on any host. device.c owns the mapping to snd_pcm_format_t.
+ * Deliberately free of any audio system dependency so the numeric code can be
+ * unit tested on any host. Each backend owns the mapping to its own format
+ * enum: device_alsa.c to snd_pcm_format_t, device_pipewire.c to spa_audio_format.
  */
 #ifndef AUDIAKI_FORMAT_H
 #define AUDIAKI_FORMAT_H

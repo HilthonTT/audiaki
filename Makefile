@@ -50,11 +50,29 @@ ifeq ($(strip $(ALSA_LIBS)),)
 ALSA_LIBS := -lasound
 endif
 
-LDLIBS    += $(ALSA_LIBS) -lm
+# PipeWire is optional, the way raylib is: with the headers absent the second
+# backend is simply not compiled and audiaki talks to ALSA as it always has.
+# There is no fallback to hand-written paths here - a machine either has the
+# development package or it does not.
+PIPEWIRE_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpipewire-0.3 2>/dev/null)
+PIPEWIRE_LIBS   := $(shell $(PKG_CONFIG) --libs libpipewire-0.3 2>/dev/null)
+HAVE_PIPEWIRE   := $(if $(strip $(PIPEWIRE_LIBS)),1,)
+
+ifneq ($(HAVE_PIPEWIRE),)
+CPPFLAGS  += -DAUDIAKI_HAVE_PIPEWIRE
+BACKEND_STATUS := enabled
+else
+BACKEND_STATUS := alsa only - install libpipewire-0.3-dev to add it
+endif
+
+LDLIBS    += $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lm
 
 # -- sources -----------------------------------------------------------------
 
 SRCS      := $(sort $(wildcard src/*.c))
+ifeq ($(HAVE_PIPEWIRE),)
+SRCS      := $(filter-out src/device_pipewire.c src/monitor_pipewire.c,$(SRCS))
+endif
 OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 # Objects that do not touch libasound. Tests link against these so the suite
@@ -85,13 +103,18 @@ GUI_OBJS  := $(GUI_SRCS:src/gui/%.c=$(OBJ_DIR)/gui/%.o)
 # no use for the terminal meter, the argument parser or the ffmpeg pipe.
 # jsonout is here only because device.c's --list and --probe reference it; the
 # window never calls either.
-GUI_CORE_SRCS := src/device.c src/format.c src/wav.c src/log.c src/fft.c \
-                 src/spectrum.c src/monitor.c src/ringbuf.c src/take.c \
-                 src/tuner.c src/jsonout.c src/parse.c src/ffmpeg_posix.c
+GUI_CORE_SRCS := src/device.c src/device_alsa.c src/backend.c src/format.c \
+                 src/wav.c src/log.c src/fft.c src/spectrum.c src/monitor.c \
+                 src/monitor_alsa.c src/ringbuf.c src/take.c src/tuner.c \
+                 src/jsonout.c src/parse.c src/ffmpeg_posix.c
+ifneq ($(HAVE_PIPEWIRE),)
+GUI_CORE_SRCS += src/device_pipewire.c src/monitor_pipewire.c
+endif
 GUI_CORE_OBJS := $(GUI_CORE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 GUI_CPPFLAGS := -Isrc/gui -I$(RAYLIB_SRC)
-GUI_LDLIBS   := $(RAYLIB_LIB) $(ALSA_LIBS) -lGL -lX11 -lm -lpthread -ldl -lrt
+GUI_LDLIBS   := $(RAYLIB_LIB) $(ALSA_LIBS) $(PIPEWIRE_LIBS) \
+                -lGL -lX11 -lm -lpthread -ldl -lrt
 
 # An uninitialised submodule is not an error: the CLI still builds, and `make`
 # just quietly stops shipping a window.
@@ -150,7 +173,7 @@ $(BIN): $(OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
 $(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
-	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) $(CFLAGS) -c -o $@ $<
 
 $(BUILD_DIR) $(OBJ_DIR) $(OBJ_DIR)/gui $(TEST_DIR):
 	@mkdir -p $@
@@ -178,7 +201,7 @@ $(GUI_BIN): $(GUI_OBJS) $(GUI_CORE_OBJS) $(RAYLIB_LIB) | $(BUILD_DIR)
 # raylib.h trips -Wpedantic in strict ISO mode, so the GUI objects are built
 # without it. Everything audiaki itself writes still gets the full set.
 $(OBJ_DIR)/gui/%.o: src/gui/%.c | $(OBJ_DIR)/gui
-	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) $(ALSA_CFLAGS) \
+	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) \
 	      $(filter-out -Wpedantic,$(CFLAGS)) -c -o $@ $<
 
 # -- tests -------------------------------------------------------------------
@@ -248,5 +271,6 @@ help:
 	@echo "         uninstall clean clean-raylib"
 	@echo "vars:    PREFIX=$(PREFIX) CC=$(CC) STRICT=0|1 BUILD_DIR=$(BUILD_DIR)"
 	@echo "gui:     $(GUI_STATUS)"
+	@echo "pipewire: $(BACKEND_STATUS)"
 
 -include $(DEPS)

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "cli.h"
 
+#include "device.h"
 #include "parse.h"
 #include "spectrum.h"
 #include "tuner.h"
@@ -35,12 +36,12 @@
  */
 #define DURATION_MAX 2592000.0
 
-/* defaults mirrored from device.h without pulling in <alsa/asoundlib.h> */
-#define CLI_DEFAULT_DEVICE "default"
-#define CLI_DEFAULT_RATE 44100u
-#define CLI_DEFAULT_CHANNELS 2u
-#define CLI_DEFAULT_PERIOD_FRAMES 1024u
-#define CLI_DEFAULT_PERIODS 4u
+/* device.h carries no audio system with it, so the defaults come from it directly */
+#define CLI_DEFAULT_DEVICE AUD_DEFAULT_DEVICE
+#define CLI_DEFAULT_RATE AUD_DEFAULT_RATE
+#define CLI_DEFAULT_CHANNELS AUD_DEFAULT_CHANNELS
+#define CLI_DEFAULT_PERIOD_FRAMES AUD_DEFAULT_PERIOD_FRAMES
+#define CLI_DEFAULT_PERIODS AUD_DEFAULT_PERIODS
 
 enum
 {
@@ -56,6 +57,7 @@ enum
   OPT_JSON,
   OPT_TUNE,
   OPT_A4,
+  OPT_BACKEND,
 };
 
 static const struct option long_options[] = {
@@ -82,6 +84,7 @@ static const struct option long_options[] = {
     {"take", required_argument, NULL, OPT_TAKE},
     {"tune", no_argument, NULL, OPT_TUNE},
     {"a4", required_argument, NULL, OPT_A4},
+    {"backend", required_argument, NULL, OPT_BACKEND},
     {"json", no_argument, NULL, OPT_JSON},
     {"list", no_argument, NULL, 'l'},
     {"probe", no_argument, NULL, 'P'},
@@ -93,6 +96,7 @@ static const struct option long_options[] = {
 void cli_defaults(aud_options *opts)
 {
   const char *env_device = getenv("AUDIAKI_DEVICE");
+  const char *env_backend = getenv("AUDIAKI_BACKEND");
 
   memset(opts, 0, sizeof(*opts));
   opts->command = AUD_CMD_RECORD;
@@ -118,6 +122,20 @@ void cli_defaults(aud_options *opts)
   opts->a4_hz = AUD_TUNER_DEFAULT_A4;
   opts->json = 0;
   opts->log_level = AUD_LOG_NORMAL;
+
+  /*
+   * A bad $AUDIAKI_BACKEND is left at auto rather than rejected. An exported
+   * variable with a typo in it would otherwise make every invocation fail,
+   * including the --help that would explain the spelling.
+   */
+  opts->backend = AUD_BACKEND_AUTO;
+  if (env_backend != NULL && *env_backend != '\0' &&
+      aud_backend_parse(env_backend, &opts->backend) != 0)
+  {
+    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
+             env_backend);
+    opts->backend = AUD_BACKEND_AUTO;
+  }
 }
 
 void cli_print_usage(FILE *out)
@@ -130,12 +148,12 @@ void cli_print_usage(FILE *out)
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
           "\n"
-          "Record an ALSA capture device straight to a PCM WAV file, tune an\n"
+          "Record a capture device straight to a PCM WAV file, tune an\n"
           "instrument on it, measure a finished take, and turn one into a\n"
           "visualiser video.\n"
           "\n"
           "Recording options:\n"
-          "  -D, --device NAME     ALSA device (default: %s, $AUDIAKI_DEVICE)\n"
+          "  -D, --device NAME     capture device (default: %s, $AUDIAKI_DEVICE)\n"
           "  -r, --rate HZ         sample rate (default: %u)\n"
           "  -c, --channels N      channel count (default: %u)\n"
           "  -f, --format NAME     s16_le, s24_3le, s24_le or s32_le\n"
@@ -163,6 +181,8 @@ void cli_print_usage(FILE *out)
           "      --a4 HZ           reference pitch (default: %.0f)\n"
           "\n"
           "Common options:\n"
+          "      --backend NAME    auto, pipewire or alsa (default: auto,\n"
+          "                        $AUDIAKI_BACKEND)\n"
           "      --info FILE       report levels and clipping for FILE and exit\n"
           "      --json            machine readable --list, --probe and --info\n"
           "  -y, --force           overwrite the output file if it exists\n"
@@ -331,6 +351,13 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_double(optarg, AUD_TUNER_A4_MIN, AUD_TUNER_A4_MAX, &opts->a4_hz) != 0)
       {
         bad_value("--a4", optarg, "a reference pitch in Hz, 390 to 500");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_BACKEND:
+      if (aud_backend_parse(optarg, &opts->backend) != 0)
+      {
+        bad_value("--backend", optarg, "auto, pipewire or alsa");
         return CLI_EXIT_USAGE;
       }
       break;

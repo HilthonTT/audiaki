@@ -1,13 +1,14 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * audiaki - a small ALSA capture-to-WAV recorder.
+ * audiaki - a small capture-to-WAV recorder.
  *
- * Written for a Sonicake Smart Box (QME-20) guitar interface, but it works
- * with any ALSA capture device.
+ * Written for a Sonicake Smart Box (QME-20) guitar interface, but it works with
+ * any capture device, through either ALSA or PipeWire.
  *
  * Assumes a little-endian host (x86, ARM LE). WAV is little-endian, so a
  * big-endian build would need the sample bytes swapped before writing.
  */
+#include "backend.h"
 #include "cli.h"
 #include "device.h"
 #include "info.h"
@@ -202,6 +203,26 @@ int main(int argc, char *argv[])
   }
 
   aud_log_set_level(opts.log_level);
+
+  /*
+   * Only the commands that open something choose a backend. --info and
+   * --visualize read a file off disk, and connecting to a sound server to do
+   * that would make a machine without one fail at a job that never needed it.
+   */
+  switch (opts.command)
+  {
+  case AUD_CMD_LIST:
+  case AUD_CMD_PROBE:
+  case AUD_CMD_TUNE:
+  case AUD_CMD_RECORD:
+    if (aud_backend_select(opts.backend) != 0)
+    {
+      return EXIT_FAILURE;
+    }
+    break;
+  default:
+    break;
+  }
 
   switch (opts.command)
   {

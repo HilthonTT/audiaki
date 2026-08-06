@@ -13,6 +13,7 @@
 #include "ui.h"
 #include "viz.h"
 
+#include "backend.h"
 #include "device.h"
 #include "format.h"
 #include "log.h"
@@ -107,6 +108,8 @@ typedef struct
   int device_menu_open;
   int device_menu_scroll; /* top visible row, for a list longer than the menu */
 
+  aud_backend_kind backend; /* chosen once, before the first enumeration */
+
   /* the visualiser style selector, mirroring the mode held by aud_viz */
   const char *style_labels[AUD_VIZ_MODE_COUNT];
   int style_selected;
@@ -144,7 +147,8 @@ static void usage(FILE *out, const app *a)
   fprintf(out,
           "usage: " AUDIAKI_NAME "-gui [options]\n"
           "\n"
-          "  -D, --device NAME    ALSA capture device (default: %s)\n"
+          "  -D, --device NAME    capture device (default: %s)\n"
+          "  -b, --backend NAME   auto, pipewire or alsa (default: auto)\n"
           "  -r, --rate HZ        sample rate (default: %u)\n"
           "  -c, --channels N     channel count (default: %u)\n"
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
@@ -266,6 +270,15 @@ static int parse_args(app *a, int argc, char **argv)
       if (parse_uint(value, 1u, 240u, &a->video_fps) != 0)
       {
         aud_error("bad video frame rate '%s' (1 to 240)", value);
+        return 2;
+      }
+    }
+    else if (strcmp(arg, "-b") == 0 || strcmp(arg, "--backend") == 0)
+    {
+      if (aud_backend_parse(value, &a->backend) != 0)
+      {
+        aud_error("unknown backend '%s'", value);
+        aud_info("backends: auto, pipewire, alsa");
         return 2;
       }
     }
@@ -1188,10 +1201,30 @@ int main(int argc, char *argv[])
     a.style_labels[i] = aud_viz_mode_name((aud_viz_mode)i);
   }
 
+  {
+    /* the same variable the CLI honours; --backend on the command line wins */
+    const char *env_backend = getenv("AUDIAKI_BACKEND");
+
+    a.backend = AUD_BACKEND_AUTO;
+    if (env_backend != NULL && *env_backend != '\0' &&
+        aud_backend_parse(env_backend, &a.backend) != 0)
+    {
+      aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
+               env_backend);
+      a.backend = AUD_BACKEND_AUTO;
+    }
+  }
+
   rc = parse_args(&a, argc, argv);
   if (rc != 0)
   {
     return rc < 0 ? EXIT_SUCCESS : rc;
+  }
+
+  /* before the first enumeration: the dropdown is filled from whichever answers */
+  if (aud_backend_select(a.backend) != 0)
+  {
+    return EXIT_FAILURE;
   }
 
   /* raylib is chatty on stdout by default; audiaki reports through log.h */

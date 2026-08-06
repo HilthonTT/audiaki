@@ -2,12 +2,13 @@
 /*
  * cli.h - command line parsing.
  *
- * Kept free of ALSA types so the option handling can be tested on its own;
- * main.c maps the result onto aud_device_config.
+ * Kept free of any audio system's types so the option handling can be tested on
+ * its own; main.c maps the result onto aud_device_config.
  */
 #ifndef AUDIAKI_CLI_H
 #define AUDIAKI_CLI_H
 
+#include "backend.h"
 #include "format.h"
 #include "log.h"
 #include "visualize.h"
@@ -50,8 +51,9 @@ typedef struct
   unsigned viz_fps;
   unsigned viz_bars;
   aud_viz_style viz_style;
-  double a4_hz; /* --tune's reference pitch */
-  int json;     /* machine readable output for --list, --probe and --info */
+  double a4_hz;             /* --tune's reference pitch */
+  int json;                 /* machine readable output for --list, --probe and --info */
+  aud_backend_kind backend; /* which audio system to talk to */
   aud_log_level log_level;
 } aud_options;
 

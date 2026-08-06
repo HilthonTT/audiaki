@@ -222,7 +222,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
 
 finish:
   meter_clear(&meter);
-  snd_pcm_drop(dev->pcm);
+  aud_device_drop(dev);
 
   if (wav_close(&wav) != 0)
   {
