@@ -14,17 +14,15 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License: MIT"></a>
 </p>
 
-A small ALSA capture-to-WAV recorder for Linux. It opens a capture device,
-picks the best sample format the hardware actually supports, and streams it
-straight into a PCM WAV file with a live meter. It can also turn a finished
-take into a spectrum visualiser video.
+audiaki opens a capture device, picks the best sample format the hardware
+actually supports, and streams it straight into a PCM WAV file with a live
+meter. It can also turn a finished take into a spectrum visualiser video.
 
-It ships as two binaries: `audiaki`, the command line recorder, and
-`audiaki-gui`, a desktop window with a transport, playback monitoring and a
-live glowing spectrum. Both are built from the same capture and analysis core.
-
-Written for a Sonicake Smart Box (QME-20) guitar interface, but it works with
-any ALSA capture device — USB interfaces, built-in codecs, `plughw` plugins.
+Two binaries share one capture and analysis core: `audiaki`, the command line
+recorder, and `audiaki-gui`, a desktop window with a transport, playback
+monitoring and a live glowing spectrum. Written for a Sonicake Smart Box
+(QME-20) guitar interface, but it works with any ALSA capture device — USB
+interfaces, built-in codecs, `plughw` plugins.
 
 ```
  00:12 [##################|          ]  -8.4 dBFS  xruns:0
@@ -38,18 +36,18 @@ plug in an instrument, get a clean take, see the level while you play.
 
 - Negotiates the widest format the device offers (S32 → S24 → S16) instead of
   defaulting to 16-bit.
-- Live peak meter with a peak-hold marker and clipping warning, or a live
-  spectrum with `--spectrum`.
-- Tunes the instrument you are about to record with `--tune`, so getting a
-  guitar in tune does not mean opening something else first.
-- Renders a take to a visualiser video with `--visualize`, in the
-  spirit of [musializer](https://github.com/tsoding/musializer).
+- Live peak meter with peak-hold and a clipping warning, or a live spectrum
+  with `--spectrum`.
+- Tunes the instrument with `--tune`, so getting in tune does not mean opening
+  something else first.
+- Renders a take to a visualiser video with `--visualize`, in the spirit of
+  [musializer](https://github.com/tsoding/musializer).
 - Measures a finished take with `--info`: peak, RMS, noise floor, DC offset and
-  how many samples clipped.
+  clipped sample count.
 - Stops on an exact frame count for `--duration`, so a 30 second take is
   30.000 seconds.
-- Numbers takes for you with `--take`, so tracking a part does not mean
-  inventing a filename every time.
+- Numbers takes with `--take`, so tracking a part does not mean inventing a
+  filename every time.
 - Refuses to overwrite an existing take unless you pass `--force`.
 - Patches the WAV header on exit, including on Ctrl+C, so interrupted
   recordings are still valid files.
@@ -57,39 +55,31 @@ plug in an instrument, get a clean take, see the level while you play.
 ## Install
 
 Requires a C11 compiler, `make`, and the ALSA development headers. Rendering a
-video also needs `ffmpeg` on `PATH` at run time — it is not needed to build
-audiaki or to record with it.
+video also needs `ffmpeg` on `PATH` at run time — not to build or to record.
 
 ```sh
 ./scripts/install-deps.sh   # or install libasound2-dev / alsa-lib-devel yourself
 make
-sudo make install           # installs to /usr/local by default
+sudo make install           # installs to /usr/local; override with PREFIX=~/.local
 ```
 
 The script handles apt, dnf, pacman, zypper and apk, and takes `--dry-run` to
 show what it would install. By default it also pulls in `ffmpeg` and the
 desktop app's OpenGL and X11 headers; `--no-ffmpeg` and `--no-gui` skip those.
 
-Install somewhere else with `PREFIX`:
-
-```sh
-make install PREFIX=~/.local
-```
-
 ### Building the desktop app
 
-`audiaki-gui` needs [raylib](https://www.raylib.com/), which is not packaged by
-Debian or Ubuntu, so it is vendored as a submodule and pinned to the version the
-visualiser was drawn against. It also needs the OpenGL and X11 development
-headers, which `install-deps.sh` installs unless you pass `--no-gui`.
+`audiaki-gui` needs [raylib](https://www.raylib.com/), which Debian and Ubuntu
+do not package, so it is vendored as a submodule pinned to the version the
+visualiser was drawn against. It also needs the OpenGL and X11 headers that
+`install-deps.sh` installs unless you pass `--no-gui`.
 
 ```sh
 ./scripts/install-deps.sh              # OpenGL and X11 headers included
 git submodule update --init --depth 1  # fetch raylib
-make
+make                                   # both binaries; raylib compiled once
 ```
 
-`make` then builds both binaries; raylib itself is compiled once and reused.
 Installing the headers by hand instead, on Debian or Ubuntu:
 
 ```sh
@@ -97,12 +87,10 @@ sudo apt install libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
                  libxcursor-dev libxinerama-dev libxkbcommon-dev
 ```
 
-None of this is required for the command line recorder. If the submodule is
-not initialised, `make` quietly builds `audiaki` alone and skips the window —
-which is what you want on a headless machine.
-
-`sudo make install` also installs a `.desktop` entry, so audiaki appears in the
-application menu alongside everything else.
+None of this is required for the command line recorder. With the submodule
+uninitialised, `make` quietly builds `audiaki` alone and skips the window —
+which is what you want on a headless machine. `sudo make install` also installs
+a `.desktop` entry.
 
 ## Usage
 
@@ -145,13 +133,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
 | `-l, --list` / `-P, --probe` | Inspect devices and exit |
 
-Full details: `man audiaki` after installing, or `audiaki --help`.
-
-Set a default device once instead of typing `-D` every time:
-
-```sh
-export AUDIAKI_DEVICE=hw:CARD=Box,DEV=0
-```
+Full details: `man audiaki` after installing, or `audiaki --help`. Set
+`AUDIAKI_DEVICE=hw:CARD=Box,DEV=0` to stop typing `-D` every time.
 
 ## The desktop app
 
@@ -186,15 +169,6 @@ not mean starting a take you are going to throw away.
 | Volume slider | Monitoring level, from silent to +6 dB |
 | Device dropdown | Switches capture device, `default` plus every capture PCM |
 
-The device dropdown is disabled while a take is open: switching means closing
-the capture stream, and doing that mid-take would truncate the recording. Stop
-first. If the new device will not open, audiaki falls back to the previous one
-rather than leaving the window with no audio.
-
-The list follows the hardware: plug an interface in and it appears in the
-dropdown a moment later, unplug one and it goes. Nothing needs restarting, and a
-window that came up with no device at all opens the first one plugged in.
-
 | Key | Does |
 | --- | --- |
 | `space` | Record, or pause and resume once a take is running |
@@ -203,6 +177,15 @@ window that came up with no device at all opens the first one plugged in.
 | `V` | Next visualiser style |
 | `F` | Fullscreen |
 
+The device dropdown is disabled while a take is open: switching closes the
+capture stream, which would truncate the recording. Stop first. If the new
+device will not open, audiaki falls back to the previous one rather than
+leaving the window with no audio.
+
+The list follows the hardware: plug an interface in and it appears a moment
+later, unplug one and it goes. Nothing needs restarting, and a window that came
+up with no device at all opens the first one plugged in.
+
 Takes are always numbered from the prefix, so there is no overwrite prompt and
 no `--force` to get wrong: pressing record cannot destroy an earlier take.
 
@@ -210,44 +193,34 @@ no `--force` to get wrong: pressing record cannot destroy an earlier take.
 
 **Video** off is audio only — `take-003.wav` and nothing else. Video on writes
 that same WAV and then `take-003.mp4` alongside it, showing whichever
-visualiser was selected, with the take's own audio muxed in. It needs `ffmpeg`
-on `PATH`; without it the WAV is still written and the window says why the
-video was not.
+visualiser was selected. It needs `ffmpeg` on `PATH`; without it the WAV is
+still written and the window says why the video was not.
 
-**Audio**, beside it, decides whether that MP4 gets an audio track at all. On
-by default — a take and its visualiser belong together. Turn it off, or start
-with `--video-silent`, and the video is encoded with no audio stream in it, for
-a clip going into an edit that already has the sound, or somewhere it should
-not play. The WAV is written either way, so nothing is lost by choosing wrong;
-it is also what the picture is drawn from, silent video or not. Like **Video**,
-it is only settable between takes: the render is a single pass over the
-finished take, so there is no half of it to change your mind about.
+**Audio** decides whether that MP4 gets an audio track. On by default — a take
+and its visualiser belong together. Turn it off, or start with
+`--video-silent`, for a clip going into an edit that already has the sound. The
+WAV is written either way, and is what the picture is drawn from regardless.
+Like **Video**, it is only settable between takes: the render is a single pass
+over the finished take.
 
 The video is rendered **after** the take stops, not captured live off the
-screen. Recording is the job that must not miss a deadline, and grabbing the
-framebuffer sixty times a second on the same machine that is holding a capture
-stream open is how takes end up with xruns in them. Rendering afterwards costs
-the wait, but it is frame-accurate, independent of the window's size and
-refresh rate, and cannot drop a frame.
+screen. Grabbing the framebuffer sixty times a second on the machine holding a
+capture stream open is how takes end up with xruns in them. Rendering
+afterwards costs the wait, but it is frame-accurate, independent of the
+window's size and refresh rate, and cannot drop a frame. On this machine a
+4-second take renders in about 5 seconds at 720p60 — roughly real time.
 
 While it runs, **Stop** becomes **Cancel** and the status line shows progress.
-Cancelling removes the partial video and keeps the WAV. On this machine a
-4-second take renders in about 5 seconds at 720p60 — roughly real time, so
-budget about as long as the take itself.
-
-The `.mp4` only appears once it is finished. An MP4 is not playable until its
-final index is written, so while the render runs the frames go to a hidden
-`.take-003.partial.mp4` and the real name is created by a rename at the end.
-If the render is cancelled, fails, or the app is killed, you are left with the
-take and no video, rather than a file that looks like a video and will not
-open.
+Cancelling removes the partial video and keeps the WAV. The `.mp4` only appears
+once finished: an MP4 is not playable until its final index is written, so
+frames go to a hidden `.take-003.partial.mp4` and the real name is created by a
+rename at the end. A cancelled, failed or killed render leaves you with the
+take and no video, rather than a file that looks like a video and will not open.
 
 `--video-size` takes `WxH` or `720p`/`1080p`/`1440p`/`2160p`, and `--video-fps`
-the frame rate; the defaults are 1280x720 at 60.
-
-The CLI's `--visualize` renders video too, from a WAV you already have. It has
-its own three styles and does not need a display, so it is the one to use on a
-headless box or in a script.
+the frame rate; the defaults are 1280x720 at 60. The CLI's `--visualize`
+renders video too, from a WAV you already have, with its own three styles and
+no display needed — that is the one for a headless box or a script.
 
 **Monitoring feeds your input back to your speakers**, which will howl if you
 are recording a microphone in the same room. It starts off for that reason.
@@ -270,30 +243,30 @@ Six styles, switchable from the strip on the visualiser or with `V`:
 | `waterfall` | A scrolling spectrogram, newest at the right |
 | `tuner` | The note being played, and how far off it is |
 
-The first five read the same analysis the CLI's `--spectrum` and `--visualize` use:
-a 2048 point window folded into log-spaced bands, with a fast attack and a slow
+The first five read the same analysis the CLI's `--spectrum` and `--visualize`
+use: a 2048 point window folded into log-spaced bands, fast attack and slow
 decay. `bars` is the default, after
 [musializer](https://github.com/tsoding/musializer) — the glow is one radial
 gradient texture drawn additively, so overlapping halos sum towards white and
 loud clusters bloom. `mirror` and `radial` reuse the same caps.
 
-`scope` is the odd one out: it draws raw samples rather than the spectrum, and
-starts each sweep at a rising zero crossing so a steady note stands still
-instead of scrolling. It shows true amplitude, so a quiet input is a quiet
-trace — that is the meter's job to explain, not the scope's.
+`scope` draws raw samples rather than the spectrum, and starts each sweep at a
+rising zero crossing so a steady note stands still instead of scrolling. It
+shows true amplitude, so a quiet input is a quiet trace — that is the meter's
+job to explain, not the scope's.
 
-`waterfall` is the only one with a memory. It keeps about eight seconds of
-history as a ring of texture columns, one written per frame, so a hum or a
-dropout is still on screen after it has happened.
+`waterfall` is the only one with a memory: about eight seconds of history as a
+ring of texture columns, one written per frame, so a hum or a dropout is still
+on screen after it has happened.
 
-`tuner` is not a picture of the sound at all. It shows the note being played,
-a needle on a scale of half a semitone either side of it, and the frequency
-against what that note should be — green within 5 cents, amber outside it. It
-runs the same detection as the CLI's `--tune`, and only while it is the visible
-style: the detection costs millions of operations a go, and paying for it behind
-a style nobody is looking at would slow every video render down. It sits with
-the visualiser styles because tuning up is what you do immediately before
-pressing record, and it wants the same place on the screen.
+`tuner` is not a picture of the sound at all. It shows the note, a needle on a
+scale of half a semitone either side, and the frequency against what that note
+should be — green within 5 cents, amber outside it. It runs the same detection
+as the CLI's `--tune`, and only while it is the visible style: the detection
+costs millions of operations a go, and paying for it behind a style nobody is
+looking at would slow every video render down. It sits with the visualisers
+because tuning up is what you do immediately before pressing record, and it
+wants the same place on the screen.
 
 ## Reading the meter
 
@@ -307,16 +280,15 @@ the take is distorted — turn the level down on the device, not in software.
 `xruns` counting up means the machine could not keep up; try a larger
 `--period` or more `--periods`.
 
-With `--spectrum` the bar is replaced by one column per frequency band, low
-frequencies on the left, log-spaced from 40 Hz to 12 kHz:
+With `--spectrum` the bar becomes one column per frequency band, log-spaced
+from 40 Hz on the left to 12 kHz on the right:
 
 ```
  00:12 ▁▂▄█▆▃▂▁▁▂▃▅▇▆▄▂▁▁▁▂▁▁  -8.4 dBFS  xruns:0
        ^ 40 Hz                    ^ 12 kHz
 ```
 
-Block characters are used when the locale is UTF-8, and an ASCII ramp
-otherwise.
+Block characters are used when the locale is UTF-8, an ASCII ramp otherwise.
 
 ## Tuning up
 
@@ -327,34 +299,25 @@ $ audiaki --tune
  --  [.................|.................]  listening         --  -71.2 dBFS
 ```
 
-The scale runs from half a semitone flat on the left to half a semitone sharp
-on the right. `#` is what you are playing and `|` is where it should be; past
-50 cents the note name changes instead, so the needle never ends up pointing at
-the wrong note. Within 5 cents it says `in tune`, which is well inside what a
-string drifts on its own as it warms up.
-
-`--a4` moves the reference pitch for an ensemble tuned somewhere other than
-concert pitch:
-
-```sh
-audiaki --tune --a4 432
-```
+The scale runs from half a semitone flat to half a semitone sharp. `#` is what
+you are playing and `|` is where it should be; past 50 cents the note name
+changes instead, so the needle never points at the wrong note. Within 5 cents
+it says `in tune`, well inside what a string drifts on its own as it warms up.
+`--a4` moves the reference pitch: `audiaki --tune --a4 432`.
 
 The pitch comes from the [YIN][yin] difference function, not from looking for
 the loudest frequency. A plucked low E often has more energy at 165 Hz than at
-82 Hz, and a tuner that followed the loudest frequency would tell you the string
-is an octave up — which is worse than no tuner. The tradeoff is that it finds
-one pitch at a time: it tunes strings, it does not name chords.
+82 Hz, and a tuner following the loudest frequency would say the string is an
+octave up — worse than no tuner. The tradeoff is one pitch at a time: it tunes
+strings, it does not name chords. Anything quieter than about −52 dBFS is not
+treated as a note, so the room does not read as a pitch, and a reading is held
+briefly after the note decays so the display does not blink between strums.
 
 [yin]: https://audition.ens.fr/adc/pdf/2002_JASA_YIN.pdf
 
-Anything quieter than about −52 dBFS is not treated as a note, so the room does
-not read as a pitch, and a reading is held for a moment after the note decays
-past that so the display does not blink out between strums.
-
 Nothing is written and no file is named — `--tune` is a display, not a take. If
-stderr is not a terminal there is no line to redraw in place, so it reports each
-note once as it settles instead, which makes it something you can log:
+stderr is not a terminal there is no line to redraw in place, so it reports
+each note once as it settles, which makes it something you can log:
 
 ```sh
 $ audiaki --tune 2> notes.log
@@ -364,18 +327,18 @@ audiaki: A2  +1 cents  110.1 Hz
 
 ## Numbering takes
 
-Tracking a part means playing it several times. `--take` names each attempt for
-you instead of making you invent one:
+Tracking a part means playing it several times. `--take` names each attempt
+instead of making you invent one:
 
 ```sh
 audiaki --take session      # session-001.wav
 audiaki --take session      # session-002.wav, because 001 is there
 ```
 
-It picks the first number that is free, so it never overwrites anything and
-`--force` never comes into it. A prefix that already carries an extension keeps
-it — `--take session.wav` also writes `session-001.wav` — and a path works as
-well as a bare name: `--take takes/riff`.
+It picks the first free number, so it never overwrites anything and `--force`
+never comes into it. A prefix that already carries an extension keeps it —
+`--take session.wav` also writes `session-001.wav` — and a path works as well
+as a bare name: `--take takes/riff`.
 
 ## Checking a take
 
@@ -395,17 +358,17 @@ channels:    ch 1: peak   -4.4 dBFS  rms   -8.7 dBFS  dc +0.00000
 ```
 
 Peak is the loudest single sample; if `clipped` is not zero, that many samples
-sat at full scale and the take is distorted. Each channel is measured on its own,
-so a clipped left channel cannot hide behind a quiet right one.
+sat at full scale and the take is distorted. Each channel is measured on its
+own, so a clipped left channel cannot hide behind a quiet right one.
 
 The noise floor is the tenth percentile of the level of 50 ms windows — in
 practice, the room and the cable with nothing being played. Compare it with the
-peak to see how much of the range the instrument is actually using. A DC offset
-much past ±0.001 usually means the interface has a bias worth fixing.
+peak to see how much of the range the instrument is using. A DC offset much
+past ±0.001 usually means the interface has a bias worth fixing.
 
 `--info` reads whatever the reader accepts, including files other tools wrote:
-8/16/24/32-bit PCM and 32/64-bit float. A take that was interrupted before its
-header was patched is reported as truncated rather than refused.
+8/16/24/32-bit PCM and 32/64-bit float. A take interrupted before its header
+was patched is reported as truncated rather than refused.
 
 ## Scripting
 
@@ -426,10 +389,9 @@ audiaki --visualize take01.wav --style waveform
 ```
 
 audiaki does the analysis and the drawing itself, then pipes raw RGBA frames to
-`ffmpeg`, which encodes them and muxes in the original audio untouched. There is
-no graphics library involved: everything is rasterised into a plain pixel buffer.
-
-`--style` picks what a frame shows:
+`ffmpeg`, which encodes them and muxes in the original audio untouched. No
+graphics library is involved: everything is rasterised into a plain pixel
+buffer. Ctrl+C during a render stops ffmpeg and removes the partial video.
 
 | Style | Shows |
 | --- | --- |
@@ -448,11 +410,9 @@ rather than its content — useful for spotting asymmetry or a clipped flat top.
 Its colour follows level, not frequency, because its horizontal axis is time.
 
 `waveform` reads the file once up front to reduce it to one min/max pair per
-column, then sweeps a playhead across. The cost of that pass depends on the
-width of the video, not the length of the take, so an hour is no more expensive
-than a minute. `--bars` applies only to `bars`.
-
-Ctrl+C during a render stops ffmpeg and removes the partial video.
+column, then sweeps a playhead across. That pass costs by the width of the
+video, not the length of the take, so an hour is no more expensive than a
+minute. `--bars` applies only to `bars`.
 
 ## Troubleshooting
 
@@ -466,7 +426,7 @@ supported range, then pass `-c`.
 
 **Rate warning: `requested 44100 Hz, device negotiated 48000 Hz`**
 The hardware does not support the rate you asked for and ALSA picked the
-nearest one. The file is written at the rate that was actually used.
+nearest one. The file is written at the rate actually used.
 
 **Constant `xruns`**
 Increase `--period` (for example `-p 2048`) or `--periods`, and avoid running
@@ -530,13 +490,12 @@ vendor/raylib/  submodule, only needed for the desktop app
 
 ALSA lives behind `device.c` and `monitor.c`, so `format`, `wav`, `parse`,
 `fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf` and `jsonout`
-are plain C that can be built and tested anywhere — which is what CI does. The
+are plain C that builds and tests anywhere — which is what CI does. The
 analysis is shared three ways: the terminal display, the video renderer and the
-desktop app all run the same `spectrum` module, and the terminal tuner and the
-desktop one run the same `tuner`.
-
-`src/gui/` is the only code that knows raylib exists, and nothing in `src/`
-depends on it, which is what keeps the CLI buildable with the submodule absent.
+desktop app all run the same `spectrum` module, and the terminal and desktop
+tuners run the same `tuner`. `src/gui/` is the only code that knows raylib
+exists, and nothing in `src/` depends on it, which keeps the CLI buildable with
+the submodule absent.
 
 ## Limitations
 
@@ -548,19 +507,19 @@ depends on it, which is what keeps the CLI buildable with the submodule absent.
   business, not audiaki's.
 - The desktop app records to numbered takes in the working directory. There is
   no file dialog, and no playback of a finished take.
-- Video is rendered after the take, not captured live, so recording a long take
-  with video on means waiting roughly its own length again before the next one.
-  Cancelling is always available, and the audio is safe on disk regardless.
+- Video is rendered after the take, so a long take with video on means waiting
+  roughly its own length again. Cancelling is always available, and the audio
+  is safe on disk regardless.
 - Monitoring needs an output that accepts the capture rate directly. audiaki
   does not resample, so it declines to monitor rather than play back at the
   wrong pitch.
-- The tuner is monophonic. It reports one pitch at a time and will not name a
-  chord, and it looks for pitches between 40 Hz and 2 kHz — a bass low B and a
-  guitar's top fret are both inside that, a piccolo is not.
+- The tuner is monophonic: one pitch at a time, no chords, and it looks between
+  40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
+  piccolo is not.
 - Rate and channels are fixed for the session in the desktop app; only the
   device can be changed from the window. A device that disappears mid-take ends
   that take where it stopped — what was written stays on disk, but the app does
-  not pick the recording back up when the hardware returns.
+  not resume when the hardware returns.
 
 ## Contributing
 
