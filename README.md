@@ -191,6 +191,10 @@ the capture stream, and doing that mid-take would truncate the recording. Stop
 first. If the new device will not open, audiaki falls back to the previous one
 rather than leaving the window with no audio.
 
+The list follows the hardware: plug an interface in and it appears in the
+dropdown a moment later, unplug one and it goes. Nothing needs restarting, and a
+window that came up with no device at all opens the first one plugged in.
+
 | Key | Does |
 | --- | --- |
 | `space` | Record, or pause and resume once a take is running |
@@ -553,9 +557,10 @@ depends on it, which is what keeps the CLI buildable with the submodule absent.
 - The tuner is monophonic. It reports one pitch at a time and will not name a
   chord, and it looks for pitches between 40 Hz and 2 kHz — a bass low B and a
   guitar's top fret are both inside that, a piccolo is not.
-- The desktop app's device list is built at startup, so an interface plugged in
-  afterwards needs a restart to appear. Rate and channels are fixed for the
-  session; only the device can be changed from the window.
+- Rate and channels are fixed for the session in the desktop app; only the
+  device can be changed from the window. A device that disappears mid-take ends
+  that take where it stopped — what was written stays on disk, but the app does
+  not pick the recording back up when the hardware returns.
 
 ## Contributing
 

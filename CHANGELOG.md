@@ -7,8 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-08-06
+
 ### Added
 
+- The desktop app's device list follows the hardware. `device` gained a watch
+  on `/dev/snd` - the directory the kernel puts a card's nodes in the moment it
+  registers one, which is exactly the set `--list` reports - and the window
+  rebuilds its dropdown a moment after anything appears or disappears there. An
+  interface plugged in shows up without a restart, and one unplugged leaves the
+  list. The pause before rebuilding lets a card finish registering all of its
+  nodes rather than enumerating one that is half there, and the new list is
+  only swapped in when it actually differs, so an open menu cannot shuffle
+  under the pointer that is about to click a row. Where inotify is unavailable
+  the watch sweeps every couple of seconds instead, which callers cannot tell
+  apart.
+- The desktop app opens the capture stream again when the device it was using
+  comes back, whether the window came up without it or its stream died with the
+  cable. A dead stream cannot be revived, and re-picking the device in the
+  dropdown does nothing because the row is already selected, so before this a
+  device that returned was unreachable without restarting the app.
 - A tuner. `audiaki --tune` opens the capture device and reports the pitch of
   whatever is being played as a note, a needle on a scale of half a semitone
   either side of it, and the frequency and level, until Ctrl+C. Nothing is
@@ -107,6 +125,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- A device the desktop app cannot open is no longer the end of the session. The
+  window used to come up on the "no device" screen and stay there until it was
+  closed; it now keeps the device dropdown live on that screen and opens
+  whatever is picked there or plugged in afterwards.
+- `aud_device_enumerate()` reports a machine with no sound cards as an empty
+  list rather than an error, because a caller watching for hardware asks over
+  and over and none of those asks is a failure. `--list` prints its header and
+  the usual "no capture devices found" warning, and now exits 0 rather than 1.
 - `ffmpeg` is a new optional run-time dependency, needed only for
   `--visualize`. Building and recording are unaffected.
 - raylib is a new optional build-time dependency, vendored as a pinned
@@ -222,6 +248,7 @@ compatible with 0.1.0 except for the default device, noted below.
 - Initial single-file ALSA capture-to-WAV recorder with format negotiation,
   a peak meter, `--probe`, and duration-limited recording.
 
-[Unreleased]: https://github.com/HilthonTT/audiaki/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/HilthonTT/audiaki/compare/v1.0.0...HEAD
+[1.0.0]: https://github.com/HilthonTT/audiaki/releases/tag/v1.0.0
 [0.2.0]: https://github.com/HilthonTT/audiaki/releases/tag/v0.2.0
 [0.1.0]: https://github.com/HilthonTT/audiaki/releases/tag/v0.1.0

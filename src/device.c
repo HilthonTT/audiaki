@@ -12,6 +12,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/inotify.h>
+#include <time.h>
+#include <unistd.h>
 
 /*
  * Preference order when the user does not pin a format. S32_LE and S24_3LE
@@ -382,10 +385,24 @@ int aud_device_enumerate(aud_device_entry **out)
   snd_ctl_card_info_alloca(&card_info);
   snd_pcm_info_alloca(&pcm_info);
 
-  if (snd_card_next(&card) < 0 || card < 0)
   {
-    aud_error("no sound cards found");
-    return -1;
+    int err = snd_card_next(&card);
+
+    if (err < 0)
+    {
+      aud_error("cannot ask ALSA for the sound cards: %s", snd_strerror(err));
+      return -1;
+    }
+  }
+
+  /*
+   * No cards is an answer, not a failure. Callers that watch for hardware
+   * being plugged in ask again and again, and every one of those asks would
+   * otherwise be an error on a machine that has nothing attached yet.
+   */
+  if (card < 0)
+  {
+    return 0;
   }
 
   while (card >= 0)
@@ -494,4 +511,139 @@ int aud_device_list(int json)
 
   free(list);
   return 0;
+}
+
+/* Where the kernel puts a card's nodes the moment it registers one. */
+#define WATCH_DIR "/dev/snd"
+
+/*
+ * Seconds to let a burst of events settle before reporting it. Plugging in one
+ * interface creates a control node and a node per PCM, and enumerating between
+ * them would find a card that is only half there.
+ */
+#define WATCH_SETTLE 0.4
+
+/*
+ * A single second look, once the burst has been reported. Cheap insurance for
+ * hardware that registers its capture PCM a little after the node that
+ * announced it, which is otherwise a device that appears only on the next one.
+ */
+#define WATCH_CONFIRM 1.5
+
+/* How often to look anyway when there is no inotify to be woken by. */
+#define WATCH_SWEEP 2.0
+
+struct aud_device_watch
+{
+  int fd;           /* inotify descriptor, or -1 when polling instead */
+  double next_scan; /* monotonic deadline for the next report, 0.0 for none */
+  int confirming;   /* the pending report is the second look, not the first */
+};
+
+static double watch_now(void)
+{
+  struct timespec ts;
+
+  if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0)
+  {
+    return 0.0;
+  }
+  return (double)ts.tv_sec + (double)ts.tv_nsec / 1e9;
+}
+
+/* Drain whatever inotify has queued. Returns 1 if anything was waiting. */
+static int watch_drain(int fd)
+{
+  /* the events themselves say nothing we act on; only that something moved */
+  char buf[4096];
+  int saw = 0;
+
+  while (read(fd, buf, sizeof(buf)) > 0)
+  {
+    saw = 1;
+  }
+  return saw;
+}
+
+aud_device_watch *aud_device_watch_create(void)
+{
+  aud_device_watch *w = calloc(1, sizeof(*w));
+
+  if (w == NULL)
+  {
+    return NULL;
+  }
+
+  w->fd = inotify_init1(IN_NONBLOCK | IN_CLOEXEC);
+  if (w->fd >= 0 &&
+      inotify_add_watch(w->fd, WATCH_DIR,
+                        IN_CREATE | IN_DELETE | IN_MOVED_TO | IN_MOVED_FROM) < 0)
+  {
+    close(w->fd);
+    w->fd = -1;
+  }
+
+  if (w->fd < 0)
+  {
+    aud_debug("cannot watch " WATCH_DIR " (%s); polling for device changes "
+              "every %.0f seconds instead",
+              strerror(errno), WATCH_SWEEP);
+    w->next_scan = watch_now() + WATCH_SWEEP;
+  }
+
+  return w;
+}
+
+void aud_device_watch_destroy(aud_device_watch *w)
+{
+  if (w == NULL)
+  {
+    return;
+  }
+
+  if (w->fd >= 0)
+  {
+    close(w->fd);
+  }
+  free(w);
+}
+
+int aud_device_watch_changed(aud_device_watch *w)
+{
+  double now;
+
+  if (w == NULL)
+  {
+    return 0;
+  }
+
+  now = watch_now();
+
+  if (w->fd >= 0 && watch_drain(w->fd))
+  {
+    w->next_scan = now + WATCH_SETTLE;
+    w->confirming = 0;
+  }
+
+  if (w->next_scan == 0.0 || now < w->next_scan)
+  {
+    return 0;
+  }
+
+  if (w->fd < 0)
+  {
+    w->next_scan = now + WATCH_SWEEP; /* nothing wakes us; keep sweeping */
+  }
+  else if (!w->confirming)
+  {
+    w->next_scan = now + WATCH_CONFIRM;
+    w->confirming = 1;
+  }
+  else
+  {
+    w->next_scan = 0.0; /* back to sleep until inotify says otherwise */
+    w->confirming = 0;
+  }
+
+  return 1;
 }

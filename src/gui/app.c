@@ -66,6 +66,15 @@
  */
 #define APP_DEVICE_LABEL 176
 
+/* What the dropdown offers, rebuilt whenever the hardware underneath changes. */
+typedef struct
+{
+  char name[APP_MAX_DEVICES][64]; /* the string handed to ALSA */
+  char label[APP_MAX_DEVICES][APP_DEVICE_LABEL];
+  int count;
+  int absent; /* the row kept for a device ALSA did not report, or -1 */
+} app_devices;
+
 typedef struct
 {
   aud_engine *engine;
@@ -73,17 +82,29 @@ typedef struct
   aud_engine_config cfg;
 
   char prefix[512];
-  int start_monitor; /* -M: come up already monitoring */
+  /*
+   * What monitoring the next engine to open should come up with: -M at
+   * startup, and whatever was on when a device was lost and later returned.
+   */
+  int start_monitor;
 
   /*
-   * The device list, built once at startup. Rebuilding it on every open would
-   * pick up hot-plugged interfaces, but it also means walking every card in
-   * the frame that the menu is clicked, and a recorder is not a device manager.
+   * The device list, and the watch that keeps it honest. ALSA is re-walked
+   * when a node appears or disappears under /dev/snd rather than on a timer:
+   * plugging an interface in should put it in the menu, and nothing else
+   * should cost a frame.
    */
-  char device_name[APP_MAX_DEVICES][64];
-  char device_label[APP_MAX_DEVICES][APP_DEVICE_LABEL];
+  app_devices devices;
+  aud_device_watch *watch;
   const char *device_labels[APP_MAX_DEVICES]; /* what the dropdown reads */
-  int device_count;
+
+  /*
+   * The device the engine holds, kept here rather than as a pointer into the
+   * list: the list is rebuilt underneath it, and the engine keeps the string
+   * it was opened with for its whole lifetime.
+   */
+  char active_device[64];
+
   int device_selected;
   int device_menu_open;
   int device_menu_scroll; /* top visible row, for a list longer than the menu */
@@ -265,79 +286,141 @@ static int parse_args(app *a, int argc, char **argv)
  * Build the list the device dropdown offers: "default" first, because it is
  * what works without knowing anything, then every capture PCM ALSA found.
  * A failed enumeration is not fatal - "default" alone is still a usable app.
+ *
+ * `keep` is a device that has to appear whether ALSA reports it or not: the
+ * one -D named before it was plugged in, or the one the window is still
+ * pointed at after its hardware was pulled out. Dropping the row would leave
+ * the menu showing a device other than the one in use.
  */
-static void app_load_devices(app *a)
+static void app_build_devices(app_devices *d, const char *keep)
 {
   aud_device_entry *found = NULL;
   int count;
 
-  snprintf(a->device_name[0], sizeof(a->device_name[0]), "%s", AUD_DEFAULT_DEVICE);
-  snprintf(a->device_label[0], sizeof(a->device_label[0]), "default (system)");
-  a->device_count = 1;
+  memset(d, 0, sizeof(*d));
+  d->absent = -1;
+
+  snprintf(d->name[0], sizeof(d->name[0]), "%s", AUD_DEFAULT_DEVICE);
+  snprintf(d->label[0], sizeof(d->label[0]), "default (system)");
+  d->count = 1;
 
   count = aud_device_enumerate(&found);
-  for (int i = 0; i < count && a->device_count < APP_MAX_DEVICES; i++)
+  for (int i = 0; i < count && d->count < APP_MAX_DEVICES; i++)
   {
-    int slot = a->device_count;
+    int slot = d->count;
 
-    snprintf(a->device_name[slot], sizeof(a->device_name[slot]), "%s", found[i].name);
+    snprintf(d->name[slot], sizeof(d->name[slot]), "%s", found[i].name);
     if (found[i].description[0] != '\0')
     {
-      snprintf(a->device_label[slot], sizeof(a->device_label[slot]), "%s: %s",
-               found[i].card, found[i].description);
+      snprintf(d->label[slot], sizeof(d->label[slot]), "%s: %s", found[i].card,
+               found[i].description);
     }
     else
     {
-      snprintf(a->device_label[slot], sizeof(a->device_label[slot]), "%s", found[i].card);
+      snprintf(d->label[slot], sizeof(d->label[slot]), "%s", found[i].card);
     }
-    a->device_count++;
+    d->count++;
   }
   free(found);
 
-  if (count > 0 && a->device_count == APP_MAX_DEVICES)
+  if (keep == NULL || keep[0] == '\0' || d->count == APP_MAX_DEVICES)
   {
-    aud_warn("more than %d capture devices; the rest are not offered in the window",
-             APP_MAX_DEVICES - 1);
+    return;
   }
 
-  for (int i = 0; i < a->device_count; i++)
+  for (int i = 0; i < d->count; i++)
   {
-    a->device_labels[i] = a->device_label[i];
-  }
-
-  /*
-   * Point the selection at whatever -D asked for, so the dropdown opens
-   * showing the device actually in use rather than the top of the list.
-   */
-  a->device_selected = 0;
-  for (int i = 0; i < a->device_count; i++)
-  {
-    if (a->cfg.device != NULL && strcmp(a->cfg.device, a->device_name[i]) == 0)
+    if (strcmp(keep, d->name[i]) == 0)
     {
-      a->device_selected = i;
       return;
     }
   }
 
-  /* a -D naming something not in the list still has to appear in it */
-  if (a->cfg.device != NULL && strcmp(a->cfg.device, AUD_DEFAULT_DEVICE) != 0 &&
-      a->device_count < APP_MAX_DEVICES)
-  {
-    int slot = a->device_count;
+  snprintf(d->name[d->count], sizeof(d->name[d->count]), "%s", keep);
+  snprintf(d->label[d->count], sizeof(d->label[d->count]), "%s (not connected)", keep);
+  d->absent = d->count;
+  d->count++;
+}
 
-    snprintf(a->device_name[slot], sizeof(a->device_name[slot]), "%s", a->cfg.device);
-    snprintf(a->device_label[slot], sizeof(a->device_label[slot]), "%s", a->cfg.device);
-    a->device_labels[slot] = a->device_label[slot];
-    a->device_selected = slot;
-    a->device_count++;
+/*
+ * Take `next` as the list on offer and point the selection back at the device
+ * in use, which may have moved rows or - the first time round - may be the one
+ * -D asked for. The dropdown opens showing what is actually being captured
+ * rather than the top of the list.
+ */
+static void app_adopt_devices(app *a, const app_devices *next)
+{
+  a->devices = *next;
+  a->device_selected = 0;
+
+  for (int i = 0; i < a->devices.count; i++)
+  {
+    a->device_labels[i] = a->devices.label[i];
+    if (strcmp(a->active_device, a->devices.name[i]) == 0)
+    {
+      a->device_selected = i;
+    }
   }
+
+  if (a->devices.count == APP_MAX_DEVICES)
+  {
+    aud_warn("more than %d capture devices; the rest are not offered in the window",
+             APP_MAX_DEVICES - 1);
+  }
+}
+
+static void app_load_devices(app *a)
+{
+  app_devices next;
+
+  app_build_devices(&next, a->active_device);
+  app_adopt_devices(a, &next);
+}
+
+/*
+ * Re-walk ALSA after the watch saw hardware come or go. The list is only
+ * swapped in when it has actually changed, so an unrelated event under
+ * /dev/snd cannot shuffle rows under a pointer that is about to click one.
+ */
+static void app_refresh_devices(app *a)
+{
+  app_devices next;
+
+  app_build_devices(&next, a->active_device);
+
+  if (next.count == a->devices.count)
+  {
+    int same = 1;
+
+    for (int i = 0; i < next.count && same; i++)
+    {
+      same = strcmp(next.name[i], a->devices.name[i]) == 0 &&
+             strcmp(next.label[i], a->devices.label[i]) == 0;
+    }
+    if (same)
+    {
+      return;
+    }
+  }
+
+  aud_debug("capture devices changed: %d offered", next.count);
+  app_adopt_devices(a, &next);
 }
 
 /* Open the device and build the display for whatever it negotiated. */
 static int app_open_engine(app *a)
 {
   a->fatal[0] = '\0';
-  a->cfg.device = a->device_name[a->device_selected];
+
+  if (a->device_selected < 0 || a->device_selected >= a->devices.count)
+  {
+    a->device_selected = 0;
+  }
+
+  /* a copy, because the list it came from is rebuilt as hardware comes and goes */
+  snprintf(a->active_device, sizeof(a->active_device), "%s",
+           a->devices.name[a->device_selected]);
+  a->cfg.device = a->active_device;
 
   a->engine = aud_engine_create(&a->cfg);
   if (a->engine == NULL)
@@ -391,12 +474,59 @@ static void app_switch_device(app *a, int previous)
     return;
   }
 
-  aud_warn("falling back to '%s'", a->device_name[previous]);
+  aud_warn("falling back to '%s'", a->devices.name[previous]);
   a->device_selected = previous;
 
   if (app_open_engine(a) == 0)
   {
     aud_engine_set_monitor(a->engine, monitoring);
+    return;
+  }
+
+  /*
+   * Both are gone - the one just picked and the one that was working, which
+   * on a laptop is one unplugged cable. The window falls back to the "no
+   * device" screen and keeps watching; whichever comes back reopens there.
+   */
+  a->start_monitor = monitoring;
+}
+
+/*
+ * Open the selected device again once it is back, after the window came up
+ * without it or its stream died with the cable. A dead stream cannot be
+ * revived, and re-picking the device in the dropdown does not help either -
+ * clicking the row that is already selected changes nothing - so a device that
+ * returns has to be picked up here or not at all.
+ *
+ * Only when ALSA reports it again, so a window waiting for one interface does
+ * not fill the terminal with the same failure every time another one moves.
+ */
+static void app_recover_engine(app *a)
+{
+  if (a->devices.absent == a->device_selected)
+  {
+    return;
+  }
+
+  if (a->engine != NULL)
+  {
+    aud_engine_status st;
+
+    aud_engine_status_get(a->engine, &st);
+    if (st.state != AUD_ENGINE_FAILED)
+    {
+      return;
+    }
+
+    /* the take, if there was one, was already salvaged when the stream died */
+    a->start_monitor = aud_engine_monitor_wanted(a->engine);
+    app_close_engine(a);
+  }
+
+  if (app_open_engine(a) == 0)
+  {
+    aud_info("'%s' is back", a->active_device);
+    aud_engine_set_monitor(a->engine, a->start_monitor);
   }
 }
 
@@ -867,13 +997,21 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
   }
 }
 
-/* The window when there is no device to draw from. */
-static void draw_fatal(const app *a)
+/*
+ * The window when there is no device to draw from. It keeps the picker, so a
+ * machine with a second interface is one click away from working rather than a
+ * restart away.
+ */
+static void draw_fatal(app *a)
 {
   Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
+  Rectangle header = {APP_PAD, APP_PAD, screen.width - 2.0f * APP_PAD, APP_HEADER_H};
   Rectangle line = screen;
+  int previous = a->device_selected;
 
   ClearBackground(AUD_UI_BG);
+
+  aud_ui_text(header.x, header.y + 6.0f, 28, AUD_UI_TEXT, AUDIAKI_NAME);
 
   line.height = 40.0f;
   line.y = screen.height / 2.0f - 70.0f;
@@ -881,12 +1019,20 @@ static void draw_fatal(const app *a)
 
   line.y += 46.0f;
   aud_ui_text_centred(line, 18, AUD_UI_MUTED,
-                      "run '" AUDIAKI_NAME " --list' to see the capture devices, then "
-                      "pass one with -D");
+                      "plug an interface in and it opens by itself - the window is "
+                      "watching for one");
 
   line.y += 30.0f;
   aud_ui_text_centred(line, 18, AUD_UI_MUTED,
                       "the device may also be held by another program");
+
+  /* last, so an open menu covers the message rather than the other way round */
+  if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
+                      &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
+                      1))
+  {
+    app_switch_device(a, previous);
+  }
 }
 
 static void draw_frame(app *a, const aud_engine_status *st)
@@ -965,7 +1111,7 @@ static void draw_frame(app *a, const aud_engine_status *st)
    * disabled while a take is open: swapping the device means closing the
    * capture stream, and doing that mid-take would truncate the recording.
    */
-  if (aud_ui_dropdown(header_picker(header), a->device_labels, a->device_count,
+  if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
                       &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
                       !live))
   {
@@ -1055,30 +1201,51 @@ int main(int argc, char *argv[])
   SetTargetFPS(60);
   SetExitKey(KEY_NULL); /* Escape closing an open take would be unforgivable */
 
+  /* the device -D named, or "default", so the list comes up on the right row */
+  snprintf(a.active_device, sizeof(a.active_device), "%s",
+           a.cfg.device != NULL ? a.cfg.device : AUD_DEFAULT_DEVICE);
+
+  a.watch = aud_device_watch_create();
   app_load_devices(&a);
 
-  if (app_open_engine(&a) != 0)
+  /*
+   * A device that will not open is not fatal any more: the window comes up on
+   * the "no device" screen and opens whatever is chosen or plugged in later.
+   * Exiting to a terminal the user may not have open looks broken, and having
+   * to restart the app to see an interface is the same complaint twice.
+   */
+  if (app_open_engine(&a) == 0)
   {
-    /*
-     * Still show a window. A recorder that exits to a terminal the user may
-     * not have open is a recorder that looks broken.
-     */
-    while (!WindowShouldClose())
-    {
-      BeginDrawing();
-      draw_fatal(&a);
-      EndDrawing();
-    }
-    CloseWindow();
-    return EXIT_FAILURE;
+    /* off unless asked for on the command line: a mic through speakers howls */
+    aud_engine_set_monitor(a.engine, a.start_monitor);
   }
-
-  /* off unless asked for on the command line: a mic through speakers howls */
-  aud_engine_set_monitor(a.engine, a.start_monitor);
 
   while (!WindowShouldClose())
   {
     aud_engine_status st;
+
+    if (aud_device_watch_changed(a.watch))
+    {
+      app_refresh_devices(&a);
+      app_recover_engine(&a);
+    }
+
+    if (a.engine == NULL)
+    {
+      /* still pump the encoder: a video outlives the take it was made from */
+      app_pump_render(&a);
+
+      SetMouseCursor(MOUSE_CURSOR_DEFAULT);
+      if (IsKeyPressed(KEY_ESCAPE))
+      {
+        a.device_menu_open = 0;
+      }
+
+      BeginDrawing();
+      draw_fatal(&a);
+      EndDrawing();
+      continue;
+    }
 
     aud_engine_status_get(a.engine, &st);
 
@@ -1104,6 +1271,7 @@ int main(int argc, char *argv[])
    */
   app_cancel_render(&a);
   app_close_engine(&a);
+  aud_device_watch_destroy(a.watch);
   CloseWindow();
   return EXIT_SUCCESS;
 }

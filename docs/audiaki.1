@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: MIT
-.TH AUDIAKI 1 "2026-08-04" "audiaki 0.2.0" "User Commands"
+.TH AUDIAKI 1 "2026-08-06" "audiaki 1.0.0" "User Commands"
 .SH NAME
 audiaki, audiaki\-gui \- record an ALSA capture device to a WAV file, tune an
 instrument on it, and visualise it
@@ -362,8 +362,12 @@ alongside every capture PCM found. Switching rebuilds the stream and the
 analyser around whatever the new device negotiates, and falls back to the
 previous device if the new one will not open. It is disabled while a take is
 open, because closing the capture stream mid\-take would truncate the recording.
-The list is built at startup, so an interface plugged in afterwards needs a
-restart to appear.
+.PP
+The list follows the hardware. An interface plugged in appears in the dropdown a
+moment later without a restart, and one unplugged leaves it. If the window comes
+up with nothing to capture from \- or the device it was using is pulled out and
+no other will open \- it waits on the "no device" screen with the dropdown still
+live, and opens the next interface plugged in.
 .TP
 .B \-D, \-\-device NAME
 ALSA capture device the window opens on. It is preselected in the dropdown, and

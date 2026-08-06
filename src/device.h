@@ -95,4 +95,35 @@ typedef struct
  */
 int aud_device_enumerate(aud_device_entry **out);
 
+/*
+ * A watcher for capture hardware arriving and leaving, so a long-running
+ * program can keep a device list current instead of asking the user to restart
+ * it after plugging something in.
+ *
+ * It watches /dev/snd, which is exactly the set aud_device_enumerate() reports:
+ * the kernel creates a node there when a card registers and removes it when the
+ * card goes. Where inotify is unavailable it falls back to saying "changed"
+ * every few seconds, so the caller only ever needs the one code path.
+ */
+typedef struct aud_device_watch aud_device_watch;
+
+/*
+ * Start watching. Returns NULL only when out of memory - a watch that could
+ * not attach to /dev/snd still works, it just polls.
+ */
+aud_device_watch *aud_device_watch_create(void);
+
+/* Stop watching. Safe on NULL. */
+void aud_device_watch_destroy(aud_device_watch *w);
+
+/*
+ * Non-blocking: returns 1 when the device list is worth rebuilding and 0 when
+ * nothing has happened. Safe on NULL, which never reports a change.
+ *
+ * A burst of events is reported once, a moment after it settles - plugging in
+ * one interface creates several nodes, and the card is only worth enumerating
+ * when the kernel has finished with all of them.
+ */
+int aud_device_watch_changed(aud_device_watch *w);
+
 #endif /* AUDIAKI_DEVICE_H */
