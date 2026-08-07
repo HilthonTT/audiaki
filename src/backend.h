@@ -57,7 +57,7 @@ typedef struct
   int (*watch_changed)(void *impl);
 } aud_capture_ops;
 
-/* Playback, for monitoring. `open` returns the implementation's own handle. */
+/* Playback. `open` returns the implementation's own handle. */
 typedef struct
 {
   const char *name;
@@ -67,6 +67,10 @@ typedef struct
   void (*close)(void *impl);
   int (*write)(void *impl, const float *interleaved, size_t frames, float gain);
   unsigned long (*dropped)(const void *impl);
+
+  /* What a caller feeding a file rather than a live capture needs; see monitor.h */
+  long (*space)(void *impl);
+  void (*drain)(void *impl);
 } aud_monitor_ops;
 
 /*

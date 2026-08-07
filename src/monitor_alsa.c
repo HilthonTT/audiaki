@@ -93,7 +93,7 @@ static int configure(alsa_monitor *m, const aud_monitor_config *cfg)
      * accepts whatever the capture side negotiated. The PipeWire backend does
      * not have this limitation: the server resamples as a matter of course.
      */
-    aud_warn("monitor: output wants %u Hz but the capture is %u Hz, not monitoring", rate,
+    aud_warn("monitor: output wants %u Hz but the audio is %u Hz, not playing it", rate,
              cfg->rate);
     aud_info("the pipewire backend monitors at any rate: --backend pipewire");
     return -1;
@@ -343,10 +343,64 @@ static int alsa_monitor_write(void *impl, const float *interleaved, size_t frame
   return 0;
 }
 
+static long alsa_monitor_space(void *impl)
+{
+  alsa_monitor *m = impl;
+  snd_pcm_sframes_t avail;
+
+  if (m == NULL || m->failed)
+  {
+    return -1;
+  }
+
+  avail = snd_pcm_avail_update(m->pcm);
+  if (avail < 0)
+  {
+    if (recover(m, (int)avail) != 0)
+    {
+      return -1;
+    }
+    avail = snd_pcm_avail_update(m->pcm);
+    if (avail < 0)
+    {
+      return 0;
+    } /* recovered but still not ready; ask again next time */
+  }
+
+  return (long)avail;
+}
+
+static void alsa_monitor_drain(void *impl)
+{
+  alsa_monitor *m = impl;
+
+  if (m == NULL || m->failed)
+  {
+    return;
+  }
+
+  /*
+   * The PCM is non-blocking so that a stalled output can never hold up a
+   * capture thread, and snd_pcm_drain() on a non-blocking PCM returns at once
+   * and finishes in the background - which is the one thing a caller waiting
+   * for the tail does not want. Blocking for the drain is safe because nothing
+   * will be written afterwards, and SIGINT still breaks it: the handlers are
+   * installed without SA_RESTART.
+   */
+  if (snd_pcm_nonblock(m->pcm, 0) != 0)
+  {
+    return;
+  }
+  snd_pcm_drain(m->pcm);
+  snd_pcm_nonblock(m->pcm, 1);
+}
+
 const aud_monitor_ops aud_monitor_ops_alsa = {
     .name = "alsa",
     .open = alsa_monitor_open,
     .close = alsa_monitor_close,
     .write = alsa_monitor_write,
     .dropped = alsa_monitor_dropped,
+    .space = alsa_monitor_space,
+    .drain = alsa_monitor_drain,
 };

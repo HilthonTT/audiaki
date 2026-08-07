@@ -20,6 +20,9 @@
  * Columns the spectrum line needs for everything that is not a bar:
  * " 00:00 " is 7, and "  -12.3 dBFS  xruns:0    CLIP" is 29. One spare on top,
  * so a full width line cannot wrap and strand the cursor on the next row.
+ *
+ * Playback spends more on the clock (" 00:00 / 00:00 ") and less on the tail,
+ * and comes to fewer columns than this, so one budget covers both.
  */
 #define METER_READOUT_COLS 37
 
@@ -114,6 +117,91 @@ void meter_reset_peaks(aud_meter *m)
   m->clipped = 0;
 }
 
+void meter_set_total(aud_meter *m, double seconds)
+{
+  m->total = seconds > 0.0 ? seconds : 0.0;
+}
+
+/* Room for both clock forms and both counter forms, with the terminator. */
+#define METER_CLOCK_MAX 32
+#define METER_COUNTERS_MAX 24
+
+/*
+ * Minutes, clamped. A double too large for the conversion is undefined
+ * behaviour rather than a long clock, and nothing on screen is improved by
+ * letting a nonsense length widen the line.
+ */
+#define METER_CLOCK_MINUTES_MAX 999
+
+static int clock_minutes(double seconds)
+{
+  double minutes = seconds / 60.0;
+  int whole;
+
+  /* written as a negated comparison so that a NaN, which fails every test, is 0 */
+  if (!(minutes > 0.0))
+  {
+    return 0;
+  }
+  if (!(minutes < (double)METER_CLOCK_MINUTES_MAX))
+  {
+    return METER_CLOCK_MINUTES_MAX;
+  }
+
+  /* clamped again on the integer, so the printed width is provably bounded */
+  whole = (int)minutes;
+  if (whole < 0)
+  {
+    return 0;
+  }
+  return whole > METER_CLOCK_MINUTES_MAX ? METER_CLOCK_MINUTES_MAX : whole;
+}
+
+static int clock_seconds(double seconds)
+{
+  double rest = seconds - (double)clock_minutes(seconds) * 60.0;
+  int whole;
+
+  if (!(rest > 0.0))
+  {
+    return 0;
+  }
+
+  whole = (int)rest;
+  if (whole < 0)
+  {
+    return 0;
+  }
+  return whole > 59 ? 59 : whole;
+}
+
+/* "00:12" while recording, "00:12 / 03:45" while playing something finite. */
+static void format_clock(const aud_meter *m, char *out, size_t size, double seconds)
+{
+  if (m->total > 0.0)
+  {
+    snprintf(out, size, "%02d:%02d / %02d:%02d", clock_minutes(seconds),
+             clock_seconds(seconds), clock_minutes(m->total), clock_seconds(m->total));
+    return;
+  }
+  snprintf(out, size, "%02d:%02d", clock_minutes(seconds), clock_seconds(seconds));
+}
+
+/*
+ * The tail of the line. Playback keeps the clip warning - a file can be too hot
+ * as easily as an input can - but drops the xrun counter, there being no take
+ * to lose frames from.
+ */
+static void format_counters(const aud_meter *m, char *out, size_t size, unsigned xruns)
+{
+  if (m->total > 0.0)
+  {
+    snprintf(out, size, "%s", m->clipped ? "  CLIP" : "");
+    return;
+  }
+  snprintf(out, size, "  xruns:%-4u%s", xruns, m->clipped ? " CLIP" : "");
+}
+
 /*
  * Peak hold and clip detection run whether or not anything is drawn: the
  * summary after a recording reports clipping even under --no-meter.
@@ -133,10 +221,11 @@ static void track_peak(aud_meter *m, double peak)
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns)
 {
   char bar[METER_MAX_WIDTH + 1];
+  char clock[METER_CLOCK_MAX];
+  char counters[METER_COUNTERS_MAX];
   double db;
   int filled;
   int hold_pos;
-  int minutes;
 
   track_peak(m, peak);
 
@@ -178,16 +267,16 @@ void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns)
   } /* peak hold marker */
   bar[m->width] = '\0';
 
-  minutes = (int)seconds / 60;
   if (m->armed)
   {
-    fprintf(stderr, "\r ARM %02d:%02d [%s] %6.1f dBFS  press Enter", minutes,
-            (int)seconds % 60, bar, db);
+    fprintf(stderr, "\r ARM %02d:%02d [%s] %6.1f dBFS  press Enter",
+            clock_minutes(seconds), clock_seconds(seconds), bar, db);
   }
   else
   {
-    fprintf(stderr, "\r %02d:%02d [%s] %6.1f dBFS  xruns:%-4u%s", minutes,
-            (int)seconds % 60, bar, db, xruns, m->clipped ? " CLIP" : "");
+    format_clock(m, clock, sizeof(clock), seconds);
+    format_counters(m, counters, sizeof(counters), xruns);
+    fprintf(stderr, "\r %s [%s] %6.1f dBFS%s", clock, bar, db, counters);
   }
   fflush(stderr);
   m->line_dirty = 1;
@@ -203,9 +292,10 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
 {
   /* worst case: every band a 3 byte block character */
   char bar[AUD_SPECTRUM_MAX_BANDS * 3 + 1];
+  char clock[METER_CLOCK_MAX];
+  char counters[METER_COUNTERS_MAX];
   size_t at = 0;
   double db;
-  int minutes;
 
   track_peak(m, peak);
 
@@ -253,17 +343,17 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
   bar[at] = '\0';
 
   db = aud_format_dbfs(peak);
-  minutes = (int)seconds / 60;
 
   if (m->armed)
   {
-    fprintf(stderr, "\r ARM %02d:%02d %s %6.1f dBFS  press Enter", minutes,
-            (int)seconds % 60, bar, db);
+    fprintf(stderr, "\r ARM %02d:%02d %s %6.1f dBFS  press Enter", clock_minutes(seconds),
+            clock_seconds(seconds), bar, db);
   }
   else
   {
-    fprintf(stderr, "\r %02d:%02d %s %6.1f dBFS  xruns:%-4u%s", minutes,
-            (int)seconds % 60, bar, db, xruns, m->clipped ? " CLIP" : "");
+    format_clock(m, clock, sizeof(clock), seconds);
+    format_counters(m, counters, sizeof(counters), xruns);
+    fprintf(stderr, "\r %s %s %6.1f dBFS%s", clock, bar, db, counters);
   }
   fflush(stderr);
   m->line_dirty = 1;

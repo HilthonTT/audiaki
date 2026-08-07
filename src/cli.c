@@ -60,6 +60,7 @@ enum
   OPT_A4,
   OPT_BACKEND,
   OPT_PREROLL,
+  OPT_PLAY,
 };
 
 static const struct option long_options[] = {
@@ -83,6 +84,7 @@ static const struct option long_options[] = {
     {"bars", required_argument, NULL, OPT_BARS},
     {"style", required_argument, NULL, OPT_STYLE},
     {"info", required_argument, NULL, OPT_INFO},
+    {"play", required_argument, NULL, OPT_PLAY},
     {"take", required_argument, NULL, OPT_TAKE},
     {"preroll", required_argument, NULL, OPT_PREROLL},
     {"pre-roll", required_argument, NULL, OPT_PREROLL},
@@ -149,13 +151,14 @@ void cli_print_usage(FILE *out)
           "usage: " AUDIAKI_NAME " [options] <output.wav>\n"
           "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
           "       " AUDIAKI_NAME " --info <input.wav>\n"
+          "       " AUDIAKI_NAME " --play <input.wav> [-D output]\n"
           "       " AUDIAKI_NAME " --tune [-D device]\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
           "\n"
           "Record a capture device straight to a PCM WAV file, tune an\n"
-          "instrument on it, measure a finished take, and turn one into a\n"
-          "visualiser video.\n"
+          "instrument on it, measure a finished take, play one back, and turn\n"
+          "one into a visualiser video.\n"
           "\n"
           "Recording options:\n"
           "  -D, --device NAME     capture device (default: %s, $AUDIAKI_DEVICE)\n"
@@ -180,6 +183,12 @@ void cli_print_usage(FILE *out)
           "                        (default: %ux%u)\n"
           "      --fps N           video frame rate (default: %u)\n"
           "      --bars N          number of spectrum bars (default: %u)\n"
+          "\n"
+          "Playback options:\n"
+          "      --play FILE       play FILE (a WAV) through the default output\n"
+          "                        and exit; -D names another output, -t stops\n"
+          "                        early, and --spectrum and --no-meter apply as\n"
+          "                        they do when recording\n"
           "\n"
           "Tuner options:\n"
           "      --tune            show the pitch of what is being played, and "
@@ -211,6 +220,7 @@ void cli_print_usage(FILE *out)
           "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
           "out?\n"
+          "  " AUDIAKI_NAME " --play take01.wav           listen to it\n"
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --size 1080p\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --style waveform\n"
@@ -248,6 +258,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     {
     case 'D':
       opts->device = optarg;
+      opts->device_explicit = 1;
       break;
     case 'r':
       if (parse_uint(optarg, AUD_RATE_MIN, AUD_RATE_MAX, &opts->rate) != 0)
@@ -348,6 +359,10 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case OPT_INFO:
       opts->command = AUD_CMD_INFO;
+      opts->input_path = optarg;
+      break;
+    case OPT_PLAY:
+      opts->command = AUD_CMD_PLAY;
       opts->input_path = optarg;
       break;
     case OPT_TAKE:
@@ -460,6 +475,21 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     if (optind < argc)
     {
       aud_error("unexpected argument '%s' (the file comes from --info)", argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
+  }
+
+  if (opts->command == AUD_CMD_PLAY)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (the file comes from --play)", argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    if (opts->output_path != NULL)
+    {
+      aud_error("--play writes nothing, so there is no output file to write");
       return CLI_EXIT_USAGE;
     }
     return 0;

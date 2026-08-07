@@ -44,6 +44,7 @@ _audiaki() {
     '--tune[show the pitch of what is being played, then exit]'
     '--a4[tuner reference pitch in Hz]:hz:'
     '--info[report levels and clipping for a WAV and exit]:wav file:_files -g "*.wav(-.)"'
+    '--play[play a WAV through the output and exit]:wav file:_files -g "*.wav(-.)"'
     '--json[machine readable --list, --probe and --info]'
     '(-y --force)'{-y,--force}'[overwrite the output file if it exists]'
     '(-q --quiet -v --verbose)'{-q,--quiet}'[errors only]'

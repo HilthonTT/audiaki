@@ -99,3 +99,23 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, f
 
   return m->ops->write(m->impl, interleaved, frames, gain);
 }
+
+long aud_monitor_space(aud_monitor *m)
+{
+  if (m == NULL)
+  {
+    return -1;
+  }
+
+  return m->ops->space(m->impl);
+}
+
+void aud_monitor_drain(aud_monitor *m)
+{
+  if (m == NULL)
+  {
+    return;
+  }
+
+  m->ops->drain(m->impl);
+}

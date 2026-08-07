@@ -79,7 +79,7 @@ _audiaki()
             mapfile -t COMPREPLY < <(compgen -W "1 2 4 6 8" -- "$cur")
             return
             ;;
-        --visualize | --visualise | --info)
+        --visualize | --visualise | --info | --play)
             _audiaki_files wav
             return
             ;;
@@ -100,7 +100,7 @@ _audiaki()
     if [[ $cur == -* ]]; then
         opts="--device --backend --rate --channels --format --duration --period
               --periods --output --force --take --preroll --spectrum --no-meter
-              --visualize --style --size --fps --bars --tune --a4 --info --json
+              --visualize --style --size --fps --bars --tune --a4 --info --play --json
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
         return

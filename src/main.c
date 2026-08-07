@@ -13,6 +13,7 @@
 #include "device.h"
 #include "info.h"
 #include "log.h"
+#include "play.h"
 #include "recorder.h"
 #include "signals.h"
 #include "take.h"
@@ -172,6 +173,30 @@ static int run_visualize(const aud_options *opts)
   return aud_visualize_render(&viz) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+static int run_play(const aud_options *opts)
+{
+  aud_play_options play;
+
+  play.input_path = opts->input_path;
+  /*
+   * The default output, unless an output was actually named. -D otherwise
+   * defaults to a capture device, and $AUDIAKI_DEVICE is one by definition;
+   * either would be handed to the playback side as though it could play.
+   */
+  play.device = opts->device_explicit ? opts->device : NULL;
+  play.duration = opts->duration;
+  play.show_meter = opts->show_meter;
+  play.show_spectrum = opts->show_spectrum;
+
+  if (aud_signals_install_stop() != 0)
+  {
+    aud_perror("cannot install signal handlers");
+    return EXIT_FAILURE;
+  }
+
+  return aud_play_run(&play) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 static int run_info(const aud_options *opts)
 {
   aud_info_report report;
@@ -215,6 +240,7 @@ int main(int argc, char *argv[])
   case AUD_CMD_LIST:
   case AUD_CMD_PROBE:
   case AUD_CMD_TUNE:
+  case AUD_CMD_PLAY:
   case AUD_CMD_RECORD:
     if (aud_backend_select(opts.backend) != 0)
     {
@@ -241,6 +267,8 @@ int main(int argc, char *argv[])
     return run_visualize(&opts);
   case AUD_CMD_INFO:
     return run_info(&opts);
+  case AUD_CMD_PLAY:
+    return run_play(&opts);
   case AUD_CMD_TUNE:
     return run_tune(&opts);
   case AUD_CMD_RECORD:

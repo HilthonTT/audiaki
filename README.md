@@ -77,11 +77,12 @@ audiaki --spectrum -t 1:30 take02.wav  # 90 seconds, watching the spectrum
 audiaki --take session               # record the next free session-NNN.wav
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki --info take01.wav            # how did that take come out?
+audiaki --play take01.wav            # ...and what does it sound like?
 audiaki --visualize take01.wav       # render take01.mp4
 audiaki-gui                          # the desktop app
 ```
 
-Every option, the meter, the tuner, pre-roll, `--json` output and
+Every option, the meter, the tuner, pre-roll, playback, `--json` output and
 troubleshooting: [docs/USAGE.md](docs/USAGE.md), `man audiaki`, or
 `audiaki --help`. The window, its keys and its visualisers:
 [docs/DESKTOP.md](docs/DESKTOP.md).

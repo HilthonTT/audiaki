@@ -26,6 +26,7 @@ typedef enum
   AUD_CMD_VISUALIZE,
   AUD_CMD_INFO,
   AUD_CMD_TUNE,
+  AUD_CMD_PLAY,
   AUD_CMD_HELP,
   AUD_CMD_VERSION,
 } aud_command;
@@ -34,8 +35,14 @@ typedef struct
 {
   aud_command command;
   const char *device;
+  /*
+   * Whether -D was typed, as opposed to defaulted or taken from the
+   * environment. --play needs to know: it opens an output, and $AUDIAKI_DEVICE
+   * names a capture device, which is not one.
+   */
+  int device_explicit;
   const char *output_path;
-  const char *input_path;  /* --visualize and --info source WAV */
+  const char *input_path;  /* --visualize, --info and --play source WAV */
   const char *take_prefix; /* --take; output_path is derived from it */
   unsigned rate;
   unsigned channels;

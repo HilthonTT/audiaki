@@ -2,7 +2,7 @@
 .TH AUDIAKI 1 "2026-08-06" "audiaki 1.0.0" "User Commands"
 .SH NAME
 audiaki, audiaki\-gui \- record a capture device to a WAV file, tune an
-instrument on it, and visualise it
+instrument on it, play a take back, and visualise it
 .SH SYNOPSIS
 .B audiaki
 [\fIOPTION\fR]... \fIOUTPUT.WAV\fR
@@ -12,6 +12,9 @@ instrument on it, and visualise it
 .br
 .B audiaki
 \fB\-\-info\fR \fIINPUT.WAV\fR
+.br
+.B audiaki
+\fB\-\-play\fR \fIINPUT.WAV\fR [\fB\-D\fR \fIOUTPUT\fR]
 .br
 .B audiaki
 \fB\-\-tune\fR [\fB\-D\fR \fIDEVICE\fR]
@@ -53,6 +56,13 @@ With
 .B \-\-info
 it reads a WAV file and reports what is in it \- levels, clipping and noise
 floor \- then exits. This too needs no sound card.
+.PP
+With
+.B \-\-play
+it reads a WAV file and plays it through an output, drawing the same meter
+against the file's length. Nothing is captured and nothing is written. See
+.B PLAYBACK
+below.
 .PP
 With
 .B \-\-tune
@@ -205,6 +215,24 @@ Video frame rate, 1 to 240 (default 60).
 Number of spectrum bars, 4 to 512 (default 64). Applies to
 .B \-\-style bars
 only.
+.SS Playback
+.TP
+.BR \-\-play " " \fIFILE\fR
+Play
+.I FILE
+through an output and exit. Whatever the reader accepts is playable, not only
+audiaki's own takes.
+.B \-D
+names the output rather than a capture device, and defaults to
+.BR default ;
+.B $AUDIAKI_DEVICE
+is ignored here, because what it names is an input.
+.B \-t
+stops early, and
+.BR \-\-spectrum " and " \-\-no\-meter
+apply as they do when recording. No file is written, and naming one with
+.B \-o
+is an error.
 .SS Tuner
 .TP
 .B \-\-tune
@@ -376,6 +404,32 @@ about it.
 A file whose data chunk claims more frames than it holds \- a recording killed
 before its header was patched \- is reported as truncated, and every figure
 describes what is actually there.
+.SH PLAYBACK
+.B \-\-play
+draws the meter described under
+.B METER
+with two differences: the clock shows a position within the file rather than a
+length elapsed, and there is no xrun counter, nothing being written for frames
+to be lost from.
+.PP
+.EX
+ 00:12 / 03:45 [##################|          ]  \-8.4 dBFS
+.EE
+.PP
+.BR SIGINT " or " SIGTERM
+stops at once. Reaching the end of the file, or the limit set by
+.BR \-t ,
+waits for the audio already queued to finish before the output is closed, so
+the last of the take is not cut off.
+.PP
+Playback does not resample. Under PipeWire this is invisible, because the
+server does; under ALSA the output must accept the file's own rate or audiaki
+declines to play it, rather than play it back at the wrong pitch. See
+.BR BACKENDS .
+.PP
+There is no seeking, no pausing and no playlist.
+.B \-t
+is the only way to hear less than the whole file.
 .SH VISUALISER
 Under
 .B \-\-style bars
@@ -626,7 +680,9 @@ to see which backends a build has.
 .B AUDIAKI_DEVICE
 Default capture device, used when
 .B \-D
-is not given.
+is not given. Ignored by
+.BR \-\-play ,
+which opens an output rather than an input.
 .TP
 .B AUDIAKI_BACKEND
 Default backend
@@ -697,6 +753,14 @@ Track a part over several attempts, then check how the last one came out:
 audiaki \-\-take session
 audiaki \-\-take session
 audiaki \-\-info session\-002.wav
+.RE
+.fi
+.PP
+Listen back to it:
+.PP
+.nf
+.RS
+audiaki \-\-play session\-002.wav
 .RE
 .fi
 .PP

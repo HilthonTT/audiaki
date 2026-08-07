@@ -12,6 +12,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 - [Pitch detection](#pitch-detection)
 - [Pre-roll](#pre-roll)
 - [Measuring a take](#measuring-a-take)
+- [Playing one back](#playing-one-back)
 
 ## Layout
 
@@ -41,9 +42,10 @@ src/
   ffmpeg_posix.c  its fork/exec/pipe implementation
   signals.c/.h  the shared Ctrl+C flag
   parse.c/.h    strict CLI value parsing
-  monitor.c/.h  playback, for hearing the input while it records
+  monitor.c/.h  the playback side: monitoring an input, and --play
   monitor_alsa.c     ...over libasound
   monitor_pipewire.c ...over libpipewire
+  play.c/.h     the --play loop: WAV -> monitor -> terminal
   ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
   log.c/.h      stderr diagnostics
   gui/
@@ -89,7 +91,9 @@ the question "what can this card actually do", use `--backend alsa --probe`.
 The write path never blocks. If the playback device falls behind — which it
 will, because capture and playback are not the same crystal — the frames that do
 not fit are dropped rather than queued. A monitor that drifts further behind the
-longer you record is worse than one that skips.
+longer you record is worse than one that skips. Playing a file back needs the
+opposite of that rule and gets it by asking first; see
+[Playing one back](#playing-one-back).
 
 Under ALSA, monitoring needs an output that accepts the capture rate directly.
 Resampling would mean carrying an interpolator around for a convenience feature,
@@ -207,3 +211,29 @@ The reader is deliberately more forgiving than the writer is strict, because it
 has to cope with files other tools produced: 8/16/24/32-bit PCM and 32/64-bit
 float, in any chunk order, with unknown chunks skipped. A take interrupted
 before its header was patched is reported as truncated rather than refused.
+
+## Playing one back
+
+`--play` is the WAV reader, the playback stream monitoring already used and the
+same meter, wired together in `play.c`. No capture device is opened, and no new
+audio system code was needed for it: the two `monitor_*.c` backends were already
+the thing that turns interleaved floats into sound.
+
+What it did need was backpressure, and that is the interesting part. Monitoring
+drops whatever will not fit, because a monitor that queues instead of skipping
+puts the sound further behind the strings every second. A file has no pace of
+its own — it can be read as fast as the disk answers — so under that rule
+playback would consume the whole take in a moment and drop all but the first
+buffer of it.
+
+So `aud_monitor_space()` reports how much will fit, and the play loop reads
+exactly that much and sleeps when the answer is zero. The output's own
+consumption becomes the clock, which is the one clock that cannot drift against
+the device: pacing on `CLOCK_MONOTONIC` instead would be open loop, and a card
+running a few parts per million off nominal would slowly starve or overrun.
+
+`aud_monitor_drain()` is the other half. Closing the stream when the last frame
+has been handed over cuts off everything still queued — inaudible while
+monitoring, because the input is still arriving, and the last hundred
+milliseconds of the take when playing a file. Ctrl+C skips the drain, since
+stopping now is exactly what was asked for.

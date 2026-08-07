@@ -1,16 +1,21 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * monitor.h - play captured audio back while it is being recorded.
+ * monitor.h - the playback side: a PCM to hear audio through.
  *
- * A second PCM, on the playback side, fed the same frames that go to the WAV
- * file so you can hear what the interface is hearing. Independent of the
- * capture device: monitoring can fail, or be turned off mid-take, without the
- * recording noticing.
+ * Two callers, wanting the same stream on opposite terms. Monitoring feeds it
+ * the frames going to the WAV file so you can hear what the interface is
+ * hearing, and the source sets the pace. Playing a take back (play.c) feeds it
+ * from a file, which has no pace of its own at all.
  *
  * The write path never blocks. If the playback device falls behind - which it
- * will, because the capture and playback clocks are not the same crystal - the
- * frames that do not fit are dropped rather than queued. A monitor that drifts
- * further behind the longer you record is worse than one that skips.
+ * will while monitoring, because the capture and playback clocks are not the
+ * same crystal - the frames that do not fit are dropped rather than queued. A
+ * monitor that drifts further behind the longer you record is worse than one
+ * that skips.
+ *
+ * That rule is why aud_monitor_space() exists. A file read at disk speed would
+ * be almost entirely dropped by it, so playback asks how much will fit and
+ * hands over exactly that, and the output's own consumption becomes the clock.
  *
  * Feedback warning: monitoring a microphone through speakers howls. Callers
  * should leave it off until asked.
@@ -61,5 +66,24 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames,
 
 /* Frames dropped because playback could not keep up, since opening. */
 unsigned long aud_monitor_dropped(const aud_monitor *m);
+
+/*
+ * Frames aud_monitor_write() would accept right now without dropping any.
+ * Returns -1 once the stream has failed for good.
+ *
+ * Zero is the normal answer, not an error: it means the output is full and the
+ * caller should wait rather than read more of its source.
+ */
+long aud_monitor_space(aud_monitor *m);
+
+/*
+ * Wait for the frames already handed over to finish playing, then return.
+ * Bounded by a couple of seconds, so a stalled output cannot hang the caller.
+ *
+ * Monitoring has no use for this - the input is still arriving when the take
+ * ends - but closing the stream at the end of a file otherwise cuts off the
+ * last of it, which is the buffer's worth of audio.
+ */
+void aud_monitor_drain(aud_monitor *m);
 
 #endif /* AUDIAKI_MONITOR_H */

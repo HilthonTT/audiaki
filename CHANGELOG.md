@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Playing a take back. `audiaki --play take01.wav` sends it to an output and
+  draws the recording meter against the file's length, so the take `--info`
+  has just measured can be listened to without leaving the shell for a media
+  player. `-t` plays the first part only, `--spectrum` and `--no-meter` behave
+  as they do when recording, and Ctrl+C stops at once. It plays whatever the
+  WAV reader accepts, not only audiaki's own takes.
+- `play` module: the WAV reader, the playback stream and the meter wired
+  together. No new audio system code - the two monitor backends already turned
+  interleaved floats into sound - but two new operations on them:
+  `aud_monitor_space()` and `aud_monitor_drain()`. Monitoring drops whatever
+  does not fit, which is right when the input sets the pace and useless when a
+  file does: read at disk speed, a take would be consumed in a moment and all
+  but the first buffer of it thrown away. Playback asks how much will fit and
+  hands over exactly that, which makes the output's own consumption the clock,
+  and waits for the queue to empty before closing so the end is not cut off.
+- `-D` names the **output** under `--play`. `$AUDIAKI_DEVICE` is deliberately
+  ignored there: what it names is a capture device, and handing one to the
+  playback side would fail for a reason nobody would guess from the message.
+
 - Pre-roll. `--preroll SECS` holds the last few seconds and waits, and the take
   starts that far before you press Enter; `audiaki-gui --preroll SECS` keeps the
   same seconds while the window is idle, so Record does. The take everyone loses
@@ -45,6 +64,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- The terminal meter takes a total length, and draws `00:12 / 03:45` with no
+  xrun counter when it has one. The recording line is unchanged to the byte.
 - `device.h` no longer includes `<alsa/asoundlib.h>`, and the stream handle in
   `aud_device` is opaque. The header comment claimed ALSA was confined to
   `device.c` already; it was not, because every file including the header was

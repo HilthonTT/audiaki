@@ -25,6 +25,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* Seconds to wait for the server to agree a format before giving up. */
 #define PW_MONITOR_TIMEOUT 2
@@ -435,10 +436,81 @@ static int pw_monitor_write(void *impl, const float *interleaved, size_t frames,
   return 0;
 }
 
+static long pw_monitor_space(void *impl)
+{
+  pw_monitor *m = impl;
+  size_t space;
+
+  if (m == NULL || m->failed)
+  {
+    return -1;
+  }
+
+  pthread_mutex_lock(&m->lock);
+  space = m->fifo_frames - m->fill;
+  pthread_mutex_unlock(&m->lock);
+
+  return (long)space;
+}
+
+/* How often the drain looks at the FIFO, and how long it waits for it at all. */
+#define PW_MONITOR_DRAIN_POLL_MS 5
+#define PW_MONITOR_DRAIN_TIMEOUT_MS 2000
+
+/*
+ * What to allow the server for the frames it has already taken. The stream asks
+ * for a period of latency at connect time and the server adds its own quantum
+ * on top; there is no cheap way to ask how much is still in flight, so this is
+ * a generous round number rather than a measurement.
+ */
+#define PW_MONITOR_DRAIN_TAIL_MS 150
+
+static void sleep_ms(long ms)
+{
+  struct timespec ts;
+
+  ts.tv_sec = ms / 1000;
+  ts.tv_nsec = (ms % 1000) * 1000000L;
+  nanosleep(&ts, NULL);
+}
+
+static void pw_monitor_drain(void *impl)
+{
+  pw_monitor *m = impl;
+  long waited = 0;
+
+  if (m == NULL || m->failed)
+  {
+    return;
+  }
+
+  for (;;)
+  {
+    size_t fill;
+
+    pthread_mutex_lock(&m->lock);
+    fill = m->fill;
+    pthread_mutex_unlock(&m->lock);
+
+    if (fill == 0 || m->failed || waited >= PW_MONITOR_DRAIN_TIMEOUT_MS)
+    {
+      break;
+    }
+
+    sleep_ms(PW_MONITOR_DRAIN_POLL_MS);
+    waited += PW_MONITOR_DRAIN_POLL_MS;
+  }
+
+  /* an empty FIFO means the server has taken everything, not that it has played it */
+  sleep_ms(PW_MONITOR_DRAIN_TAIL_MS);
+}
+
 const aud_monitor_ops aud_monitor_ops_pipewire = {
     .name = "pipewire",
     .open = pw_monitor_open,
     .close = pw_monitor_close,
     .write = pw_monitor_write,
     .dropped = pw_monitor_dropped,
+    .space = pw_monitor_space,
+    .drain = pw_monitor_drain,
 };

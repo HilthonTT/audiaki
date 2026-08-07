@@ -12,6 +12,7 @@ systems also have `man audiaki`.
 - [Numbering takes](#numbering-takes)
 - [Pre-roll](#pre-roll)
 - [Checking a take](#checking-a-take)
+- [Playing one back](#playing-one-back)
 - [Scripting](#scripting)
 - [Rendering a video](#rendering-a-video)
 - [Troubleshooting](#troubleshooting)
@@ -29,6 +30,7 @@ audiaki -t 1:30 take02.wav           # record 90 seconds
 audiaki --take session               # record the next free session-NNN.wav
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki --info take01.wav            # how did that take come out?
+audiaki --play take01.wav            # ...and what does it sound like?
 audiaki -D plughw:CARD=Box,DEV=0 -r 48000 -c 2 take03.wav
 audiaki --visualize take01.wav       # render take01.mp4
 ```
@@ -57,6 +59,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--tune` | Show the pitch of what is being played, until Ctrl+C |
 | `--a4 HZ` | Tuner reference pitch (default 440) |
 | `--info FILE` | Report levels and clipping for a WAV and exit |
+| `--play FILE` | Play a WAV through the output and exit |
 | `--json` | Machine-readable `--list`, `--probe` and `--info` |
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
 | `-l, --list` / `-P, --probe` | Inspect devices and exit |
@@ -211,6 +214,36 @@ sat at full scale and the take is distorted. `--info` reads whatever the reader
 accepts, including files other tools wrote. What the noise floor and DC figures
 mean: [DESIGN.md](../DESIGN.md#measuring-a-take).
 
+## Playing one back
+
+```sh
+audiaki --play take01.wav                  # through the default output
+audiaki --play take01.wav --spectrum       # ...watching the spectrum
+audiaki --play take01.wav -t 30            # ...the first 30 seconds only
+audiaki --play take01.wav -D plughw:CARD=Box,DEV=0   # ...through that output
+```
+
+The meter is the recording meter with the clock showing a position rather than
+a length, and no xrun counter — nothing is being written, so there are no
+frames to lose:
+
+```
+ 00:12 / 03:45 [##################|          ]  -8.4 dBFS
+```
+
+Ctrl+C stops immediately. `--play` reads whatever the reader accepts, not only
+audiaki's own takes: 8/16/24/32-bit PCM and 32/64-bit float, at any rate the
+output will take.
+
+Under PipeWire that is any rate at all, because the server resamples. Under
+ALSA the output has to accept the file's rate directly — audiaki does not
+resample — so a 44.1 kHz take on a device running at 48 kHz reports
+`output wants 48000 Hz but the audio is 44100 Hz` and plays nothing. Use
+`--backend pipewire`, or the `plug` layer: `-D plughw:CARD=Box,DEV=0`.
+
+`-D` names an **output** here rather than a capture device. `$AUDIAKI_DEVICE`
+is deliberately ignored by `--play`, because what it names is an input.
+
 ## Scripting
 
 `--list`, `--probe` and `--info` take `--json` and write a single object or
@@ -291,9 +324,11 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - Video is rendered after the take, so a long take with video on means waiting
   roughly its own length again. Cancelling is always available, and the audio
   is safe on disk regardless.
-- Monitoring through ALSA needs an output that accepts the capture rate
-  directly: audiaki does not resample, so it declines to monitor rather than
-  play back at the wrong pitch. The PipeWire backend has no such limit.
+- Monitoring and `--play` through ALSA need an output that accepts the stream's
+  rate directly: audiaki does not resample, so it declines rather than play
+  back at the wrong pitch. The PipeWire backend has no such limit.
+- `--play` runs start to finish. There is no seeking, no pausing and no
+  playlist; `-t` is the only way to hear less than all of it.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between
   40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
   piccolo is not.

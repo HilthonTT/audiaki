@@ -22,6 +22,7 @@ typedef struct
   int clipped;      /* a sample has hit full scale */
   int unicode;      /* the terminal can render block drawing characters */
   int armed;        /* capturing into the pre-roll, not into a file */
+  double total;     /* length of what is being played; 0 while recording */
 } aud_meter;
 
 /*
@@ -49,6 +50,13 @@ void meter_set_armed(aud_meter *m, int armed);
  * what the summary afterwards is reporting on.
  */
 void meter_reset_peaks(aud_meter *m);
+
+/*
+ * Draw as playback of something `seconds` long: the clock becomes a position
+ * within it, and the xrun counter goes, there being no take to lose frames
+ * from. Zero, the default, is the recording form.
+ */
+void meter_set_total(aud_meter *m, double seconds);
 
 /* Redraw the meter in place. `peak` is normalised to [0.0, 1.0]. */
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns);
