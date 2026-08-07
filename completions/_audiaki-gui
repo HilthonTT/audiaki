@@ -1,0 +1,43 @@
+#compdef audiaki-gui
+# zsh completion for audiaki-gui(1)
+# SPDX-License-Identifier: MIT
+
+# The window has no --list of its own, so the device names come from the
+# recorder next to it; see _audiaki, which defines this.
+(( $+functions[_audiaki_devices] )) || _audiaki_devices() {
+  local -a devices
+  local -a run=(audiaki --list)
+
+  (( $+commands[audiaki] )) || return 0
+  (( $+commands[timeout] )) && run=(timeout 2 $run)
+
+  devices=(${(f)"$($run 2>/dev/null | awk 'NR > 1 { print $1 }')"})
+  devices=(default $devices)
+
+  _describe -t devices 'capture device' devices
+}
+
+_audiaki_gui() {
+  local -a args
+
+  args=(
+    '(-D --device)'{-D,--device}'[capture device the window opens on]:device:_audiaki_devices'
+    '(-b --backend)'{-b,--backend}'[audio system to talk to]:backend:(auto pipewire alsa)'
+    '(-r --rate)'{-r,--rate}'[sample rate in Hz]:rate:(44100 48000 88200 96000 192000)'
+    '(-c --channels)'{-c,--channels}'[channel count]:channels:(1 2 4 6 8)'
+    '(-o --take)'{-o,--take}'[take name prefix]:prefix:_files'
+    '(-s --style)'{-s,--style}'[visualiser style to start on]:style:(bars mirror radial scope waterfall tuner)'
+    '--preroll[keep SECS of audio while idle, so takes start earlier]:seconds:'
+    '(-V --video)'{-V,--video}'[also render an MP4 of each take]'
+    '--video-silent[render that MP4 without the take'"'"'s audio]'
+    '--video-size[video size]:size:(480p 720p 1080p 1440p 2160p)'
+    '--video-fps[video frame rate]:fps:'
+    '(-M --monitor)'{-M,--monitor}'[start with playback monitoring on]'
+    '(-v --verbose)'{-v,--verbose}'[log device negotiation to the terminal]'
+    '(- *)'{-h,--help}'[show usage and exit]'
+  )
+
+  _arguments -s -S $args
+}
+
+_audiaki_gui "$@"

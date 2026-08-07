@@ -1,0 +1,61 @@
+#compdef audiaki
+# zsh completion for audiaki(1)
+# SPDX-License-Identifier: MIT
+
+# Asked of audiaki itself, so the names come from whichever backend is running:
+# alsa_input.pci-... under PipeWire, hw:CARD=Box,DEV=0 under ALSA. Bounded by
+# timeout(1) where there is one, so a sound server that has stopped answering
+# costs a moment at the Tab key rather than the shell.
+_audiaki_devices() {
+  local -a devices
+  local -a run=(audiaki --list)
+
+  (( $+commands[audiaki] )) || return 0
+  (( $+commands[timeout] )) && run=(timeout 2 $run)
+
+  devices=(${(f)"$($run 2>/dev/null | awk 'NR > 1 { print $1 }')"})
+  devices=(default $devices)
+
+  _describe -t devices 'capture device' devices
+}
+
+_audiaki() {
+  local -a args
+
+  args=(
+    '(-D --device)'{-D,--device}'[capture device]:device:_audiaki_devices'
+    '--backend[audio system to talk to]:backend:(auto pipewire alsa)'
+    '(-r --rate)'{-r,--rate}'[sample rate in Hz]:rate:(44100 48000 88200 96000 192000)'
+    '(-c --channels)'{-c,--channels}'[channel count]:channels:(1 2 4 6 8)'
+    '(-f --format)'{-f,--format}'[sample format]:format:(s16_le s24_3le s24_le s32_le)'
+    '(-t --duration)'{-t,--duration}'[stop after SS, MM:SS or HH:MM:SS]:duration:'
+    '(-p --period)'{-p,--period}'[period size in frames]:frames:'
+    '(-n --periods)'{-n,--periods}'[periods per buffer]:count:'
+    '--take[write the next free PREFIX-001.wav]:prefix:_files'
+    '--preroll[hold SECS and wait for Enter before recording]:seconds:'
+    '--spectrum[show live spectrum bars instead of the peak bar]'
+    '--no-meter[draw nothing while recording]'
+    '--visualize[render a WAV to a video and exit]:wav file:_files -g "*.wav(-.)"'
+    '(-o --output)'{-o,--output}'[output file]:file:_files'
+    '--style[visualiser style]:style:(bars scope waveform)'
+    '--size[video size]:size:(480p 720p 1080p 1440p 2160p)'
+    '--fps[video frame rate]:fps:'
+    '--bars[number of spectrum bars]:count:'
+    '--tune[show the pitch of what is being played, then exit]'
+    '--a4[tuner reference pitch in Hz]:hz:'
+    '--info[report levels and clipping for a WAV and exit]:wav file:_files -g "*.wav(-.)"'
+    '--json[machine readable --list, --probe and --info]'
+    '(-y --force)'{-y,--force}'[overwrite the output file if it exists]'
+    '(-q --quiet -v --verbose)'{-q,--quiet}'[errors only]'
+    '(-q --quiet -v --verbose)'{-v,--verbose}'[report device negotiation details]'
+    '(-l --list)'{-l,--list}'[list capture devices and exit]'
+    '(-P --probe)'{-P,--probe}'[show what a device supports and exit]'
+    '(- *)'{-h,--help}'[show usage and exit]'
+    '(- *)'{-V,--version}'[show the version and exit]'
+    '*:take:_files -g "*.wav(-.)"'
+  )
+
+  _arguments -s -S $args
+}
+
+_audiaki "$@"

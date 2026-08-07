@@ -5,7 +5,7 @@
 #   make            build build/audiaki
 #   make debug      build with -O0, debug info and ASan/UBSan
 #   make test       build and run the unit tests (no ALSA required)
-#   make check      tests plus a clang-format style check
+#   make check      tests, a clang-format style check and the completions
 #   make install    install into $(PREFIX) (default /usr/local)
 
 PROJECT   := audiaki
@@ -20,6 +20,13 @@ DESTDIR   ?=
 PREFIX    ?= /usr/local
 BINDIR    ?= $(PREFIX)/bin
 MANDIR    ?= $(PREFIX)/share/man/man1
+
+# Where each shell looks for completions it did not write. Separate variables
+# because distributions disagree, and a packager should be able to move one
+# without moving the binary.
+BASHCOMPDIR ?= $(PREFIX)/share/bash-completion/completions
+ZSHCOMPDIR  ?= $(PREFIX)/share/zsh/site-functions
+FISHCOMPDIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
 BUILD_DIR ?= build
 OBJ_DIR   := $(BUILD_DIR)/obj
@@ -148,8 +155,8 @@ endif
 
 DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(TEST_BINS:=.d)
 
-.PHONY: all gui gui-skipped release debug test check format format-check \
-        install uninstall clean clean-raylib help
+.PHONY: all gui gui-skipped release debug test check check-completions format \
+        format-check install uninstall clean clean-raylib help
 
 all: $(BIN) $(if $(BUILD_GUI),$(GUI_BIN),gui-skipped)
 
@@ -224,8 +231,13 @@ test: $(TEST_BINS)
 	done; \
 	exit $$status
 
+# The completions are the one part of the CLI nothing else exercises: an option
+# added to cli.c works while its completion silently does not exist.
+check-completions:
+	@./scripts/check-completions.sh
+
 # Everything a contributor should run before opening a pull request.
-check: all test format-check
+check: all test format-check check-completions
 
 # -- style -------------------------------------------------------------------
 
@@ -247,11 +259,25 @@ install: all
 	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)
 	$(INSTALL) -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/$(PROJECT)
 	$(INSTALL) -m 0644 docs/$(PROJECT).1 $(DESTDIR)$(MANDIR)/$(PROJECT).1
+	$(INSTALL) -d $(DESTDIR)$(BASHCOMPDIR) $(DESTDIR)$(ZSHCOMPDIR) \
+	             $(DESTDIR)$(FISHCOMPDIR)
+	$(INSTALL) -m 0644 completions/$(PROJECT).bash \
+	           $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)
+	$(INSTALL) -m 0644 completions/_$(PROJECT) $(DESTDIR)$(ZSHCOMPDIR)/_$(PROJECT)
+	$(INSTALL) -m 0644 completions/$(PROJECT).fish \
+	           $(DESTDIR)$(FISHCOMPDIR)/$(PROJECT).fish
 ifneq ($(BUILD_GUI),)
 	$(INSTALL) -d $(DESTDIR)$(APPDIR) $(DESTDIR)$(ICONDIR)
 	$(INSTALL) -m 0755 $(GUI_BIN) $(DESTDIR)$(BINDIR)/$(PROJECT)-gui
 	$(INSTALL) -m 0644 assets/$(PROJECT).desktop $(DESTDIR)$(APPDIR)/$(PROJECT).desktop
 	$(INSTALL) -m 0644 assets/logo.png $(DESTDIR)$(ICONDIR)/$(PROJECT).png
+	# bash-completion loads by command name, and both commands are in the one
+	# file, so the window gets a link to it rather than a copy of it.
+	ln -sf $(PROJECT) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)-gui
+	$(INSTALL) -m 0644 completions/_$(PROJECT)-gui \
+	           $(DESTDIR)$(ZSHCOMPDIR)/_$(PROJECT)-gui
+	$(INSTALL) -m 0644 completions/$(PROJECT)-gui.fish \
+	           $(DESTDIR)$(FISHCOMPDIR)/$(PROJECT)-gui.fish
 endif
 
 uninstall:
@@ -260,6 +286,12 @@ uninstall:
 	$(RM) $(DESTDIR)$(MANDIR)/$(PROJECT).1
 	$(RM) $(DESTDIR)$(APPDIR)/$(PROJECT).desktop
 	$(RM) $(DESTDIR)$(ICONDIR)/$(PROJECT).png
+	$(RM) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)
+	$(RM) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)-gui
+	$(RM) $(DESTDIR)$(ZSHCOMPDIR)/_$(PROJECT)
+	$(RM) $(DESTDIR)$(ZSHCOMPDIR)/_$(PROJECT)-gui
+	$(RM) $(DESTDIR)$(FISHCOMPDIR)/$(PROJECT).fish
+	$(RM) $(DESTDIR)$(FISHCOMPDIR)/$(PROJECT)-gui.fish
 
 # -- housekeeping ------------------------------------------------------------
 
@@ -274,8 +306,8 @@ clean-raylib:
 
 help:
 	@echo "$(PROJECT) $(VERSION)"
-	@echo "targets: all gui debug release test check format format-check install"
-	@echo "         uninstall clean clean-raylib"
+	@echo "targets: all gui debug release test check check-completions format"
+	@echo "         format-check install uninstall clean clean-raylib"
 	@echo "vars:    PREFIX=$(PREFIX) CC=$(CC) STRICT=0|1 BUILD_DIR=$(BUILD_DIR)"
 	@echo "gui:     $(GUI_STATUS)"
 	@echo "pipewire: $(BACKEND_STATUS)"
