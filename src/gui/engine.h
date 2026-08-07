@@ -99,7 +99,6 @@ void aud_engine_destroy(aud_engine *e);
 unsigned aud_engine_rate(const aud_engine *e);
 unsigned aud_engine_channels(const aud_engine *e);
 aud_format aud_engine_format(const aud_engine *e);
-const char *aud_engine_device(const aud_engine *e);
 
 /*
  * Begin writing a take to `path`. Refuses if a take is already open, or if the
@@ -139,7 +138,6 @@ void aud_engine_set_monitor(aud_engine *e, int enabled);
 /* Monitoring level, clamped to [0.0, 2.0] so a quiet take can be pushed. */
 void aud_engine_set_monitor_gain(aud_engine *e, float gain);
 
-float aud_engine_monitor_gain(const aud_engine *e);
 int aud_engine_monitor_wanted(const aud_engine *e);
 
 /*

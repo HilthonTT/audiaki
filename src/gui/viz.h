@@ -80,11 +80,8 @@ void aud_viz_update(aud_viz *v, float dt);
 void aud_viz_draw(const aud_viz *v, Rectangle area);
 
 void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode);
-aud_viz_mode aud_viz_mode_get(const aud_viz *v);
 
 /* Step to the next style, wrapping. Returns the one now selected. */
 aud_viz_mode aud_viz_cycle_mode(aud_viz *v);
-
-size_t aud_viz_bands(const aud_viz *v);
 
 #endif /* AUDIAKI_GUI_VIZ_H */

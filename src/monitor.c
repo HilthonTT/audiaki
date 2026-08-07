@@ -22,7 +22,6 @@ struct aud_monitor
 {
   const aud_monitor_ops *ops;
   void *impl;
-  char name[64];
   unsigned rate;
   unsigned channels;
 };
@@ -64,10 +63,8 @@ aud_monitor *aud_monitor_open(const aud_monitor_config *cfg)
   m->ops = ops;
   m->rate = cfg->rate;
   m->channels = cfg->channels;
-  snprintf(m->name, sizeof(m->name), "%s",
-           cfg->name != NULL ? cfg->name : AUD_MONITOR_DEFAULT_DEVICE);
 
-  m->impl = ops->open(cfg, &m->rate, &m->channels, m->name, sizeof(m->name));
+  m->impl = ops->open(cfg, &m->rate, &m->channels);
   if (m->impl == NULL)
   {
     /* the backend has already said why; a missing monitor is not fatal */
@@ -88,19 +85,9 @@ void aud_monitor_close(aud_monitor *m)
   free(m);
 }
 
-const char *aud_monitor_device(const aud_monitor *m)
-{
-  return m != NULL ? m->name : "";
-}
-
 unsigned long aud_monitor_dropped(const aud_monitor *m)
 {
   return m != NULL ? m->ops->dropped(m->impl) : 0;
-}
-
-unsigned aud_monitor_underruns(const aud_monitor *m)
-{
-  return m != NULL ? m->ops->underruns(m->impl) : 0;
 }
 
 int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, float gain)
@@ -111,14 +98,4 @@ int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames, f
   }
 
   return m->ops->write(m->impl, interleaved, frames, gain);
-}
-
-void aud_monitor_flush(aud_monitor *m)
-{
-  if (m == NULL)
-  {
-    return;
-  }
-
-  m->ops->flush(m->impl);
 }

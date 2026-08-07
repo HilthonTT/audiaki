@@ -419,11 +419,6 @@ void aud_viz_update(aud_viz *v, float dt)
   }
 }
 
-size_t aud_viz_bands(const aud_viz *v)
-{
-  return v != NULL ? v->bands : 0;
-}
-
 void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode)
 {
   if (v == NULL || mode < 0 || mode >= AUD_VIZ_MODE_COUNT)
@@ -442,11 +437,6 @@ void aud_viz_set_mode(aud_viz *v, aud_viz_mode mode)
   {
     v->tuner_clock = VIZ_TUNER_INTERVAL;
   }
-}
-
-aud_viz_mode aud_viz_mode_get(const aud_viz *v)
-{
-  return v != NULL ? v->mode : AUD_VIZ_MODE_BARS;
 }
 
 aud_viz_mode aud_viz_cycle_mode(aud_viz *v)

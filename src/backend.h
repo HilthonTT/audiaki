@@ -62,13 +62,11 @@ typedef struct
 {
   const char *name;
 
-  void *(*open)(const aud_monitor_config *cfg, unsigned *rate_out, unsigned *channels_out,
-                char *device_out, size_t device_out_size);
+  void *(*open)(const aud_monitor_config *cfg, unsigned *rate_out,
+                unsigned *channels_out);
   void (*close)(void *impl);
   int (*write)(void *impl, const float *interleaved, size_t frames, float gain);
-  void (*flush)(void *impl);
   unsigned long (*dropped)(const void *impl);
-  unsigned (*underruns)(const void *impl);
 } aud_monitor_ops;
 
 /*

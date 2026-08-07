@@ -43,12 +43,6 @@ static int hovering(Rectangle bounds)
   return CheckCollisionPointRec(GetMousePosition(), bounds);
 }
 
-void aud_ui_panel(Rectangle bounds)
-{
-  DrawRectangleRounded(bounds, UI_CORNER / bounds.height, 8, AUD_UI_PANEL);
-  DrawRectangleRoundedLines(bounds, UI_CORNER / bounds.height, 8, AUD_UI_EDGE);
-}
-
 void aud_ui_text(float x, float y, int size, Color color, const char *text)
 {
   DrawText(text, (int)x, (int)y, size, color);

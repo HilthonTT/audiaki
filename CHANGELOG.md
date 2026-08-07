@@ -62,6 +62,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardware.
 - `--list --json` and `--probe --json` gained a `backend` field. Additive, so
   existing filters keep working.
+- The README was split: how to drive audiaki stays there, why it is built the
+  way it is moved to `DESIGN.md`. The two audiences were reading past each
+  other, and the module map in `CONTRIBUTING.md` had drifted a backend behind.
+
+### Removed
+
+- Nine functions nothing called: `aud_engine_device()`,
+  `aud_engine_monitor_gain()`, `aud_monitor_device()`, `aud_monitor_flush()`,
+  `aud_monitor_underruns()`, `aud_recorder_stop_requested()`, `aud_ui_panel()`,
+  `aud_viz_bands()` and `aud_viz_mode_get()`. There is no library ABI here, so
+  an accessor with no caller is weight rather than surface.
+- With them, the `flush` and `underruns` slots on `aud_monitor_ops`, and their
+  ALSA and PipeWire implementations. The engine closes the monitor when
+  monitoring is switched off rather than flushing it, so the vtable entry only
+  obliged every future backend to implement something nothing reached. The
+  underrun counters were incremented and never read, which took the PipeWire
+  monitor's `primed` and `prime_frames` bookkeeping with them.
+- The monitor backends' `device_out` out-parameter, which reported the resolved
+  playback device name into a field that nothing read once `aud_monitor_device()`
+  was gone. `rate_out` and `channels_out` stay: the ALSA monitor refuses to open
+  on a rate it cannot match, and that is a negotiation a backend may need.
 - The PipeWire headers are optional at build time, the way raylib is. Without
   `libpipewire-0.3-dev` the two backend files are not compiled and the binary is
   ALSA-only, which is what keeps CI and headless machines building unchanged.

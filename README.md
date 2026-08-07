@@ -35,6 +35,8 @@ interfaces, built-in codecs, `plughw` plugins.
  00:12 ▁▂▄█▆▃▂▁▁▂▃▅▇▆▄▂▁▁▁▂▁▁  -8.4 dBFS  xruns:0
 ```
 
+For why it is built the way it is, see [DESIGN.md](DESIGN.md).
+
 ## Why not `arecord`?
 
 `arecord` is more general. `audiaki` is a single small binary aimed at one job:
@@ -46,19 +48,13 @@ plug in an instrument, get a clean take, see the level while you play.
   defaulting to 16-bit.
 - Live peak meter with peak-hold and a clipping warning, or a live spectrum
   with `--spectrum`.
-- Tunes the instrument with `--tune`, so getting in tune does not mean opening
-  something else first.
-- Renders a take to a visualiser video with `--visualize`, in the spirit of
-  [musializer](https://github.com/tsoding/musializer).
-- Measures a finished take with `--info`: peak, RMS, noise floor, DC offset and
-  clipped sample count.
-- Keeps the seconds before you pressed record with `--preroll`, so the take you
-  played while deciding whether to record is still there.
+- Tunes the instrument with `--tune`, renders a visualiser video with
+  `--visualize`, and measures a finished take with `--info`.
+- Keeps the seconds before you pressed record with `--preroll`.
 - Stops on an exact frame count for `--duration`, so a 30 second take is
   30.000 seconds.
-- Numbers takes with `--take`, so tracking a part does not mean inventing a
-  filename every time.
-- Refuses to overwrite an existing take unless you pass `--force`.
+- Numbers takes with `--take`, and refuses to overwrite one unless you pass
+  `--force`.
 - Patches the WAV header on exit, including on Ctrl+C, so interrupted
   recordings are still valid files.
 
@@ -85,8 +81,7 @@ show what it would install. By default it also pulls in the PipeWire headers,
 
 `audiaki-gui` needs [raylib](https://www.raylib.com/), which Debian and Ubuntu
 do not package, so it is vendored as a submodule pinned to the version the
-visualiser was drawn against. It also needs the OpenGL and X11 headers that
-`install-deps.sh` installs unless you pass `--no-gui`.
+visualiser was drawn against.
 
 ```sh
 ./scripts/install-deps.sh              # OpenGL and X11 headers included
@@ -94,7 +89,7 @@ git submodule update --init --depth 1  # fetch raylib
 make                                   # both binaries; raylib compiled once
 ```
 
-Installing the headers by hand instead, on Debian or Ubuntu:
+Installing those headers by hand instead, on Debian or Ubuntu:
 
 ```sh
 sudo apt install libgl1-mesa-dev libx11-dev libxrandr-dev libxi-dev \
@@ -157,7 +152,8 @@ Full details: `man audiaki` after installing, or `audiaki --help`. Set
 
 audiaki talks to one of two audio systems, and picks without being asked: if a
 PipeWire daemon answers, it uses PipeWire; otherwise ALSA. `--backend` overrides
-that, and `$AUDIAKI_BACKEND` sets a default.
+that, and `$AUDIAKI_BACKEND` sets a default. Asking for a backend that is not
+there is an error rather than a quiet downgrade.
 
 ```sh
 audiaki --list                   # whichever answers
@@ -175,15 +171,9 @@ audiaki --backend pipewire -t 30 take01.wav
 | Monitoring | Any rate; the server resamples | Only if the output takes the capture rate |
 | Needs | A running daemon | Nothing |
 
-Asking for a backend that is not there is an error rather than a quiet
-downgrade: `--backend pipewire` on a machine with no daemon says so, instead of
-recording through ALSA and leaving you to wonder why the device names changed.
-
-### Recording another application
-
-A PipeWire sink appears in `--list` alongside the inputs, described as a monitor.
-Recording one captures what is being *played* to it — a browser, a synth, a
-video call — which is not something opening the card can do.
+A PipeWire sink appears in `--list` alongside the inputs, described as a
+monitor. Recording one captures what is being *played* to it — a browser, a
+synth, a video call — which is not something opening the card can do.
 
 ```sh
 $ audiaki --list
@@ -194,13 +184,8 @@ alsa_input.pci-0000_00_1f.3.analog-stereo  Built-in Audio Analog Stereo: Audio/S
 $ audiaki -D alsa_output.pci-0000_00_1f.3.analog-stereo -t 30 desktop.wav
 ```
 
-### What `--probe` means on each
-
-Under ALSA, `--probe` asks the hardware what it supports, and the answer decides
-what a recording can be. Under PipeWire the server converts, so anything audiaki
-asks for is what it gets and the hardware's own list no longer governs — the
-probe says so rather than printing a capability table that decides nothing. For
-the question "what can this card actually do", use `--backend alsa --probe`.
+`--probe` means different things on each backend; see
+[DESIGN.md](DESIGN.md#what---probe-means-on-each).
 
 ## The desktop app
 
@@ -248,53 +233,32 @@ back.
 | `F` | Fullscreen |
 
 The device dropdown is disabled while a take is open: switching closes the
-capture stream, which would truncate the recording. Stop first. If the new
-device will not open, audiaki falls back to the previous one rather than
-leaving the window with no audio.
+capture stream, which would truncate the recording. Stop first. The list
+follows the hardware — plug an interface in and it appears a moment later, and
+a window that came up with no device at all opens the first one plugged in.
+Takes are always numbered from the prefix, so pressing record cannot destroy an
+earlier take.
 
-The list follows the hardware: plug an interface in and it appears a moment
-later, unplug one and it goes. Nothing needs restarting, and a window that came
-up with no device at all opens the first one plugged in.
-
-Takes are always numbered from the prefix, so there is no overwrite prompt and
-no `--force` to get wrong: pressing record cannot destroy an earlier take.
+**Monitoring feeds your input back to your speakers**, which will howl if you
+are recording a microphone in the same room. It starts off for that reason.
 
 ### Recording video
 
 **Video** off is audio only — `take-003.wav` and nothing else. Video on writes
 that same WAV and then `take-003.mp4` alongside it, showing whichever
 visualiser was selected. It needs `ffmpeg` on `PATH`; without it the WAV is
-still written and the window says why the video was not.
+still written and the window says why the video was not. **Audio** decides
+whether that MP4 gets an audio track — on by default, off for a clip going into
+an edit that already has the sound. Both are only settable between takes.
 
-**Audio** decides whether that MP4 gets an audio track. On by default — a take
-and its visualiser belong together. Turn it off, or start with
-`--video-silent`, for a clip going into an edit that already has the sound. The
-WAV is written either way, and is what the picture is drawn from regardless.
-Like **Video**, it is only settable between takes: the render is a single pass
-over the finished take.
-
-The video is rendered **after** the take stops, not captured live off the
-screen. Grabbing the framebuffer sixty times a second on the machine holding a
-capture stream open is how takes end up with xruns in them. Rendering
-afterwards costs the wait, but it is frame-accurate, independent of the
-window's size and refresh rate, and cannot drop a frame. On this machine a
-4-second take renders in about 5 seconds at 720p60 — roughly real time.
-
-While it runs, **Stop** becomes **Cancel** and the status line shows progress.
-Cancelling removes the partial video and keeps the WAV. The `.mp4` only appears
-once finished: an MP4 is not playable until its final index is written, so
-frames go to a hidden `.take-003.partial.mp4` and the real name is created by a
-rename at the end. A cancelled, failed or killed render leaves you with the
-take and no video, rather than a file that looks like a video and will not open.
+The video is rendered after the take stops rather than captured live, so it is
+frame-accurate and cannot cost the recording an xrun — see
+[DESIGN.md](DESIGN.md#rendering-video). While it runs, **Stop** becomes
+**Cancel** and the status line shows progress; cancelling removes the partial
+video and keeps the WAV.
 
 `--video-size` takes `WxH` or `720p`/`1080p`/`1440p`/`2160p`, and `--video-fps`
-the frame rate; the defaults are 1280x720 at 60. The CLI's `--visualize`
-renders video too, from a WAV you already have, with its own three styles and
-no display needed — that is the one for a headless box or a script.
-
-**Monitoring feeds your input back to your speakers**, which will howl if you
-are recording a microphone in the same room. It starts off for that reason.
-Headphones, or an instrument rather than a mic, and it is fine.
+the frame rate; the defaults are 1280x720 at 60.
 
 ### The visualisers
 
@@ -314,29 +278,7 @@ Six styles, switchable from the strip on the visualiser or with `V`:
 | `tuner` | The note being played, and how far off it is |
 
 The first five read the same analysis the CLI's `--spectrum` and `--visualize`
-use: a 2048 point window folded into log-spaced bands, fast attack and slow
-decay. `bars` is the default, after
-[musializer](https://github.com/tsoding/musializer) — the glow is one radial
-gradient texture drawn additively, so overlapping halos sum towards white and
-loud clusters bloom. `mirror` and `radial` reuse the same caps.
-
-`scope` draws raw samples rather than the spectrum, and starts each sweep at a
-rising zero crossing so a steady note stands still instead of scrolling. It
-shows true amplitude, so a quiet input is a quiet trace — that is the meter's
-job to explain, not the scope's.
-
-`waterfall` is the only one with a memory: about eight seconds of history as a
-ring of texture columns, one written per frame, so a hum or a dropout is still
-on screen after it has happened.
-
-`tuner` is not a picture of the sound at all. It shows the note, a needle on a
-scale of half a semitone either side, and the frequency against what that note
-should be — green within 5 cents, amber outside it. It runs the same detection
-as the CLI's `--tune`, and only while it is the visible style: the detection
-costs millions of operations a go, and paying for it behind a style nobody is
-looking at would slow every video render down. It sits with the visualisers
-because tuning up is what you do immediately before pressing record, and it
-wants the same place on the screen.
+use. How each is drawn, and why: [DESIGN.md](DESIGN.md#the-visualisers).
 
 ## Reading the meter
 
@@ -370,20 +312,8 @@ $ audiaki --tune
 ```
 
 The scale runs from half a semitone flat to half a semitone sharp. `#` is what
-you are playing and `|` is where it should be; past 50 cents the note name
-changes instead, so the needle never points at the wrong note. Within 5 cents
-it says `in tune`, well inside what a string drifts on its own as it warms up.
+you are playing and `|` is where it should be; within 5 cents it says `in tune`.
 `--a4` moves the reference pitch: `audiaki --tune --a4 432`.
-
-The pitch comes from the [YIN][yin] difference function, not from looking for
-the loudest frequency. A plucked low E often has more energy at 165 Hz than at
-82 Hz, and a tuner following the loudest frequency would say the string is an
-octave up — worse than no tuner. The tradeoff is one pitch at a time: it tunes
-strings, it does not name chords. Anything quieter than about −52 dBFS is not
-treated as a note, so the room does not read as a pitch, and a reading is held
-briefly after the note decays so the display does not blink between strums.
-
-[yin]: https://audition.ens.fr/adc/pdf/2002_JASA_YIN.pdf
 
 Nothing is written and no file is named — `--tune` is a display, not a take. If
 stderr is not a terminal there is no line to redraw in place, so it reports
@@ -394,6 +324,9 @@ $ audiaki --tune 2> notes.log
 audiaki: E2  -3 cents  82.2 Hz
 audiaki: A2  +1 cents  110.1 Hz
 ```
+
+The detection is monophonic and uses YIN rather than the loudest frequency;
+[DESIGN.md](DESIGN.md#pitch-detection) says why.
 
 ## Numbering takes
 
@@ -426,36 +359,13 @@ audiaki: armed: holding the last 10.0 s - press Enter to record, Ctrl+C to quit
 The clock counts what is being held, not how long you have been waiting: it
 rises to the pre-roll size and stops there, at the point a take started now
 would begin. Press Enter and those seconds are written to the front of the
-file, followed by everything after it.
+file. Ctrl+C while it is armed writes nothing at all — no empty file, and with
+`--take` the number is not used up.
 
-```
-audiaki: prepended 10.0 s of pre-roll
- 00:14 [##################|          ]  -8.4 dBFS  xruns:0
-```
-
-Ctrl+C while it is armed writes nothing at all — no empty file, and with
-`--take` the number is not used up. `--duration` is measured from the keypress,
-so `--preroll 10 -t 30` is a 40 second file: ten seconds of lead and the thirty
-you asked to record.
-
-The audio is held exactly as the device delivered it, so the pre-roll seconds
-are the same samples the rest of the take is made of, not a converted copy. The
-cost is memory: ten seconds of 24-bit stereo at 48 kHz is about 3 MiB, a minute
-about 17 MiB, and a wider or faster stream proportionally more. The ceiling is
-300 seconds.
-
-In the desktop app there is nothing to arm — the capture stream is already open
-before you press anything, which is what makes the meters live — so `--preroll`
-there just means every take begins that far back:
-
-```sh
-audiaki-gui --preroll 10
-```
-
-The status line shows how much is held while the window is idle, and Record
-writes it to the front of the take. Nothing is kept while a take is recording
-or paused: audio already in the file is not held to be written twice, and audio
-you paused out is not smuggled back in by resuming.
+In the desktop app there is nothing to arm; `--preroll` there just means every
+take begins that far back, and the status line shows how much is held while the
+window is idle. What it costs and how the samples are kept:
+[DESIGN.md](DESIGN.md#pre-roll).
 
 ## Checking a take
 
@@ -475,17 +385,9 @@ channels:    ch 1: peak   -4.4 dBFS  rms   -8.7 dBFS  dc +0.00000
 ```
 
 Peak is the loudest single sample; if `clipped` is not zero, that many samples
-sat at full scale and the take is distorted. Each channel is measured on its
-own, so a clipped left channel cannot hide behind a quiet right one.
-
-The noise floor is the tenth percentile of the level of 50 ms windows — in
-practice, the room and the cable with nothing being played. Compare it with the
-peak to see how much of the range the instrument is using. A DC offset much
-past ±0.001 usually means the interface has a bias worth fixing.
-
-`--info` reads whatever the reader accepts, including files other tools wrote:
-8/16/24/32-bit PCM and 32/64-bit float. A take interrupted before its header
-was patched is reported as truncated rather than refused.
+sat at full scale and the take is distorted. `--info` reads whatever the reader
+accepts, including files other tools wrote. What the noise floor and DC figures
+mean: [DESIGN.md](DESIGN.md#measuring-a-take).
 
 ## Scripting
 
@@ -505,31 +407,17 @@ audiaki --visualize take01.wav -o clip.mp4 --size 1080p --fps 30 --bars 96
 audiaki --visualize take01.wav --style waveform
 ```
 
-audiaki does the analysis and the drawing itself, then pipes raw RGBA frames to
-`ffmpeg`, which encodes them and muxes in the original audio untouched. No
-graphics library is involved: everything is rasterised into a plain pixel
-buffer. Ctrl+C during a render stops ffmpeg and removes the partial video.
-
 | Style | Shows |
 | --- | --- |
 | `bars` (default) | The spectrum at this instant, as log-spaced bars |
 | `scope` | An oscilloscope trace of the last 40 ms |
 | `waveform` | The whole take's envelope, with a playhead crossing it |
 
-For `bars`, bands come from a 2048-point Hann-windowed FFT, spaced
-logarithmically so an octave takes the same width wherever it falls. Each band
-shows the strongest bin it covers and rises fast but falls slowly, so a plucked
-note reads as an attack rather than a flicker. Colour runs cyan at the bass end
-to pink at the treble end, and the marker above each bar holds its recent peak.
-
-`scope` draws the sample values themselves, so you see the shape of the wave
-rather than its content — useful for spotting asymmetry or a clipped flat top.
-Its colour follows level, not frequency, because its horizontal axis is time.
-
-`waveform` reads the file once up front to reduce it to one min/max pair per
-column, then sweeps a playhead across. That pass costs by the width of the
-video, not the length of the take, so an hour is no more expensive than a
-minute. `--bars` applies only to `bars`.
+audiaki does the analysis and the drawing itself, then pipes raw RGBA frames to
+`ffmpeg`, which encodes them and muxes in the original audio untouched. No
+graphics library is involved, so this works on a headless box. Ctrl+C during a
+render stops ffmpeg and removes the partial video. `--bars` applies only to
+`bars`.
 
 ## Troubleshooting
 
@@ -579,60 +467,8 @@ make format     # apply clang-format
 make STRICT=1   # warnings become errors, as in CI
 ```
 
-### Layout
-
-```
-src/
-  main.c        entry point; dispatches the parsed command
-  cli.c/.h      argument parsing and help text
-  backend.c/.h  which audio system to talk to, and the tables it is reached by
-  device.c/.h   the capture interface, dispatching to the chosen backend
-  device_alsa.c   ...over libasound
-  device_pipewire.c ...over libpipewire, when it was compiled in
-  recorder.c/.h capture loop: device -> repack -> WAV
-  wav.c/.h      streaming WAV writer, and a tolerant WAV reader
-  info.c/.h     measure a finished take: levels, clipping, noise floor
-  preroll.c/.h  the seconds held before a take starts, kept bit for bit
-  take.c/.h     numbered take filenames for --take
-  jsonout.c/.h  the little JSON --json needs
-  format.c/.h   sample formats, peak detection, repacking
-  meter.c/.h    the terminal peak and spectrum displays
-  fft.c/.h      radix-2 FFT and the Hann window
-  spectrum.c/.h streaming analyser: samples in, bar heights out
-  tuner.c/.h    pitch detection: samples in, a note and its offset out
-  tune.c/.h     the --tune loop: device -> tuner -> terminal
-  canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
-  visualize.c/.h render a WAV to a video
-  ffmpeg.h      pipe frames to an ffmpeg child
-  ffmpeg_posix.c  its fork/exec/pipe implementation
-  signals.c/.h  the shared Ctrl+C flag
-  parse.c/.h    strict CLI value parsing
-  monitor.c/.h  playback, for hearing the input while it records
-  monitor_alsa.c     ...over libasound
-  monitor_pipewire.c ...over libpipewire
-  ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
-  log.c/.h      stderr diagnostics
-  gui/
-    app.c       the desktop window: layout, transport, keys
-    engine.c/.h the capture thread and its idle/recording/paused transport
-    viz.c/.h    the glowing spectrum, drawn with raylib
-    ui.c/.h     immediate-mode buttons, slider and meter
-tests/          unit tests for the ALSA-free modules
-docs/           man page
-vendor/raylib/  submodule, only needed for the desktop app
-```
-
-No audio system appears above `backend.h`: `device.c` and `monitor.c` are
-dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
-`<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
-`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll` and
-`jsonout` are plain C that builds and tests anywhere — which is what CI does.
-The analysis is shared three ways: the terminal display, the video renderer and
-the desktop app all run the same `spectrum` module, the terminal and desktop
-tuners run the same `tuner`, and the CLI's armed wait and the window's idle
-capture fill the same `preroll`. `src/gui/` is the only code that knows raylib
-exists, and nothing in `src/` depends on it, which keeps the CLI buildable with
-the submodule absent.
+The module layout and the rule that keeps most of the tree free of any audio
+system are in [DESIGN.md](DESIGN.md#layout).
 
 ## Limitations
 
@@ -649,8 +485,7 @@ the submodule absent.
   is safe on disk regardless.
 - Monitoring through ALSA needs an output that accepts the capture rate
   directly: audiaki does not resample, so it declines to monitor rather than
-  play back at the wrong pitch. The PipeWire backend has no such limit, because
-  the server resamples.
+  play back at the wrong pitch. The PipeWire backend has no such limit.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between
   40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
   piccolo is not.

@@ -59,16 +59,7 @@ void aud_monitor_close(aud_monitor *m);
 int aud_monitor_write(aud_monitor *m, const float *interleaved, size_t frames,
                       float gain);
 
-/* Discard anything still queued, for when monitoring is switched off. */
-void aud_monitor_flush(aud_monitor *m);
-
-/* The device string the stream was opened on. */
-const char *aud_monitor_device(const aud_monitor *m);
-
 /* Frames dropped because playback could not keep up, since opening. */
 unsigned long aud_monitor_dropped(const aud_monitor *m);
-
-/* Underruns recovered from, since opening. */
-unsigned aud_monitor_underruns(const aud_monitor *m);
 
 #endif /* AUDIAKI_MONITOR_H */

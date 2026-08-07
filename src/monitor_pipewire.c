@@ -46,20 +46,8 @@ typedef struct
   size_t head;        /* read offset, in frames */
   size_t fill;        /* frames held */
   unsigned long dropped;
-  unsigned underruns;
   int negotiated;
   int failed;
-
-  /*
-   * The ALSA monitor sets a start threshold so the device does not run before
-   * a period is queued. The equivalent here is not to delay the stream - an
-   * inactive stream never negotiates a format, so it would never open - but to
-   * know when the caller has actually offered something. The server pulls from
-   * the moment it is connected, and buffers pulled before the first write are
-   * silence nobody promised, not underruns.
-   */
-  size_t prime_frames;
-  int primed;
 } pw_monitor;
 
 /*
@@ -127,10 +115,6 @@ static void monitor_on_process(void *userdata)
      * held note would be a worse answer than a gap in any of those.
      */
     memset(dst + got * m->channels, 0, (want - got) * m->channels * sizeof(float));
-    if (m->primed)
-    {
-      m->underruns++;
-    }
   }
 
   pthread_mutex_unlock(&m->lock);
@@ -241,8 +225,7 @@ static void pw_monitor_close(void *impl)
 }
 
 static void *pw_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out,
-                             unsigned *channels_out, char *device_out,
-                             size_t device_out_size)
+                             unsigned *channels_out)
 {
   uint8_t builder_buffer[1024];
   struct spa_pod_builder builder =
@@ -274,12 +257,6 @@ static void *pw_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out,
   m->rate = cfg->rate;
   m->channels = cfg->channels;
   m->fifo_frames = PW_MONITOR_FIFO_FRAMES;
-  /* one period in hand before the server is allowed to start pulling */
-  m->prime_frames = cfg->period_frames > 0 ? cfg->period_frames : 512u;
-  if (m->prime_frames > m->fifo_frames / 2)
-  {
-    m->prime_frames = m->fifo_frames / 2;
-  }
   m->fifo = malloc(m->fifo_frames * m->channels * sizeof(*m->fifo));
   if (m->fifo == NULL)
   {
@@ -388,7 +365,6 @@ static void *pw_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out,
 
   *rate_out = m->rate;
   *channels_out = m->channels;
-  snprintf(device_out, device_out_size, "%s", name);
   return m;
 }
 
@@ -397,13 +373,6 @@ static unsigned long pw_monitor_dropped(const void *impl)
   const pw_monitor *m = impl;
 
   return m != NULL ? m->dropped : 0;
-}
-
-static unsigned pw_monitor_underruns(const void *impl)
-{
-  const pw_monitor *m = impl;
-
-  return m != NULL ? m->underruns : 0;
 }
 
 static int pw_monitor_write(void *impl, const float *interleaved, size_t frames,
@@ -462,34 +431,8 @@ static int pw_monitor_write(void *impl, const float *interleaved, size_t frames,
   }
   m->fill += take;
 
-  /* enough in hand to be worth holding to account from here on */
-  if (!m->primed && m->fill >= m->prime_frames)
-  {
-    m->primed = 1;
-  }
-
   pthread_mutex_unlock(&m->lock);
   return 0;
-}
-
-static void pw_monitor_flush(void *impl)
-{
-  pw_monitor *m = impl;
-
-  if (m == NULL || m->failed)
-  {
-    return;
-  }
-
-  pthread_mutex_lock(&m->lock);
-  m->head = 0;
-  m->fill = 0;
-  /*
-   * Monitoring has been switched off, so the silence the server pulls from here
-   * is expected again. The next write re-primes, exactly as at open.
-   */
-  m->primed = 0;
-  pthread_mutex_unlock(&m->lock);
 }
 
 const aud_monitor_ops aud_monitor_ops_pipewire = {
@@ -497,7 +440,5 @@ const aud_monitor_ops aud_monitor_ops_pipewire = {
     .open = pw_monitor_open,
     .close = pw_monitor_close,
     .write = pw_monitor_write,
-    .flush = pw_monitor_flush,
     .dropped = pw_monitor_dropped,
-    .underruns = pw_monitor_underruns,
 };

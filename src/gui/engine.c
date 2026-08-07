@@ -535,11 +535,6 @@ aud_format aud_engine_format(const aud_engine *e)
   return e != NULL ? e->dev.format : AUD_FORMAT_UNKNOWN;
 }
 
-const char *aud_engine_device(const aud_engine *e)
-{
-  return (e != NULL && e->dev.name != NULL) ? e->dev.name : "";
-}
-
 int aud_engine_start(aud_engine *e, const char *path, int overwrite)
 {
   int rc = -1;
@@ -718,17 +713,6 @@ void aud_engine_set_monitor_gain(aud_engine *e, float gain)
   }
 
   atomic_store_explicit(&e->monitor_gain, scaled, memory_order_relaxed);
-}
-
-float aud_engine_monitor_gain(const aud_engine *e)
-{
-  if (e == NULL)
-  {
-    return 0.0f;
-  }
-
-  return (float)atomic_load_explicit(&e->monitor_gain, memory_order_relaxed) /
-         (float)ENGINE_GAIN_SCALE;
 }
 
 int aud_engine_monitor_wanted(const aud_engine *e)

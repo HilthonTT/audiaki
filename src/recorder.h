@@ -41,9 +41,6 @@ typedef struct
  */
 int aud_recorder_install_signals(void);
 
-/* Non-zero once a stop has been requested. */
-int aud_recorder_stop_requested(void);
-
 /*
  * Record from `dev` into opts->output_path. Returns 0 on success and -1 on
  * failure, after reporting the reason through log.h. `stats` may be NULL.

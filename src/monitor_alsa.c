@@ -31,7 +31,6 @@ typedef struct
   int16_t *stage;      /* period_frames * channels samples */
   size_t stage_frames; /* frames the staging buffer holds */
   unsigned long dropped;
-  unsigned underruns;
   int failed;
 } alsa_monitor;
 
@@ -176,8 +175,7 @@ static void alsa_monitor_close(void *impl)
 }
 
 static void *alsa_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out,
-                               unsigned *channels_out, char *device_out,
-                               size_t device_out_size)
+                               unsigned *channels_out)
 {
   const char *name = cfg->name != NULL ? cfg->name : AUD_MONITOR_DEFAULT_DEVICE;
   alsa_monitor *m;
@@ -227,7 +225,6 @@ static void *alsa_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out
 
   *rate_out = m->rate;
   *channels_out = m->channels;
-  snprintf(device_out, device_out_size, "%s", name);
   return m;
 }
 
@@ -236,13 +233,6 @@ static unsigned long alsa_monitor_dropped(const void *impl)
   const alsa_monitor *m = impl;
 
   return m != NULL ? m->dropped : 0;
-}
-
-static unsigned alsa_monitor_underruns(const void *impl)
-{
-  const alsa_monitor *m = impl;
-
-  return m != NULL ? m->underruns : 0;
 }
 
 /* Scale, clip and narrow one staging buffer's worth of frames to S16_LE. */
@@ -272,11 +262,6 @@ static void stage_samples(int16_t *dst, const float *src, size_t samples, float 
 /* Returns 0 if the stream is usable again, -1 if it is finished. */
 static int recover(alsa_monitor *m, int err)
 {
-  if (err == -EPIPE)
-  {
-    m->underruns++;
-  }
-
   if (snd_pcm_recover(m->pcm, err, 1 /* silent */) == 0)
   {
     return 0;
@@ -358,28 +343,10 @@ static int alsa_monitor_write(void *impl, const float *interleaved, size_t frame
   return 0;
 }
 
-static void alsa_monitor_flush(void *impl)
-{
-  alsa_monitor *m = impl;
-
-  if (m == NULL || m->pcm == NULL || m->failed)
-  {
-    return;
-  }
-
-  snd_pcm_drop(m->pcm);
-  if (snd_pcm_prepare(m->pcm) < 0)
-  {
-    m->failed = 1;
-  }
-}
-
 const aud_monitor_ops aud_monitor_ops_alsa = {
     .name = "alsa",
     .open = alsa_monitor_open,
     .close = alsa_monitor_close,
     .write = alsa_monitor_write,
-    .flush = alsa_monitor_flush,
     .dropped = alsa_monitor_dropped,
-    .underruns = alsa_monitor_underruns,
 };

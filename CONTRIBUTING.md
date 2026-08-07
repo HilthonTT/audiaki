@@ -49,28 +49,23 @@ you tested in the PR description — `make test` cannot cover the device path.
 
 ## Code layout and conventions
 
-```
-src/
-  main.c        entry point; dispatches the parsed command
-  cli.c/.h      argument parsing and help text
-  device.c/.h   the only code that touches libasound
-  recorder.c/.h capture loop: device -> repack -> WAV
-  wav.c/.h      streaming WAV writer
-  format.c/.h   sample formats, peak detection, repacking
-  meter.c/.h    the terminal peak meter
-  parse.c/.h    strict CLI value parsing
-  log.c/.h      stderr diagnostics
-```
+The module map and the reasoning behind the structure live in
+[DESIGN.md](DESIGN.md#layout). Read that first; the conventions below are what
+a patch is checked against.
 
-- **Keep ALSA in `device.c`.** Everything else works on `aud_format` values and
-  plain buffers. That is what lets the test suite build without libasound, and
-  CI has a job that would fail if a `<alsa/...>` include leaked elsewhere.
-- **C11, no dependencies beyond libasound and libm.** No new third-party
-  libraries without a discussion first.
+- **Keep the audio systems below `backend.h`.** Only the `*_alsa.c` and
+  `*_pipewire.c` files may include `<alsa/asoundlib.h>` or
+  `<pipewire/pipewire.h>`; everything else works on `aud_format` values and
+  plain buffers. That is what lets the test suite build without either library,
+  and CI has a job that would fail if such an include leaked elsewhere.
+- **C11, no dependencies beyond libasound, libpipewire, raylib and libm.** No
+  new third-party libraries without a discussion first.
 - **Formatting is mechanical**: `.clang-format` decides, `make format` applies.
   Allman braces, two-space indent, 90 columns.
 - **Naming**: public functions are prefixed by their module (`wav_`, `meter_`,
-  `aud_device_`, `aud_format_`). File-local helpers are `static`.
+  `aud_device_`, `aud_format_`). File-local helpers are `static`. A function
+  nothing calls does not stay: there is no library ABI here, so unused API is
+  just weight.
 - **Errors go through `log.h`**, never bare `fprintf(stderr, ...)`. Use
   `aud_perror()` when `errno` is meaningful. Keep stdout free of status text so
   `--list` and `--probe` stay pipeable.

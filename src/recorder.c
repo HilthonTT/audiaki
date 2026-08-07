@@ -23,11 +23,6 @@ int aud_recorder_install_signals(void)
   return aud_signals_install_stop();
 }
 
-int aud_recorder_stop_requested(void)
-{
-  return aud_signals_stop_requested();
-}
-
 /*
  * Non-zero once the take should begin. Polled between periods rather than read
  * on a thread of its own; a period is a few milliseconds, which is well inside

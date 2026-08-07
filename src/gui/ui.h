@@ -121,9 +121,6 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,
                     int *open, int *scroll, int enabled);
 
-/* A panel background with a one pixel border. */
-void aud_ui_panel(Rectangle bounds);
-
 /* Text helpers that take a colour and an alignment rather than raw positions. */
 void aud_ui_text(float x, float y, int size, Color color, const char *text);
 void aud_ui_text_right(float right, float y, int size, Color color, const char *text);
