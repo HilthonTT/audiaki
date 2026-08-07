@@ -47,6 +47,8 @@ jobs:
           cp build/audiaki "dist/$dir/"
           cp README.md LICENSE CHANGELOG.md "dist/$dir/"
           cp docs/audiaki.1 "dist/$dir/"
+          mkdir -p "dist/$dir/docs"
+          cp docs/USAGE.md docs/DESKTOP.md "dist/$dir/docs/"
           tar -czf "dist/$dir.tar.gz" -C dist "$dir"
           (cd dist && sha256sum "$dir.tar.gz" > "$dir.tar.gz.sha256")
 

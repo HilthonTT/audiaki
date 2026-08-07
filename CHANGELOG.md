@@ -65,6 +65,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The README was split: how to drive audiaki stays there, why it is built the
   way it is moved to `DESIGN.md`. The two audiences were reading past each
   other, and the module map in `CONTRIBUTING.md` had drifted a backend behind.
+- The README was cut down again, to what someone deciding whether to install
+  audiaki needs. The reference material it had grown - every option, the meter,
+  the tuner, pre-roll, troubleshooting - moved to `docs/USAGE.md`, and the
+  desktop app's build steps, controls and visualisers to `docs/DESKTOP.md`.
+  Both ship in the release tarball alongside the man page.
 
 ### Removed
 

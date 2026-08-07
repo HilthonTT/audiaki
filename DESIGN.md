@@ -1,8 +1,8 @@
 # Design notes
 
-Why audiaki is built the way it is. The [README](README.md) covers what it does
-and how to drive it; this covers the decisions behind it, and is aimed at anyone
-changing the code.
+Why audiaki is built the way it is. [docs/USAGE.md](docs/USAGE.md) and
+[docs/DESKTOP.md](docs/DESKTOP.md) cover what it does and how to drive it; this
+covers the decisions behind it, and is aimed at anyone changing the code.
 
 - [Layout](#layout)
 - [Backends](#backends)
