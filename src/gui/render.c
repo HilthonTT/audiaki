@@ -229,7 +229,6 @@ static int advance_audio(aud_render *r)
   return 0;
 }
 
-/* Draw one frame into the render target and hand it to ffmpeg. */
 static int emit_frame(aud_render *r)
 {
   Rectangle area = {0.0f, 0.0f, (float)r->width, (float)r->height};

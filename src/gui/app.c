@@ -18,6 +18,7 @@
 #include "format.h"
 #include "log.h"
 #include "parse.h"
+#include "preroll.h"
 #include "take.h"
 #include "version.h"
 
@@ -157,6 +158,8 @@ static void usage(FILE *out, const app *a)
           "      --video-silent   render that MP4 without the take's audio\n"
           "      --video-size WxH video size (default: %ux%u, or 720p/1080p/...)\n"
           "      --video-fps N    video frame rate (default: %u)\n"
+          "      --preroll SECS   keep SECS of audio while idle, so a take\n"
+          "                       starts that far before Record was pressed\n"
           "  -M, --monitor        start with playback monitoring on\n"
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
@@ -262,6 +265,16 @@ static int parse_args(app *a, int argc, char **argv)
       {
         aud_error("bad video size '%s'", value);
         aud_info("give it as WxH, or as 720p, 1080p, 1440p or 2160p");
+        return 2;
+      }
+    }
+    else if (strcmp(arg, "--preroll") == 0 || strcmp(arg, "--pre-roll") == 0)
+    {
+      if (parse_duration(value, &a->cfg.preroll) != 0 || a->cfg.preroll < 0.0 ||
+          a->cfg.preroll > AUD_PREROLL_MAX_SECONDS)
+      {
+        aud_error("bad pre-roll '%s' (seconds, up to %.0f)", value,
+                  AUD_PREROLL_MAX_SECONDS);
         return 2;
       }
     }
@@ -544,7 +557,6 @@ static void app_recover_engine(app *a)
   }
 }
 
-/* Move everything the capture thread has produced into the analyser. */
 static void app_pump_audio(app *a)
 {
   size_t got;
@@ -659,7 +671,6 @@ static void app_stop_take(app *a, const aud_engine_status *st)
   }
 }
 
-/* Advance an in-flight render, and report how it went once it ends. */
 static void app_pump_render(app *a)
 {
   int state;
@@ -1002,6 +1013,13 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
                (double)st->bytes / (1024.0 * 1024.0));
     }
 
+    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
+  }
+  /* what pressing record would give you, which with a pre-roll starts earlier */
+  else if (st->preroll_size > 0.0)
+  {
+    snprintf(right, sizeof(right), "next take: %.180s-...   pre-roll %.1f s", a->prefix,
+             st->preroll_held);
     aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
   }
   else

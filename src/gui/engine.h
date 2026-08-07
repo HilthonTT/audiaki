@@ -49,6 +49,11 @@ typedef struct
   unsigned period_frames; /* smaller means a livelier display and more xruns */
   unsigned periods;
   const char *monitor_device; /* ALSA playback device; NULL means the default */
+  /*
+   * Seconds of audio to keep while idle, so a take can begin before the button
+   * was pressed. 0 starts every take at the press.
+   */
+  double preroll;
 } aud_engine_config;
 
 typedef struct aud_engine aud_engine;
@@ -69,6 +74,8 @@ typedef struct
   int clipped;                   /* a sample hit full scale during this take */
   int monitoring;                /* playback is actually open, not just wanted */
   unsigned long monitor_dropped; /* frames the output could not keep up with */
+  double preroll_held;           /* seconds a take pressed now would start with */
+  double preroll_size;           /* seconds it holds once full; 0 when disabled */
   char path[AUD_ENGINE_PATH_MAX];
   char error[AUD_ENGINE_ERROR_MAX]; /* empty unless something went wrong */
 } aud_engine_status;
@@ -98,6 +105,9 @@ const char *aud_engine_device(const aud_engine *e);
  * Begin writing a take to `path`. Refuses if a take is already open, or if the
  * file exists and `overwrite` is zero. Returns 0 on success, -1 with the reason
  * in the next status snapshot.
+ *
+ * With a pre-roll configured the take opens with the seconds already captured
+ * while idle, so it starts before this call rather than at it.
  */
 int aud_engine_start(aud_engine *e, const char *path, int overwrite);
 

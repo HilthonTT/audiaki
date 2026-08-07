@@ -3,6 +3,7 @@
 
 #include "device.h"
 #include "parse.h"
+#include "preroll.h"
 #include "spectrum.h"
 #include "tuner.h"
 #include "version.h"
@@ -58,6 +59,7 @@ enum
   OPT_TUNE,
   OPT_A4,
   OPT_BACKEND,
+  OPT_PREROLL,
 };
 
 static const struct option long_options[] = {
@@ -82,6 +84,8 @@ static const struct option long_options[] = {
     {"style", required_argument, NULL, OPT_STYLE},
     {"info", required_argument, NULL, OPT_INFO},
     {"take", required_argument, NULL, OPT_TAKE},
+    {"preroll", required_argument, NULL, OPT_PREROLL},
+    {"pre-roll", required_argument, NULL, OPT_PREROLL},
     {"tune", no_argument, NULL, OPT_TUNE},
     {"a4", required_argument, NULL, OPT_A4},
     {"backend", required_argument, NULL, OPT_BACKEND},
@@ -109,6 +113,7 @@ void cli_defaults(aud_options *opts)
   opts->periods = CLI_DEFAULT_PERIODS;
   opts->format = AUD_FORMAT_UNKNOWN;
   opts->duration = 0.0;
+  opts->preroll = 0.0;
   opts->overwrite = 0;
   opts->show_meter = 1;
   opts->show_spectrum = 0;
@@ -162,6 +167,8 @@ void cli_print_usage(FILE *out)
           "  -p, --period FRAMES   period size (default: %u)\n"
           "  -n, --periods N       periods per buffer (default: %u)\n"
           "      --take PREFIX     write the next free PREFIX-001.wav\n"
+          "      --preroll SECS    hold SECS of audio and wait for Enter, so the\n"
+          "                        take starts SECS before the keypress\n"
           "      --spectrum        show live spectrum bars instead of the peak bar\n"
           "      --no-meter        do not draw anything while recording\n"
           "\n"
@@ -199,6 +206,8 @@ void cli_print_usage(FILE *out)
           "spectrum\n"
           "  " AUDIAKI_NAME " -t 1:30 take02.wav          record 90 seconds\n"
           "  " AUDIAKI_NAME " --take session              record session-001.wav\n"
+          "  " AUDIAKI_NAME " --preroll 10 take01.wav     keep the 10 s before "
+          "Enter\n"
           "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
           "out?\n"
@@ -344,6 +353,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     case OPT_TAKE:
       opts->take_prefix = optarg;
       break;
+    case OPT_PREROLL:
+      if (parse_duration(optarg, &opts->preroll) != 0 || opts->preroll < 0.0 ||
+          opts->preroll > AUD_PREROLL_MAX_SECONDS)
+      {
+        bad_value("--preroll", optarg, "seconds, up to 300");
+        return CLI_EXIT_USAGE;
+      }
+      break;
     case OPT_TUNE:
       opts->command = AUD_CMD_TUNE;
       break;
@@ -409,6 +426,12 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   if (opts->take_prefix != NULL && opts->command != AUD_CMD_RECORD)
   {
     aud_error("--take only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (opts->preroll > 0.0 && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--preroll only applies when recording");
     return CLI_EXIT_USAGE;
   }
 

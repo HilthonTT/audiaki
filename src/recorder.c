@@ -4,13 +4,16 @@
 #include "format.h"
 #include "log.h"
 #include "meter.h"
+#include "preroll.h"
 #include "signals.h"
 #include "spectrum.h"
 #include "wav.h"
 
 #include <errno.h>
+#include <poll.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 /* how often the meter is redrawn, in seconds of captured audio */
 #define METER_INTERVAL 0.05
@@ -25,26 +28,206 @@ int aud_recorder_stop_requested(void)
   return aud_signals_stop_requested();
 }
 
+/*
+ * Non-zero once the take should begin. Polled between periods rather than read
+ * on a thread of its own; a period is a few milliseconds, which is well inside
+ * what a keypress needs to feel immediate.
+ *
+ * End of input counts as a start: a pipe or /dev/null on stdin means no one is
+ * ever going to press anything, and waiting for a key that cannot arrive is
+ * worse than recording the take that was asked for.
+ */
+static int start_requested(void)
+{
+  struct pollfd pfd;
+  char buf[64];
+  ssize_t got;
+
+  pfd.fd = STDIN_FILENO;
+  pfd.events = POLLIN;
+  pfd.revents = 0;
+
+  if (poll(&pfd, 1, 0) <= 0)
+  {
+    return 0;
+  }
+  if ((pfd.revents & POLLIN) == 0)
+  {
+    return 1;
+  }
+
+  got = read(STDIN_FILENO, buf, sizeof(buf));
+  if (got <= 0)
+  {
+    return 1;
+  }
+
+  for (ssize_t i = 0; i < got; i++)
+  {
+    if (buf[i] == '\n')
+    {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+/*
+ * Capture into `pre` without writing anything, until Enter is pressed. Returns
+ * 0 to start recording, 1 when the wait was interrupted and no take should be
+ * created at all, or -1 if the device failed.
+ */
+static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre,
+                        aud_meter *meter, aud_spectrum *spectrum, size_t bands,
+                        unsigned *xruns)
+{
+  double next_meter_at = 0.0;
+  double last_drawn_at = 0.0;
+  uint64_t seen = 0;
+
+  aud_info("armed: holding the last %.1f s - press Enter to record, Ctrl+C to quit",
+           (double)aud_preroll_capacity(pre) / dev->rate);
+  meter_set_armed(meter, 1);
+
+  while (!aud_signals_stop_requested())
+  {
+    long got;
+    double captured;
+
+    if (start_requested())
+    {
+      meter_set_armed(meter, 0);
+      meter_clear(meter);
+      return 0;
+    }
+
+    got = aud_device_read(dev, hw_buf, dev->period_frames, xruns);
+    if (got < 0)
+    {
+      return -1;
+    }
+    if (got == 0)
+    {
+      continue;
+    }
+
+    aud_preroll_push(pre, hw_buf, (size_t)got);
+
+    if (spectrum != NULL)
+    {
+      aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
+    }
+
+    seen += (uint64_t)got;
+    captured = (double)seen / dev->rate;
+
+    if (captured >= next_meter_at)
+    {
+      double peak = aud_format_peak(hw_buf, (size_t)got, dev->channels, dev->format);
+      /* what is held, not how long the wait has been: a take would start here */
+      double held = (double)aud_preroll_filled(pre) / dev->rate;
+
+      if (spectrum != NULL)
+      {
+        const float *values = aud_spectrum_analyse(spectrum, captured - last_drawn_at);
+        meter_draw_spectrum(meter, values, bands, peak, held, *xruns);
+      }
+      else
+      {
+        meter_draw(meter, peak, held, *xruns);
+      }
+
+      last_drawn_at = captured;
+      next_meter_at = captured + METER_INTERVAL;
+    }
+  }
+
+  meter_set_armed(meter, 0);
+  meter_clear(meter);
+  return 1;
+}
+
+/*
+ * Write everything `pre` holds to the take, oldest first, in period sized
+ * pieces so the repack has somewhere to land.
+ */
+static int flush_preroll(wav_writer *wav, const aud_preroll *pre, const aud_device *dev,
+                         unsigned char *out_buf, int repack, const char *path,
+                         uint64_t *frames_written)
+{
+  aud_preroll_segment seg[2];
+  unsigned segments = aud_preroll_segments(pre, seg);
+  size_t frame_bytes = (size_t)dev->channels * aud_format_hw_bytes(dev->format);
+  unsigned wav_bytes = aud_format_wav_bytes(dev->format);
+
+  for (unsigned s = 0; s < segments; s++)
+  {
+    size_t done = 0;
+
+    while (done < seg[s].frames)
+    {
+      const unsigned char *src = seg[s].data + done * frame_bytes;
+      size_t frames = seg[s].frames - done;
+      size_t nbytes;
+
+      if (frames > dev->period_frames)
+      {
+        frames = dev->period_frames;
+      }
+      nbytes = frames * dev->channels * wav_bytes;
+
+      if (wav_would_overflow(wav, nbytes))
+      {
+        aud_warn("the pre-roll does not fit in a WAV file, dropping the rest");
+        return 0;
+      }
+
+      if (repack)
+      {
+        aud_format_repack(out_buf, src, frames * dev->channels, dev->format);
+        src = out_buf;
+      }
+
+      if (wav_write(wav, src, nbytes) != 0)
+      {
+        aud_perror("cannot write to %s", path);
+        return -1;
+      }
+
+      *frames_written += frames;
+      done += frames;
+    }
+  }
+
+  return 0;
+}
+
 int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
                      aud_recorder_stats *stats)
 {
   wav_writer wav;
   aud_meter meter;
   aud_spectrum *spectrum = NULL;
+  aud_preroll pre;
   size_t bands = 0;
   unsigned char *hw_buf = NULL;
   unsigned char *out_buf = NULL;
   size_t hw_buf_bytes;
   size_t out_buf_bytes;
   uint64_t frames_written = 0;
+  uint64_t preroll_frames = 0;
+  uint64_t recorded = 0; /* frames captured since the take started */
   uint64_t limit_frames = 0;
   unsigned xruns = 0;
+  int cancelled = 0;
   double next_meter_at = 0.0;
   double last_drawn_at = 0.0;
   int repack = aud_format_needs_repack(dev->format);
   unsigned hw_bytes = aud_format_hw_bytes(dev->format);
   unsigned wav_bytes = aud_format_wav_bytes(dev->format);
   int rc = -1;
+
+  memset(&pre, 0, sizeof(pre));
 
   if (stats != NULL)
   {
@@ -105,6 +288,43 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
   }
 
+  if (opts->preroll > 0.0)
+  {
+    size_t frames = aud_preroll_frames_for(opts->preroll, dev->rate);
+    int armed;
+
+    /* a ring shorter than a period would be emptied by the first read */
+    if (frames < dev->period_frames)
+    {
+      frames = dev->period_frames;
+    }
+
+    if (aud_preroll_init(&pre, frames, (size_t)dev->channels * hw_bytes) != 0)
+    {
+      aud_perror("cannot hold %.1f s of pre-roll", opts->preroll);
+      goto out;
+    }
+    aud_debug("pre-roll: %zu frames, %.1f MiB", frames,
+              (double)(frames * dev->channels * hw_bytes) / (1024.0 * 1024.0));
+
+    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &xruns);
+    if (armed < 0)
+    {
+      goto out;
+    }
+    if (armed > 0)
+    {
+      aud_info("nothing recorded");
+      cancelled = 1;
+      rc = 0;
+      goto out;
+    }
+
+    /* the summary afterwards is about the take, not about setting the level */
+    xruns = 0;
+    meter_reset_peaks(&meter);
+  }
+
   if (wav_open(&wav, opts->output_path, dev->rate, (uint16_t)dev->channels,
                (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite) != 0)
   {
@@ -132,6 +352,17 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     aud_info("press Ctrl+C to stop");
   }
 
+  if (aud_preroll_filled(&pre) > 0)
+  {
+    if (flush_preroll(&wav, &pre, dev, out_buf, repack, opts->output_path,
+                      &frames_written) != 0)
+    {
+      goto finish;
+    }
+    preroll_frames = frames_written;
+    aud_info("prepended %.1f s of pre-roll", (double)preroll_frames / dev->rate);
+  }
+
   while (!aud_signals_stop_requested())
   {
     unsigned long want = dev->period_frames;
@@ -140,10 +371,14 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     size_t nbytes;
     double elapsed;
 
-    /* read only what is still missing so -t lands on an exact frame count */
-    if (limit_frames != 0 && frames_written + want > limit_frames)
+    /*
+     * Read only what is still missing so -t lands on an exact frame count.
+     * Against `recorded`, not the file: --duration is how long to record for,
+     * and pre-roll is time that had already passed when it started.
+     */
+    if (limit_frames != 0 && recorded + want > limit_frames)
     {
-      want = (unsigned long)(limit_frames - frames_written);
+      want = (unsigned long)(limit_frames - recorded);
     }
 
     got = aud_device_read(dev, hw_buf, want, &xruns);
@@ -188,6 +423,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
 
     frames_written += (uint64_t)got;
+    recorded += (uint64_t)got;
     elapsed = (double)frames_written / dev->rate;
 
     if (elapsed >= next_meter_at)
@@ -212,7 +448,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
       next_meter_at = elapsed + METER_INTERVAL;
     }
 
-    if (limit_frames != 0 && frames_written >= limit_frames)
+    if (limit_frames != 0 && recorded >= limit_frames)
     {
       break;
     }
@@ -242,21 +478,25 @@ finish:
     }
   }
 
-  if (stats != NULL)
-  {
-    stats->frames = frames_written;
-    stats->bytes = frames_written * dev->channels * wav_bytes;
-    stats->xruns = xruns;
-    stats->clipped = meter_clipped(&meter);
-    stats->interrupted = aud_signals_stop_requested();
-  }
-
 out:
   aud_spectrum_destroy(spectrum);
+  aud_preroll_free(&pre);
   if (repack)
   {
     free(out_buf);
   }
   free(hw_buf);
+
+  if (stats != NULL)
+  {
+    stats->frames = frames_written;
+    stats->bytes = frames_written * dev->channels * wav_bytes;
+    stats->preroll_frames = preroll_frames;
+    stats->xruns = xruns;
+    stats->clipped = meter_clipped(&meter);
+    stats->interrupted = aud_signals_stop_requested();
+    stats->cancelled = cancelled;
+  }
+
   return rc;
 }

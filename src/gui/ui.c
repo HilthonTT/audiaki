@@ -354,7 +354,6 @@ static void text_fit(float x, float y, int size, Color color, const char *text,
   DrawText(TextFormat("%s...", buf), (int)x, (int)y, size, color);
 }
 
-/* Clamp `*scroll` so the rows it exposes are all real ones. */
 static void clamp_scroll(int *scroll, int count, int rows)
 {
   if (*scroll > count - rows)

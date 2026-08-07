@@ -122,6 +122,26 @@ construction, nothing is ever overwritten and
 .B \-\-force
 does not apply. Naming an output file as well is an error.
 .TP
+.BR \-\-preroll " " \fISECS\fR
+Hold
+.I SECS
+of audio and wait, instead of recording at once. The device opens and the meter
+runs, but nothing is written until Enter is pressed; the take then begins with
+the seconds leading up to the keypress. Accepts the same forms as
+.BR \-\-duration ,
+up to 300 seconds.
+.IP
+Interrupting the wait with Ctrl+C creates no file at all. Pressing Enter is what
+starts the take, so
+.B \-\-duration
+is measured from that moment and the finished file is the pre\-roll plus the
+duration. When standard input reaches its end - a pipe, or
+.I /dev/null
+\- there is no key left to wait for and recording starts immediately.
+.IP
+The buffer is resident memory: a minute of 24\-bit stereo at 48 kHz is about
+17 MiB, and a wider or faster stream is proportionally more.
+.TP
 .B \-\-spectrum
 Draw live spectrum bars instead of the peak bar. The number of bars follows the
 terminal width. Block drawing characters are used when the locale is UTF-8, and
@@ -270,6 +290,15 @@ Under
 the bar is replaced by one column per frequency band, low frequencies on the
 left, spaced logarithmically from 40 Hz to 12 kHz. The dBFS readout, peak
 tracking and clipping warning are unchanged.
+.PP
+While
+.B \-\-preroll
+is waiting the line reads
+.BR ARM ,
+and the clock counts what is being held rather than what has been recorded: it
+rises to the pre\-roll size and stops there, at the point a take would start
+from. The peak hold, the clip flag and the xrun count all start again when the
+take does, so the summary afterwards describes the take and not the wait.
 .SH TUNER
 .PP
 .nf
@@ -415,6 +444,15 @@ Channel count.
 .B \-o, \-\-take PREFIX
 Take name prefix; takes are numbered from it. Defaults to
 .BR take .
+.TP
+.B \-\-preroll SECS
+Keep
+.I SECS
+of audio while idle, so pressing Record starts the take that far before the
+press. The capture stream is already open, so nothing has to be armed: the
+status line shows how much is held, and it is written to the front of the take
+when one begins. Nothing is kept while recording or paused, and what was
+prepended is not held a second time for the next take.
 .TP
 .B \-s, \-\-style NAME
 Visualiser style to start on:

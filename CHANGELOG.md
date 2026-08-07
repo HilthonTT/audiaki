@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Pre-roll. `--preroll SECS` holds the last few seconds and waits, and the take
+  starts that far before you press Enter; `audiaki-gui --preroll SECS` keeps the
+  same seconds while the window is idle, so Record does. The take everyone loses
+  is the one played to check the sound, and the audio was already being captured
+  for the meters - it was only being thrown away. Interrupting the wait writes
+  no file, and with `--take` does not use up the number.
+- `preroll` module: a circular buffer of captured frames in the hardware format,
+  drained through its one or two contiguous segments rather than a second copy
+  of itself. Not `ringbuf`, which carries floats for the visualiser and the
+  monitor: pre-roll seconds are part of the recording and have to reach the file
+  bit for bit, which a round trip through float would not do for a 24 or 32 bit
+  take.
+
 - A PipeWire backend. audiaki now talks to the sound server that owns the card
   on most current desktops, rather than only to the card. It is chosen without
   being asked: if a daemon answers, audiaki uses it; if none does, ALSA, exactly

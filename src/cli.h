@@ -43,6 +43,7 @@ typedef struct
   unsigned periods;
   aud_format format; /* AUD_FORMAT_UNKNOWN = negotiate */
   double duration;   /* seconds; 0 = until interrupted */
+  double preroll;    /* seconds held before the take; 0 = record immediately */
   int overwrite;
   int show_meter;
   int show_spectrum; /* live spectrum bars instead of the peak bar */

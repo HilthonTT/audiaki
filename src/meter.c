@@ -103,6 +103,17 @@ size_t meter_fit_bands(const aud_meter *m)
   return (size_t)cols;
 }
 
+void meter_set_armed(aud_meter *m, int armed)
+{
+  m->armed = armed;
+}
+
+void meter_reset_peaks(aud_meter *m)
+{
+  m->hold_peak = 0.0;
+  m->clipped = 0;
+}
+
 /*
  * Peak hold and clip detection run whether or not anything is drawn: the
  * summary after a recording reports clipping even under --no-meter.
@@ -168,8 +179,16 @@ void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns)
   bar[m->width] = '\0';
 
   minutes = (int)seconds / 60;
-  fprintf(stderr, "\r %02d:%02d [%s] %6.1f dBFS  xruns:%-4u%s", minutes,
-          (int)seconds % 60, bar, db, xruns, m->clipped ? " CLIP" : "");
+  if (m->armed)
+  {
+    fprintf(stderr, "\r ARM %02d:%02d [%s] %6.1f dBFS  press Enter", minutes,
+            (int)seconds % 60, bar, db);
+  }
+  else
+  {
+    fprintf(stderr, "\r %02d:%02d [%s] %6.1f dBFS  xruns:%-4u%s", minutes,
+            (int)seconds % 60, bar, db, xruns, m->clipped ? " CLIP" : "");
+  }
   fflush(stderr);
   m->line_dirty = 1;
 }
@@ -236,8 +255,16 @@ void meter_draw_spectrum(aud_meter *m, const float *bands, size_t n, double peak
   db = aud_format_dbfs(peak);
   minutes = (int)seconds / 60;
 
-  fprintf(stderr, "\r %02d:%02d %s %6.1f dBFS  xruns:%-4u%s", minutes, (int)seconds % 60,
-          bar, db, xruns, m->clipped ? " CLIP" : "");
+  if (m->armed)
+  {
+    fprintf(stderr, "\r ARM %02d:%02d %s %6.1f dBFS  press Enter", minutes,
+            (int)seconds % 60, bar, db);
+  }
+  else
+  {
+    fprintf(stderr, "\r %02d:%02d %s %6.1f dBFS  xruns:%-4u%s", minutes,
+            (int)seconds % 60, bar, db, xruns, m->clipped ? " CLIP" : "");
+  }
   fflush(stderr);
   m->line_dirty = 1;
 }

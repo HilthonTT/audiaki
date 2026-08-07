@@ -77,7 +77,6 @@ static int open_pcm(const char *name, snd_pcm_t **out)
   return 0;
 }
 
-/* Pick the first candidate format the hardware accepts. */
 static aud_format select_format(snd_pcm_t *pcm, snd_pcm_hw_params_t *hw,
                                 aud_format wanted)
 {

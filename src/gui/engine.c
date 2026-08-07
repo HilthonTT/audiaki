@@ -4,6 +4,7 @@
 #include "device.h"
 #include "log.h"
 #include "monitor.h"
+#include "preroll.h"
 #include "ringbuf.h"
 #include "wav.h"
 
@@ -45,6 +46,8 @@ struct aud_engine
   int clipped;
   int monitoring;
   unsigned long monitor_dropped;
+  int flush_preroll;     /* the take just started and has yet to be given its lead */
+  size_t preroll_frames; /* what the ring holds, republished for the UI */
 
   /* -- capture thread only ------------------------------------------------ */
   unsigned char *hw_buf;
@@ -55,6 +58,13 @@ struct aud_engine
   const char *monitor_device;
   int repack;
   unsigned wav_bytes;
+
+  /*
+   * The seconds before the button was pressed. Filling and emptying it both
+   * happen here, so the buffer needs no lock of its own: the UI only raises
+   * flush_preroll and reads the published preroll_frames.
+   */
+  aud_preroll preroll;
 
   /* written by the capture thread, drained by whoever draws */
   aud_ringbuf visual;
@@ -80,7 +90,7 @@ void aud_engine_config_defaults(aud_engine_config *cfg)
   cfg->monitor_device = NULL;
 }
 
-/* Record a failure for the UI. Call with the lock held. */
+/* Call with the lock held. */
 static void set_error(aud_engine *e, const char *fmt, ...) AUD_PRINTF(2, 3);
 
 static void set_error(aud_engine *e, const char *fmt, ...)
@@ -92,7 +102,7 @@ static void set_error(aud_engine *e, const char *fmt, ...)
   va_end(ap);
 }
 
-/* Close the take that is open, if any. Call with the lock held. */
+/* Call with the lock held; a no-op when no take is open. */
 static int close_take(aud_engine *e)
 {
   int rc;
@@ -154,7 +164,6 @@ static void sync_monitor(aud_engine *e)
   }
 }
 
-/* Push one captured period to the monitor, if it is up. */
 static void feed_monitor(aud_engine *e, size_t frames)
 {
   float gain;
@@ -180,6 +189,62 @@ static void feed_monitor(aud_engine *e, size_t frames)
     set_error(e, "monitoring stopped: the output stream failed");
     pthread_mutex_unlock(&e->lock);
   }
+}
+
+/*
+ * Write what the pre-roll holds to the front of the take, oldest first, in
+ * period sized pieces so the repack has somewhere to land. Call with the lock
+ * held; returns non-zero when the take had to be abandoned.
+ */
+static int write_preroll(aud_engine *e)
+{
+  aud_preroll_segment seg[2];
+  unsigned segments = aud_preroll_segments(&e->preroll, seg);
+  size_t frame_bytes = (size_t)e->dev.channels * aud_format_hw_bytes(e->dev.format);
+  size_t period = (size_t)e->dev.period_frames;
+
+  for (unsigned s = 0; s < segments; s++)
+  {
+    size_t done = 0;
+
+    while (done < seg[s].frames)
+    {
+      const unsigned char *src = seg[s].data + done * frame_bytes;
+      size_t frames = seg[s].frames - done;
+      size_t nbytes;
+
+      if (frames > period)
+      {
+        frames = period;
+      }
+      nbytes = frames * e->dev.channels * e->wav_bytes;
+
+      if (wav_would_overflow(&e->wav, nbytes))
+      {
+        break;
+      }
+
+      if (e->repack)
+      {
+        aud_format_repack(e->out_buf, src, frames * e->dev.channels, e->dev.format);
+        src = e->out_buf;
+      }
+
+      if (wav_write(&e->wav, src, nbytes) != 0)
+      {
+        set_error(e, "cannot write to %s: %s", e->path, strerror(errno));
+        close_take(e);
+        e->state = AUD_ENGINE_IDLE;
+        return -1;
+      }
+
+      e->frames += frames;
+      done += frames;
+    }
+  }
+
+  aud_preroll_clear(&e->preroll);
+  return 0;
 }
 
 /*
@@ -264,8 +329,26 @@ static void *capture_thread(void *arg)
       {
         e->clipped = 1;
       }
-      write_period(e, (size_t)got);
+      if (e->flush_preroll)
+      {
+        e->flush_preroll = 0;
+        write_preroll(e);
+      }
+      if (e->state == AUD_ENGINE_RECORDING)
+      {
+        write_period(e, (size_t)got);
+      }
     }
+    /*
+     * Only while idle. A period captured during a take is already in the file,
+     * and one captured while paused was deliberately left out of it; holding
+     * either would mean it appearing twice, or surviving the pause.
+     */
+    else if (e->state == AUD_ENGINE_IDLE)
+    {
+      aud_preroll_push(&e->preroll, e->hw_buf, (size_t)got);
+    }
+    e->preroll_frames = aud_preroll_filled(&e->preroll);
     if (e->monitor != NULL)
     {
       e->monitor_dropped = aud_monitor_dropped(e->monitor);
@@ -352,6 +435,23 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
     goto fail_buffers;
   }
 
+  if (cfg->preroll > 0.0)
+  {
+    size_t frames = aud_preroll_frames_for(cfg->preroll, e->dev.rate);
+
+    /* a ring shorter than a period would be emptied by the first read */
+    if (frames < period)
+    {
+      frames = period;
+    }
+
+    if (aud_preroll_init(&e->preroll, frames, (size_t)e->dev.channels * hw_bytes) != 0)
+    {
+      aud_error("cannot hold %.1f s of pre-roll", cfg->preroll);
+      goto fail_rings;
+    }
+  }
+
   e->state = AUD_ENGINE_IDLE;
   atomic_init(&e->running, 1);
   atomic_init(&e->monitor_want, 0);
@@ -360,13 +460,15 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   if (pthread_create(&e->thread, NULL, capture_thread, e) != 0)
   {
     aud_perror("cannot start the capture thread");
-    aud_ringbuf_free(&e->visual);
-    goto fail_buffers;
+    goto fail_rings;
   }
   e->thread_started = 1;
 
   return e;
 
+fail_rings:
+  aud_ringbuf_free(&e->visual);
+  aud_preroll_free(&e->preroll);
 fail_buffers:
   if (e->repack)
   {
@@ -403,6 +505,7 @@ void aud_engine_destroy(aud_engine *e)
 
   aud_monitor_close(e->monitor);
   aud_ringbuf_free(&e->visual);
+  aud_preroll_free(&e->preroll);
   aud_device_close(&e->dev);
 
   if (e->repack)
@@ -486,6 +589,12 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
   e->clipped = 0;
   e->xruns = 0;
   e->error[0] = '\0';
+  /*
+   * Left to the capture thread rather than done here: it owns the buffer, and
+   * a megabyte of file writes on the UI thread would hold the lock the capture
+   * loop needs every period.
+   */
+  e->flush_preroll = 1;
   e->state = AUD_ENGINE_RECORDING;
   rc = 0;
 
@@ -568,6 +677,11 @@ void aud_engine_status_get(aud_engine *e, aud_engine_status *out)
   out->clipped = e->clipped;
   out->monitoring = e->monitoring;
   out->monitor_dropped = e->monitor_dropped;
+  if (e->dev.rate > 0)
+  {
+    out->preroll_held = (double)e->preroll_frames / (double)e->dev.rate;
+    out->preroll_size = (double)aud_preroll_capacity(&e->preroll) / (double)e->dev.rate;
+  }
   memcpy(out->path, e->path, sizeof(out->path));
   memcpy(out->error, e->error, sizeof(out->error));
 

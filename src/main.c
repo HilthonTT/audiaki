@@ -81,6 +81,7 @@ static int run_record(const aud_options *opts)
   rec_opts.overwrite = opts->take_prefix != NULL ? 0 : opts->overwrite;
   rec_opts.show_meter = opts->show_meter;
   rec_opts.show_spectrum = opts->show_spectrum;
+  rec_opts.preroll = opts->preroll;
 
   rc = aud_recorder_run(&dev, &rec_opts, NULL);
   aud_device_close(&dev);

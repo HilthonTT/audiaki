@@ -16,15 +16,23 @@ typedef struct
   int overwrite;     /* allow replacing an existing file */
   int show_meter;    /* draw a live display at all */
   int show_spectrum; /* make that display spectrum bars, not the peak bar */
+  /*
+   * Seconds to hold before the take starts; 0 records as soon as the device is
+   * open. Anything else arms instead: nothing is written until Enter, and the
+   * take then opens with the seconds leading up to it.
+   */
+  double preroll;
 } aud_recorder_options;
 
 typedef struct
 {
   uint64_t frames;
   uint64_t bytes;
+  uint64_t preroll_frames; /* of `frames`, how many came from before the start */
   unsigned xruns;
   int clipped;
   int interrupted; /* stopped by SIGINT/SIGTERM rather than reaching the end */
+  int cancelled;   /* interrupted while armed, so no file was created */
 } aud_recorder_stats;
 
 /*

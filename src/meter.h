@@ -21,6 +21,7 @@ typedef struct
   double hold_peak; /* highest peak seen so far, normalised */
   int clipped;      /* a sample has hit full scale */
   int unicode;      /* the terminal can render block drawing characters */
+  int armed;        /* capturing into the pre-roll, not into a file */
 } aud_meter;
 
 /*
@@ -34,6 +35,20 @@ void meter_init(aud_meter *m, int want);
  * aud_spectrum accepts.
  */
 size_t meter_fit_bands(const aud_meter *m);
+
+/*
+ * Draw as a pre-roll wait rather than a take: the clock becomes how much audio
+ * is being held and the xrun counter becomes the key that starts recording.
+ * Both forms are the same width, so the line does not jump when a take begins.
+ */
+void meter_set_armed(aud_meter *m, int armed);
+
+/*
+ * Forget the peak hold and the clip flag. Called when a take begins after a
+ * pre-roll wait: what the input did while you were setting the level is not
+ * what the summary afterwards is reporting on.
+ */
+void meter_reset_peaks(aud_meter *m);
 
 /* Redraw the meter in place. `peak` is normalised to [0.0, 1.0]. */
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns);

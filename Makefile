@@ -79,7 +79,7 @@ OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 # runs on machines without ALSA headers.
 PORTABLE_SRCS := src/format.c src/wav.c src/parse.c src/log.c src/fft.c \
                  src/spectrum.c src/canvas.c src/jsonout.c src/info.c \
-                 src/take.c src/ringbuf.c src/tuner.c
+                 src/take.c src/ringbuf.c src/preroll.c src/tuner.c
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 TEST_SRCS := $(sort $(wildcard tests/test_*.c))
@@ -105,8 +105,8 @@ GUI_OBJS  := $(GUI_SRCS:src/gui/%.c=$(OBJ_DIR)/gui/%.o)
 # window never calls either.
 GUI_CORE_SRCS := src/device.c src/device_alsa.c src/backend.c src/format.c \
                  src/wav.c src/log.c src/fft.c src/spectrum.c src/monitor.c \
-                 src/monitor_alsa.c src/ringbuf.c src/take.c src/tuner.c \
-                 src/jsonout.c src/parse.c src/ffmpeg_posix.c
+                 src/monitor_alsa.c src/ringbuf.c src/preroll.c src/take.c \
+                 src/tuner.c src/jsonout.c src/parse.c src/ffmpeg_posix.c
 ifneq ($(HAVE_PIPEWIRE),)
 GUI_CORE_SRCS += src/device_pipewire.c src/monitor_pipewire.c
 endif

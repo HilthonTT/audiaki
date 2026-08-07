@@ -52,6 +52,8 @@ plug in an instrument, get a clean take, see the level while you play.
   [musializer](https://github.com/tsoding/musializer).
 - Measures a finished take with `--info`: peak, RMS, noise floor, DC offset and
   clipped sample count.
+- Keeps the seconds before you pressed record with `--preroll`, so the take you
+  played while deciding whether to record is still there.
 - Stops on an exact frame count for `--duration`, so a 30 second take is
   30.000 seconds.
 - Numbers takes with `--take`, so tracking a part does not mean inventing a
@@ -114,6 +116,7 @@ audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum take01.wav        # record, watching the spectrum
 audiaki -t 1:30 take02.wav           # record 90 seconds
 audiaki --take session               # record the next free session-NNN.wav
+audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki --info take01.wav            # how did that take come out?
 audiaki -D plughw:CARD=Box,DEV=0 -r 48000 -c 2 take03.wav
 audiaki --visualize take01.wav       # render take01.mp4
@@ -131,6 +134,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-n, --periods N` | Periods per buffer (default 4) |
 | `-y, --force` | Overwrite an existing output file |
 | `--take PREFIX` | Write the next free `PREFIX-001.wav` |
+| `--preroll SECS` | Hold SECS and wait for Enter; the take starts that far back |
 | `--spectrum` | Live spectrum bars instead of the peak bar |
 | `--no-meter` | Do not draw anything while recording |
 | `--visualize FILE` | Render a WAV to a visualiser video and exit |
@@ -215,11 +219,14 @@ audiaki-gui -V                       # also render an MP4 of each take
 audiaki-gui -V --video-size 1080p    # ...at a particular size
 audiaki-gui -V --video-silent        # ...with no audio track in it
 audiaki-gui -M                       # come up already monitoring
+audiaki-gui --preroll 10             # start each take 10 s before Record
 ```
 
 The capture stream opens with the window and stays open, so the spectrum moves
 and the meter reads before you press anything — setting an input level should
-not mean starting a take you are going to throw away.
+not mean starting a take you are going to throw away. With `--preroll` those
+seconds are kept rather than discarded, and Record starts the take that far
+back.
 
 | Control | Does |
 | --- | --- |
@@ -403,6 +410,53 @@ never comes into it. A prefix that already carries an extension keeps it —
 `--take session.wav` also writes `session-001.wav` — and a path works as well
 as a bare name: `--take takes/riff`.
 
+## Keeping what you played before you pressed record
+
+The take you lose is the one you played to check the sound. `--preroll` opens
+the device and waits, holding the last few seconds, and starts the file that
+far back when you press Enter:
+
+```sh
+$ audiaki --preroll 10 --take riff
+audiaki: recording riff-001.wav
+audiaki: armed: holding the last 10.0 s - press Enter to record, Ctrl+C to quit
+ ARM 00:10 [##################|          ]  -8.4 dBFS  press Enter
+```
+
+The clock counts what is being held, not how long you have been waiting: it
+rises to the pre-roll size and stops there, at the point a take started now
+would begin. Press Enter and those seconds are written to the front of the
+file, followed by everything after it.
+
+```
+audiaki: prepended 10.0 s of pre-roll
+ 00:14 [##################|          ]  -8.4 dBFS  xruns:0
+```
+
+Ctrl+C while it is armed writes nothing at all — no empty file, and with
+`--take` the number is not used up. `--duration` is measured from the keypress,
+so `--preroll 10 -t 30` is a 40 second file: ten seconds of lead and the thirty
+you asked to record.
+
+The audio is held exactly as the device delivered it, so the pre-roll seconds
+are the same samples the rest of the take is made of, not a converted copy. The
+cost is memory: ten seconds of 24-bit stereo at 48 kHz is about 3 MiB, a minute
+about 17 MiB, and a wider or faster stream proportionally more. The ceiling is
+300 seconds.
+
+In the desktop app there is nothing to arm — the capture stream is already open
+before you press anything, which is what makes the meters live — so `--preroll`
+there just means every take begins that far back:
+
+```sh
+audiaki-gui --preroll 10
+```
+
+The status line shows how much is held while the window is idle, and Record
+writes it to the front of the take. Nothing is kept while a take is recording
+or paused: audio already in the file is not held to be written twice, and audio
+you paused out is not smuggled back in by resuming.
+
 ## Checking a take
 
 ```
@@ -538,6 +592,7 @@ src/
   recorder.c/.h capture loop: device -> repack -> WAV
   wav.c/.h      streaming WAV writer, and a tolerant WAV reader
   info.c/.h     measure a finished take: levels, clipping, noise floor
+  preroll.c/.h  the seconds held before a take starts, kept bit for bit
   take.c/.h     numbered take filenames for --take
   jsonout.c/.h  the little JSON --json needs
   format.c/.h   sample formats, peak detection, repacking
@@ -570,11 +625,12 @@ vendor/raylib/  submodule, only needed for the desktop app
 No audio system appears above `backend.h`: `device.c` and `monitor.c` are
 dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
 `<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
-`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf` and `jsonout`
-are plain C that builds and tests anywhere — which is what CI does. The
-analysis is shared three ways: the terminal display, the video renderer and the
-desktop app all run the same `spectrum` module, and the terminal and desktop
-tuners run the same `tuner`. `src/gui/` is the only code that knows raylib
+`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll` and
+`jsonout` are plain C that builds and tests anywhere — which is what CI does.
+The analysis is shared three ways: the terminal display, the video renderer and
+the desktop app all run the same `spectrum` module, the terminal and desktop
+tuners run the same `tuner`, and the CLI's armed wait and the window's idle
+capture fill the same `preroll`. `src/gui/` is the only code that knows raylib
 exists, and nothing in `src/` depends on it, which keeps the CLI buildable with
 the submodule absent.
 

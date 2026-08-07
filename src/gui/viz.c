@@ -462,7 +462,6 @@ aud_viz_mode aud_viz_cycle_mode(aud_viz *v)
 
 /* -- shared drawing helpers ------------------------------------------------ */
 
-/* Draw the glow sprite centred on (cx, cy) at `size` pixels across. */
 static void draw_glow(const aud_viz *v, float cx, float cy, float size, Color tint)
 {
   Rectangle src = {0.0f, 0.0f, (float)v->glow.width, (float)v->glow.height};
