@@ -95,6 +95,19 @@ longer you record is worse than one that skips. Playing a file back needs the
 opposite of that rule and gets it by asking first; see
 [Playing one back](#playing-one-back).
 
+It is off until asked for, in the window and on the command line alike, and says
+so when it starts. The default capture device on a laptop is the built-in
+microphone and the default output is the speaker beside it; monitoring one
+through the other is a feedback loop that reaches full scale in a fraction of a
+second, and no amount of care inside the program prevents that.
+
+Nothing about it is allowed to end a take. An output that will not open, or that
+fails halfway through a recording, is reported and dropped while the capture loop
+carries on — the file is the product and the monitor is a convenience, so the
+convenience is what gives way. The gain applies to the monitor alone for the same
+reason: the take is written from the samples the device delivered, whatever is
+being listened to at the time.
+
 Under ALSA, monitoring needs an output that accepts the capture rate directly.
 Resampling would mean carrying an interpolator around for a convenience feature,
 so audiaki declines to monitor rather than play back at the wrong pitch. The

@@ -4,6 +4,7 @@
 #include "format.h"
 #include "log.h"
 #include "meter.h"
+#include "monitor.h"
 #include "preroll.h"
 #include "signals.h"
 #include "spectrum.h"
@@ -21,6 +22,109 @@
 int aud_recorder_install_signals(void)
 {
   return aud_signals_install_stop();
+}
+
+/*
+ * The optional playback of what is being captured. `mon` is NULL whenever
+ * monitoring is off, which is both the default and where an output that has
+ * failed ends up: nothing here is allowed to interrupt the take.
+ */
+typedef struct
+{
+  aud_monitor *mon;
+  float *buf; /* period_frames * channels, interleaved */
+  float gain;
+  unsigned long dropped;
+} recorder_monitor;
+
+/*
+ * Open the output to monitor through, if one was asked for. Never fails in a
+ * way the caller has to handle: an output that will not open costs the
+ * monitoring and leaves the recording alone, which is the trade monitor.h
+ * expects callers to make.
+ */
+static void monitor_start(recorder_monitor *rm, const aud_device *dev,
+                          const aud_recorder_options *opts)
+{
+  aud_monitor_config cfg;
+
+  rm->gain = opts->monitor_gain;
+
+  if (!opts->monitor)
+  {
+    return;
+  }
+
+  rm->buf = malloc((size_t)dev->period_frames * dev->channels * sizeof(*rm->buf));
+  if (rm->buf == NULL)
+  {
+    aud_warn("cannot allocate a monitoring buffer, recording without monitoring");
+    return;
+  }
+
+  aud_monitor_config_defaults(&cfg, dev->rate, dev->channels);
+  if (opts->monitor_device != NULL)
+  {
+    cfg.name = opts->monitor_device;
+  }
+
+  rm->mon = aud_monitor_open(&cfg);
+  if (rm->mon == NULL)
+  {
+    /* the backend has already said which part of opening the output failed */
+    aud_warn("recording without monitoring");
+    free(rm->buf);
+    rm->buf = NULL;
+    return;
+  }
+
+  /*
+   * A warning rather than a remark: the first thing anyone does is try this on
+   * a laptop, where the default capture is the built-in microphone and the
+   * default output is the speaker beside it. That is a feedback loop, and it
+   * reaches full scale in a fraction of a second.
+   */
+  aud_warn("monitoring through %s - use headphones; a microphone played through "
+           "speakers will feed back",
+           cfg.name);
+}
+
+/* Idempotent, so the cleanup path can run it whichever way the take ended. */
+static void monitor_stop(recorder_monitor *rm)
+{
+  if (rm->mon != NULL)
+  {
+    rm->dropped = aud_monitor_dropped(rm->mon);
+    aud_monitor_close(rm->mon);
+    rm->mon = NULL;
+  }
+
+  free(rm->buf);
+  rm->buf = NULL;
+}
+
+/*
+ * Hand a captured period to the output. Decodes hw_buf rather than the
+ * repacked copy for the same reason the analysis does: that is what the device
+ * delivered, and the two may be the same buffer anyway.
+ */
+static void monitor_feed(recorder_monitor *rm, const unsigned char *hw_buf, size_t frames,
+                         const aud_device *dev)
+{
+  if (rm->mon == NULL)
+  {
+    return;
+  }
+
+  aud_format_to_float(rm->buf, hw_buf, frames, dev->channels, dev->format);
+
+  if (aud_monitor_write(rm->mon, rm->buf, frames, rm->gain) != 0)
+  {
+    rm->dropped = aud_monitor_dropped(rm->mon);
+    aud_monitor_close(rm->mon);
+    rm->mon = NULL;
+    aud_warn("monitoring stopped: the output failed (the take is still recording)");
+  }
 }
 
 /*
@@ -74,7 +178,7 @@ static int start_requested(void)
  */
 static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre,
                         aud_meter *meter, aud_spectrum *spectrum, size_t bands,
-                        unsigned *xruns)
+                        recorder_monitor *rm, unsigned *xruns)
 {
   double next_meter_at = 0.0;
   double last_drawn_at = 0.0;
@@ -112,6 +216,9 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
     {
       aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
     }
+
+    /* audible while armed too: the level is set before the take, not during it */
+    monitor_feed(rm, hw_buf, (size_t)got, dev);
 
     seen += (uint64_t)got;
     captured = (double)seen / dev->rate;
@@ -203,6 +310,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   wav_writer wav;
   aud_meter meter;
   aud_spectrum *spectrum = NULL;
+  recorder_monitor rm;
   aud_preroll pre;
   size_t bands = 0;
   unsigned char *hw_buf = NULL;
@@ -223,6 +331,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   int rc = -1;
 
   memset(&pre, 0, sizeof(pre));
+  memset(&rm, 0, sizeof(rm));
 
   if (stats != NULL)
   {
@@ -283,6 +392,8 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
   }
 
+  monitor_start(&rm, dev, opts);
+
   if (opts->preroll > 0.0)
   {
     size_t frames = aud_preroll_frames_for(opts->preroll, dev->rate);
@@ -302,7 +413,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     aud_debug("pre-roll: %zu frames, %.1f MiB", frames,
               (double)(frames * dev->channels * hw_bytes) / (1024.0 * 1024.0));
 
-    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &xruns);
+    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &rm, &xruns);
     if (armed < 0)
     {
       goto out;
@@ -417,6 +528,8 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
       aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
     }
 
+    monitor_feed(&rm, hw_buf, (size_t)got, dev);
+
     frames_written += (uint64_t)got;
     recorded += (uint64_t)got;
     elapsed = (double)frames_written / dev->rate;
@@ -474,6 +587,17 @@ finish:
   }
 
 out:
+  monitor_stop(&rm);
+  if (rm.dropped > 0)
+  {
+    /*
+     * Expected rather than wrong: capture and playback do not share a clock, so
+     * the monitor skips instead of drifting further behind. Worth having under
+     * -v when what was heard did not sound like what was written.
+     */
+    aud_debug("the monitor dropped %lu frame(s) keeping up with the input", rm.dropped);
+  }
+
   aud_spectrum_destroy(spectrum);
   aud_preroll_free(&pre);
   if (repack)
@@ -488,6 +612,7 @@ out:
     stats->bytes = frames_written * dev->channels * wav_bytes;
     stats->preroll_frames = preroll_frames;
     stats->xruns = xruns;
+    stats->monitor_dropped = rm.dropped;
     stats->clipped = meter_clipped(&meter);
     stats->interrupted = aud_signals_stop_requested();
     stats->cancelled = cancelled;

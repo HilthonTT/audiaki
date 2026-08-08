@@ -31,6 +31,9 @@ complete -c audiaki -l take -d 'Write the next free PREFIX-001.wav' -r
 complete -c audiaki -l preroll -d 'Hold SECS and wait for Enter before recording' -x
 complete -c audiaki -l spectrum -d 'Show live spectrum bars instead of the peak bar'
 complete -c audiaki -l no-meter -d 'Draw nothing while recording'
+complete -c audiaki -s M -l monitor -d 'Hear the input while recording it (use headphones)'
+complete -c audiaki -l monitor-device -d 'Output to monitor through' -x -a 'default (__audiaki_devices)'
+complete -c audiaki -l monitor-gain -d 'Scale what is monitored, 0.0 to 2.0' -x
 
 complete -c audiaki -l visualize -d 'Render a WAV to a video and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -s o -l output -d 'Output file' -r

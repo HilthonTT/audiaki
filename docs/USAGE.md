@@ -11,6 +11,7 @@ systems also have `man audiaki`.
 - [Tuning up](#tuning-up)
 - [Numbering takes](#numbering-takes)
 - [Pre-roll](#pre-roll)
+- [Hearing yourself](#hearing-yourself)
 - [Checking a take](#checking-a-take)
 - [Playing one back](#playing-one-back)
 - [Scripting](#scripting)
@@ -50,6 +51,9 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--preroll SECS` | Hold SECS and wait for Enter; the take starts that far back |
 | `--spectrum` | Live spectrum bars instead of the peak bar |
 | `--no-meter` | Do not draw anything while recording |
+| `-M, --monitor` | Hear the input while it is recorded (use headphones) |
+| `--monitor-device NAME` | Output to monitor through (default `default`) |
+| `--monitor-gain X` | Scale what is monitored, 0.0 to 2.0 (default 1.0) |
 | `--visualize FILE` | Render a WAV to a visualiser video and exit |
 | `-o, --output FILE` | Output file (video default: input with `.mp4`) |
 | `--style NAME` | `bars`, `scope` or `waveform` (default `bars`) |
@@ -192,6 +196,57 @@ take begins that far back, and the status line shows how much is held while the
 window is idle. What it costs and how the samples are kept:
 [DESIGN.md](../DESIGN.md#pre-roll).
 
+## Hearing yourself
+
+`-M` plays the input back through an output while it is being captured, so you
+can hear the take as you make it:
+
+```sh
+audiaki -M take01.wav                              # through the default output
+audiaki -M --monitor-device plughw:CARD=Box,DEV=0 take01.wav
+audiaki -M --monitor-gain 0.4 take01.wav           # quieter in the headphones
+audiaki -M --preroll 10 --take riff                # audible while armed, too
+```
+
+**Use headphones.** Monitoring an open microphone through speakers is a
+feedback loop, and the recorder is not going to be the thing that breaks it:
+a laptop's built-in mic played out of the speaker next to it reaches full
+scale in a fraction of a second and screeches. An instrument plugged into an
+interface is safe; a room mic is not.
+
+The other loop is a digital one, and headphones do not save you from it:
+capturing an output's *monitor* source — the `monitor of this output` entries
+in `--list` — and monitoring it back through that same output feeds the stream
+directly into itself. Check what `-D` is actually pointing at before adding
+`-M`.
+
+`--monitor-gain` scales what you hear and nothing else — the file is always
+written from the samples the device delivered, so turning the monitor down
+does not record a quieter take, and the meter does not move. It goes from
+`0.0` (silent) to `2.0` (+6 dB), with `1.0` unchanged. Naming a device or a
+gain switches monitoring on by itself, so `-M` is only needed on its own.
+
+Monitoring is a convenience, and it is never allowed to cost you a take. If
+the output will not open, or fails part way through, audiaki says so and keeps
+recording:
+
+```
+audiaki: warning: monitor: cannot connect the playback stream to 'no-such-output'
+audiaki: warning: recording without monitoring
+```
+
+Under ALSA the output has to accept the capture rate directly — audiaki does
+not resample — so monitoring a 44.1 kHz capture on a 48 kHz output declines
+rather than playing back at the wrong pitch. Use `--backend pipewire`, or the
+`plug` layer: `--monitor-device plughw:CARD=Box,DEV=0`.
+
+You are hearing the input late, through a second buffer of its own — tens of
+milliseconds under ALSA, around a tenth of a second under PipeWire. That is
+fine for checking a level, a tone or a room; it is not latency to play in time
+against. Frames the output cannot keep up with are
+dropped rather than queued, so the monitor may skip on a busy machine without
+that reaching the file — `-v` reports the count at the end.
+
 ## Checking a take
 
 ```
@@ -327,6 +382,9 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - Monitoring and `--play` through ALSA need an output that accepts the stream's
   rate directly: audiaki does not resample, so it declines rather than play
   back at the wrong pitch. The PipeWire backend has no such limit.
+- `-M` monitors through a buffer of its own, so what you hear is tens of
+  milliseconds behind what you played. It is for checking a sound, not for
+  playing along with one.
 - `--play` runs start to finish. There is no seeking, no pausing and no
   playlist; `-t` is the only way to hear less than all of it.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between

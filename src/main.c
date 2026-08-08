@@ -83,6 +83,9 @@ static int run_record(const aud_options *opts)
   rec_opts.show_meter = opts->show_meter;
   rec_opts.show_spectrum = opts->show_spectrum;
   rec_opts.preroll = opts->preroll;
+  rec_opts.monitor = opts->monitor;
+  rec_opts.monitor_device = opts->monitor_device;
+  rec_opts.monitor_gain = (float)opts->monitor_gain;
 
   rc = aud_recorder_run(&dev, &rec_opts, NULL);
   aud_device_close(&dev);

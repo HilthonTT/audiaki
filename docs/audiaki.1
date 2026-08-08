@@ -160,6 +160,46 @@ an ASCII ramp otherwise.
 .B \-\-no\-meter
 Do not draw anything while recording. The display is suppressed automatically
 when standard error is not a terminal.
+.TP
+.BR \-M ", " \-\-monitor
+Play the capture stream through an output while it is being recorded, so the
+take can be heard as it is made. Off unless asked for.
+.IP
+.B Use headphones.
+Monitoring an open microphone through speakers is a feedback loop: a laptop's
+built\-in microphone played out of the speaker beside it reaches full scale in a
+fraction of a second. Capturing an output's monitor source and playing it back
+through that same output is the same loop without the air in it, and headphones
+do not help with that one.
+.IP
+Monitoring is audible while
+.B \-\-preroll
+is armed as well, which is when the level is usually being set. What is heard
+arrives through a buffer of its own \- tens of milliseconds under ALSA, around a
+tenth of a second under PipeWire \- so it is for checking a sound rather than for
+playing in time against. Frames the output cannot keep up with are dropped
+rather than queued, and never reach the file;
+.B \-\-verbose
+reports the count at the end.
+.IP
+An output that will not open, or one that fails part way through, costs the
+monitoring and nothing else: audiaki says so and carries on recording.
+.TP
+.BR \-\-monitor\-device " " \fINAME\fR
+The output to monitor through, rather than the default one. Implies
+.BR \-\-monitor .
+Under ALSA the output has to accept the capture rate directly, because audiaki
+does not resample; the
+.B plug
+layer converts, as in
+.IR plughw:CARD=Box,DEV=0 .
+.TP
+.BR \-\-monitor\-gain " " \fIX\fR
+Scale what is monitored, from 0.0 (silent) to 2.0 (+6 dB), default 1.0. Implies
+.BR \-\-monitor .
+This is the monitoring level and nothing else: the file is written from the
+samples the device delivered, so a quiet monitor does not make a quiet take, and
+the meter does not move with it.
 .SS Visualiser
 .TP
 .BR \-\-visualize " " \fIFILE\fR
@@ -734,6 +774,14 @@ Record 90 seconds from a specific device at 48 kHz:
 .nf
 .RS
 audiaki \-D plughw:CARD=Box,DEV=0 \-r 48000 \-t 1:30 take02.wav
+.RE
+.fi
+.PP
+Hear the take through headphones on the interface while it is recorded:
+.PP
+.nf
+.RS
+audiaki \-D plughw:CARD=Box,DEV=0 \-M \-\-monitor\-device plughw:CARD=Box,DEV=0 take03.wav
 .RE
 .fi
 .PP

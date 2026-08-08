@@ -51,7 +51,9 @@ _audiaki()
     _audiaki_init || return
 
     case $prev in
-        -D | --device)
+        # an output rather than an input, but audiaki only enumerates capture
+        # devices; the names overlap, and 'default' is the common answer
+        -D | --device | --monitor-device)
             mapfile -t COMPREPLY < <(compgen -W "default $(_audiaki_devices)" -- "$cur")
             return
             ;;
@@ -90,7 +92,7 @@ _audiaki()
             ;;
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
-        --preroll | --pre-roll)
+        --preroll | --pre-roll | --monitor-gain)
             return
             ;;
     esac
@@ -100,6 +102,7 @@ _audiaki()
     if [[ $cur == -* ]]; then
         opts="--device --backend --rate --channels --format --duration --period
               --periods --output --force --take --preroll --spectrum --no-meter
+              --monitor --monitor-device --monitor-gain
               --visualize --style --size --fps --bars --tune --a4 --info --play --json
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

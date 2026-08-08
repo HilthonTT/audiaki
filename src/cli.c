@@ -2,6 +2,7 @@
 #include "cli.h"
 
 #include "device.h"
+#include "monitor.h"
 #include "parse.h"
 #include "preroll.h"
 #include "spectrum.h"
@@ -24,6 +25,9 @@
 #define VIZ_DIM_MAX 7680u
 #define VIZ_FPS_MIN 1u
 #define VIZ_FPS_MAX 240u
+/* silence to +6 dB, the range the desktop app's monitoring slider covers */
+#define MONITOR_GAIN_MIN 0.0
+#define MONITOR_GAIN_MAX 2.0
 
 /*
  * 30 days. Not a limit anyone will meet: the 4 GB WAV ceiling stops even
@@ -61,6 +65,8 @@ enum
   OPT_BACKEND,
   OPT_PREROLL,
   OPT_PLAY,
+  OPT_MONITOR_DEVICE,
+  OPT_MONITOR_GAIN,
 };
 
 static const struct option long_options[] = {
@@ -75,6 +81,9 @@ static const struct option long_options[] = {
     {"force", no_argument, NULL, 'y'},
     {"quiet", no_argument, NULL, 'q'},
     {"verbose", no_argument, NULL, 'v'},
+    {"monitor", no_argument, NULL, 'M'},
+    {"monitor-device", required_argument, NULL, OPT_MONITOR_DEVICE},
+    {"monitor-gain", required_argument, NULL, OPT_MONITOR_GAIN},
     {"no-meter", no_argument, NULL, OPT_NO_METER},
     {"spectrum", no_argument, NULL, OPT_SPECTRUM},
     {"visualize", required_argument, NULL, OPT_VISUALIZE},
@@ -119,6 +128,9 @@ void cli_defaults(aud_options *opts)
   opts->overwrite = 0;
   opts->show_meter = 1;
   opts->show_spectrum = 0;
+  opts->monitor = 0;
+  opts->monitor_device = NULL;
+  opts->monitor_gain = 1.0;
   opts->input_path = NULL;
   opts->take_prefix = NULL;
   opts->viz_width = AUD_VIZ_DEFAULT_WIDTH;
@@ -174,6 +186,12 @@ void cli_print_usage(FILE *out)
           "                        take starts SECS before the keypress\n"
           "      --spectrum        show live spectrum bars instead of the peak bar\n"
           "      --no-meter        do not draw anything while recording\n"
+          "  -M, --monitor         play the input back while recording it; use\n"
+          "                        headphones, speakers will feed back\n"
+          "      --monitor-device NAME\n"
+          "                        output to monitor through (default: %s)\n"
+          "      --monitor-gain X  scale what is monitored, 0.0 to 2.0; the file\n"
+          "                        is unaffected (default: 1.0)\n"
           "\n"
           "Visualiser options:\n"
           "      --visualize FILE  render FILE (a WAV) to a video and exit\n"
@@ -217,6 +235,8 @@ void cli_print_usage(FILE *out)
           "  " AUDIAKI_NAME " --take session              record session-001.wav\n"
           "  " AUDIAKI_NAME " --preroll 10 take01.wav     keep the 10 s before "
           "Enter\n"
+          "  " AUDIAKI_NAME " -M take01.wav               hear it while it "
+          "records\n"
           "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
           "out?\n"
@@ -229,9 +249,9 @@ void cli_print_usage(FILE *out)
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
           CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
-          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_VIZ_DEFAULT_WIDTH,
-          AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS, AUD_VIZ_DEFAULT_BARS,
-          AUD_TUNER_DEFAULT_A4);
+          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_MONITOR_DEFAULT_DEVICE,
+          AUD_VIZ_DEFAULT_WIDTH, AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS,
+          AUD_VIZ_DEFAULT_BARS, AUD_TUNER_DEFAULT_A4);
 }
 
 void cli_print_version(FILE *out)
@@ -251,7 +271,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   cli_defaults(opts);
 
   /* leading ':' -> report a missing argument as ':' instead of '?' */
-  while ((opt = getopt_long(argc, argv, ":D:r:c:f:t:p:n:o:yqvlPhV", long_options,
+  while ((opt = getopt_long(argc, argv, ":D:r:c:f:t:p:n:o:MyqvlPhV", long_options,
                             NULL)) != -1)
   {
     switch (opt)
@@ -309,6 +329,26 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case 'y':
       opts->overwrite = 1;
+      break;
+    case 'M':
+      opts->monitor = 1;
+      break;
+    /*
+     * Naming an output or a level is asking to hear it, so neither needs -M as
+     * well. The alternative is a flag that silently does nothing on its own.
+     */
+    case OPT_MONITOR_DEVICE:
+      opts->monitor_device = optarg;
+      opts->monitor = 1;
+      break;
+    case OPT_MONITOR_GAIN:
+      if (parse_double(optarg, MONITOR_GAIN_MIN, MONITOR_GAIN_MAX, &opts->monitor_gain) !=
+          0)
+      {
+        bad_value("--monitor-gain", optarg, "0.0 to 2.0, where 1.0 is unchanged");
+        return CLI_EXIT_USAGE;
+      }
+      opts->monitor = 1;
       break;
     case 'q':
       opts->log_level = AUD_LOG_QUIET;
@@ -447,6 +487,24 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   if (opts->preroll > 0.0 && opts->command != AUD_CMD_RECORD)
   {
     aud_error("--preroll only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * Monitoring means hearing an input while it is being captured, so it has
+   * nowhere to apply outside a recording. --play gets its own message because
+   * it is already playing something, and the option to say which output is -D.
+   */
+  if (opts->monitor && opts->command != AUD_CMD_RECORD)
+  {
+    if (opts->command == AUD_CMD_PLAY)
+    {
+      aud_error("--play already plays through an output; name it with -D");
+    }
+    else
+    {
+      aud_error("--monitor only applies when recording");
+    }
     return CLI_EXIT_USAGE;
   }
 

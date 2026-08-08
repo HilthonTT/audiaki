@@ -53,7 +53,10 @@ typedef struct
   double preroll;    /* seconds held before the take; 0 = record immediately */
   int overwrite;
   int show_meter;
-  int show_spectrum; /* live spectrum bars instead of the peak bar */
+  int show_spectrum;          /* live spectrum bars instead of the peak bar */
+  int monitor;                /* hear the input while it is being recorded */
+  const char *monitor_device; /* output to monitor through; NULL = the default */
+  double monitor_gain;        /* what the monitor is scaled by, not the file */
   unsigned viz_width;
   unsigned viz_height;
   unsigned viz_fps;

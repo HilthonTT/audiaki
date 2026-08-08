@@ -22,6 +22,18 @@ typedef struct
    * take then opens with the seconds leading up to it.
    */
   double preroll;
+  /*
+   * Play the input back through an output while it is being captured, so a
+   * take can be heard as it is made. Off unless asked for, because monitoring
+   * an open microphone through speakers feeds back.
+   *
+   * monitor_device is the output to play through; NULL means the default one.
+   * monitor_gain scales what is heard and nothing else - the file is written
+   * from the samples the device delivered, whatever the monitor is set to.
+   */
+  int monitor;
+  const char *monitor_device;
+  float monitor_gain;
 } aud_recorder_options;
 
 typedef struct
@@ -30,6 +42,7 @@ typedef struct
   uint64_t bytes;
   uint64_t preroll_frames; /* of `frames`, how many came from before the start */
   unsigned xruns;
+  unsigned long monitor_dropped; /* frames the monitor output could not keep up with */
   int clipped;
   int interrupted; /* stopped by SIGINT/SIGTERM rather than reaching the end */
   int cancelled;   /* interrupted while armed, so no file was created */

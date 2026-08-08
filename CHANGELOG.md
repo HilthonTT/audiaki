@@ -9,6 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Hearing the take while it is recorded. `audiaki -M take01.wav` plays the
+  capture stream through an output as it is written, so the level, the tone and
+  the room can be checked while playing rather than afterwards. The desktop app
+  has monitored since it had a transport; the CLI opened the same stream only to
+  play finished files back. `--monitor-device` names the output and
+  `--monitor-gain` scales what is heard, both switching monitoring on by
+  themselves. Audible while `--preroll` is armed too, which is when the level is
+  usually being set.
+- Monitoring never costs a take. An output that will not open, or one that fails
+  part way through, is reported and dropped, and the recording carries on: what
+  is going to disk is the point, and what is coming out of the headphones is
+  not. Frames the output cannot keep up with are dropped rather than queued, so
+  the monitor may skip on a busy machine without any of that reaching the file.
+  `--monitor-gain` is the monitoring level alone - the file is written from the
+  samples the device delivered, so a quiet monitor is not a quiet take.
+- A feedback warning, printed before recording starts. The default capture on a
+  laptop is the built-in microphone and the default output is the speaker beside
+  it, which is a loop that reaches full scale in a fraction of a second. So is
+  capturing an output's monitor source and playing it back through that same
+  output, which headphones do not save you from.
+
 - Playing a take back. `audiaki --play take01.wav` sends it to an output and
   draws the recording meter against the file's length, so the take `--info`
   has just measured can be listened to without leaving the shell for a media
