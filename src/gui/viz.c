@@ -1,10 +1,10 @@
 /* SPDX-License-Identifier: MIT */
-#include "viz.h"
+#include "gui/viz.h"
 
-#include "ui.h"
+#include "gui/ui.h"
 
-#include "spectrum.h"
-#include "tuner.h"
+#include "audio/spectrum.h"
+#include "audio/tuner.h"
 
 #include <math.h>
 #include <stdio.h>

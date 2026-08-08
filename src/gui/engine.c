@@ -1,12 +1,12 @@
 /* SPDX-License-Identifier: MIT */
-#include "engine.h"
+#include "gui/engine.h"
 
-#include "device.h"
-#include "log.h"
-#include "monitor.h"
-#include "preroll.h"
-#include "ringbuf.h"
-#include "wav.h"
+#include "backend/device.h"
+#include "backend/monitor.h"
+#include "media/wav.h"
+#include "take/preroll.h"
+#include "util/log.h"
+#include "util/ringbuf.h"
 
 #include <errno.h>
 #include <pthread.h>

@@ -18,63 +18,90 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 
 ## Layout
 
+One directory per layer, and each one only reaches downwards.
+
 ```
 src/
-  main.c        entry point; dispatches the parsed command
-  cli.c/.h      argument parsing and help text
-  backend.c/.h  which audio system to talk to, and the tables it is reached by
-  device.c/.h   the capture interface, dispatching to the chosen backend
-  device_alsa.c   ...over libasound
-  device_pipewire.c ...over libpipewire, when it was compiled in
-  recorder.c/.h capture loop: device -> repack -> WAV
-  wav.c/.h      streaming WAV writer, and a tolerant WAV reader
-  meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
-  info.c/.h     measure a finished take: levels, clipping, noise floor
-  preroll.c/.h  the seconds held before a take starts, kept bit for bit
-  take.c/.h     numbered take filenames for --take
-  jsonout.c/.h  the little JSON --json needs
-  format.c/.h   sample formats, peak detection, repacking
-  meter.c/.h    the terminal peak and spectrum displays
-  fft.c/.h      radix-2 FFT and the Hann window
-  spectrum.c/.h streaming analyser: samples in, bar heights out
-  tuner.c/.h    pitch detection: samples in, a note and its offset out
-  tune.c/.h     the --tune loop: device -> tuner -> terminal
-  canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
-  visualize.c/.h render a WAV to a video
-  ffmpeg.h      pipe frames to an ffmpeg child
-  ffmpeg_posix.c  its fork/exec/pipe implementation
-  signals.c/.h  the shared Ctrl+C flag
-  parse.c/.h    strict CLI value parsing
-  click.c/.h    the metronome: a beat grid, mixed into what you hear
-  monitor.c/.h  the playback side: monitoring an input, and --play
-  monitor_alsa.c     ...over libasound
-  monitor_pipewire.c ...over libpipewire
-  play.c/.h     the --play loop: WAV -> monitor -> terminal
-  ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
-  log.c/.h      stderr diagnostics
-  gui/
-    app.c       the desktop window: layout, transport, keys
-    engine.c/.h the capture thread and its idle/recording/paused transport
-    viz.c/.h    the glowing spectrum, drawn with raylib
-    ui.c/.h     immediate-mode buttons, slider and meter
-tests/          unit tests for the ALSA-free modules
+  main.c        picks a command; that is all it does
+  options.h     the request an invocation describes - cli fills it, cmd reads it
+  cli/          argv in, an aud_options out
+    cli.c/.h      the option table and the parse loop
+    usage.c       the help text and the version line
+  cmd/          one file per command: options in, an exit code out
+    cmd.h         the seven entry points, and the shared capture config
+    record.c      capture loop: device -> repack -> WAV
+    playback.c/.h what you hear while recording: the monitor and the metronome
+    play.c        the --play loop: WAV -> monitor -> terminal
+    tune.c        the --tune loop: device -> tuner -> terminal
+    info.c        how --info lays out one take, or a session of them
+    visualize.c   naming and guarding the video the renderer writes
+    devices.c     the --list table and the --probe hand-off
+  backend/      the only directory that reaches an audio system
+    backend.c/.h  which one to talk to, and the tables it is reached by
+    device.c/.h   the capture interface, dispatching to the chosen backend
+    device_alsa.c       ...over libasound
+    device_pipewire.c   ...over libpipewire, when it was compiled in
+    monitor.c/.h  the playback interface, dispatching the same way
+    monitor_alsa.c      ...over libasound
+    monitor_pipewire.c  ...over libpipewire
+  audio/        samples, and what can be computed from them
+    format.c/.h   sample formats, peak detection, repacking
+    fft.c/.h      radix-2 FFT and the Hann window
+    spectrum.c/.h streaming analyser: samples in, bar heights out
+    tuner.c/.h    pitch detection: samples in, a note and its offset out
+    click.c/.h    the metronome: a beat grid, mixed into what you hear
+  take/         what a recording is, and what surrounds it
+    take.c/.h     numbered take filenames for --take
+    meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
+    info.c/.h     measure a finished take: levels, clipping, noise floor
+    preroll.c/.h  the seconds held before a take starts, kept bit for bit
+  media/        bytes on disk, and pipes to other programs
+    wav.c/.h      streaming WAV writer, and a tolerant WAV reader
+    canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
+    visualize.c/.h render a WAV to a video
+    ffmpeg.h      pipe frames to an ffmpeg child
+    ffmpeg_posix.c  its fork/exec/pipe implementation
+  term/
+    meter.c/.h    the terminal peak and spectrum displays
+  util/         no domain of its own
+    log.c/.h      stderr diagnostics
+    parse.c/.h    strict value parsing, shared with the window
+    jsonout.c/.h  the little JSON --json needs
+    ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
+    signals.c/.h  the shared Ctrl+C flag
+  gui/          the desktop window; the only code that knows raylib exists
+    app.h         the state its four halves share
+    main.c        the run loop, the engine's lifecycle, the transport actions
+    args.c        argv and the help text
+    devices.c     the dropdown's list, kept level with the hardware
+    screen.c      every pixel
+    engine.c/.h   the capture thread and its idle/recording/paused transport
+    viz.c/.h      the glowing spectrum, drawn with raylib
+    ui.c/.h       immediate-mode buttons, slider and meter
+tests/          mirrors src/, so an untested layer is visible from the tree
 docs/           man page
 vendor/raylib/  submodule, only needed for the desktop app
 ```
 
-No audio system appears above `backend.h`: `device.c` and `monitor.c` are
+No audio system appears outside `backend/`: `device.c` and `monitor.c` are
 dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
-`<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
-`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll`,
-`meta`, `click` and `jsonout` are plain C that builds and tests anywhere — which
-is what CI does.
+`<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. `cmd/` drives that directory
+and `cli/` names it, so everything under those three — `audio`, `take`, `media`,
+`term` and `util` — is plain C that builds and tests anywhere, which is what CI
+does.
+
+That is a claim the build enforces rather than one this file merely makes. The
+Makefile's `PORTABLE_SRCS`, which the tests link against, is
+`$(filter-out src/backend/% src/cmd/% src/cli/% src/main.c,$(SRCS))` — a
+directory rule, not a list of files. A new module in any lower layer is tested
+without anyone remembering to add it, and a lower layer that starts reaching for
+a sound server stops linking.
 
 The analysis is shared three ways: the terminal display, the video renderer and
 the desktop app all run the same `spectrum` module, the terminal and desktop
 tuners run the same `tuner`, and the CLI's armed wait and the window's idle
-capture fill the same `preroll`. `src/gui/` is the only code that knows raylib
-exists, and nothing in `src/` depends on it, which keeps the CLI buildable with
-the submodule absent.
+capture fill the same `preroll`. Nothing in `src/` outside `src/gui/` depends on
+raylib, which keeps the CLI buildable with the submodule absent.
 
 ## Backends
 

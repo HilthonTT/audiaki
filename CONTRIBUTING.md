@@ -53,11 +53,19 @@ The module map and the reasoning behind the structure live in
 [DESIGN.md](DESIGN.md#layout). Read that first; the conventions below are what
 a patch is checked against.
 
-- **Keep the audio systems below `backend.h`.** Only the `*_alsa.c` and
+- **Keep the audio systems inside `src/backend/`.** Only the `*_alsa.c` and
   `*_pipewire.c` files may include `<alsa/asoundlib.h>` or
   `<pipewire/pipewire.h>`; everything else works on `aud_format` values and
   plain buffers. That is what lets the test suite build without either library,
   and CI has a job that would fail if such an include leaked elsewhere.
+- **Put a new file in the layer it belongs to, and only reach downwards.**
+  `cli/` and `cmd/` may use `backend/`; nothing below them may. The Makefile
+  derives what the tests link from exactly that rule, so a module placed in
+  `audio/`, `take/`, `media/`, `term/` or `util/` is tested automatically — and
+  stops linking if it starts reaching for a device.
+- **Includes are written from `src/`**: `#include "audio/format.h"`, never
+  `"format.h"`. The layer a header comes from should be readable at the
+  include site.
 - **C11, no dependencies beyond libasound, libpipewire, raylib and libm.** No
   new third-party libraries without a discussion first.
 - **Formatting is mechanical**: `.clang-format` decides, `make format` applies.
@@ -74,13 +82,14 @@ a patch is checked against.
 
 ## Tests
 
-`tests/` holds a small hand-rolled harness (`test_util.h`) — no framework. To
-add a test file, drop `tests/test_<thing>.c` in place; the Makefile picks it up
-automatically and links it against the ALSA-free objects.
+`tests/` holds a small hand-rolled harness (`test_util.h`) — no framework, and
+it mirrors `src/`, so which layers are covered is visible from the tree. To add
+a test file, drop `tests/<layer>/test_<thing>.c` in place; the Makefile picks it
+up automatically and links it against the sound-server-free objects.
 
-New behaviour in `format`, `wav` or `parse` should come with tests. Behaviour in
-`device` or `recorder` mostly cannot be unit tested; describe your manual test
-instead.
+New behaviour in `audio/`, `take/`, `media/` or `util/` should come with tests.
+Behaviour in `backend/` or `cmd/` mostly cannot be unit tested — that is the
+same boundary the test link uses — so describe your manual test instead.
 
 ## Commit messages
 

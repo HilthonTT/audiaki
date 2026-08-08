@@ -157,6 +157,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `src/` is one directory per layer — `cli`, `cmd`, `backend`, `audio`, `take`,
+  `media`, `term`, `util` — where it was 62 files in a flat directory. No
+  behaviour changes; local includes are now written from `src/`
+  (`#include "audio/format.h"`), so the layer a header comes from is readable at
+  the include site. `tests/` mirrors the same tree.
+
+- The layering is enforced by the build rather than described in a comment. The
+  Makefile's `PORTABLE_SRCS` — the objects the tests link against, and so the
+  set that must build with no sound server present — was a hand-maintained list
+  of fifteen files that silently went stale whenever a module was added; it is
+  now `$(filter-out src/backend/% src/cmd/% src/cli/% src/main.c,$(SRCS))`. It
+  turned out the old list had already drifted: `visualize` and `meter` were
+  portable and untested by omission, and are now linked into the suite.
+
+- `main.c` dispatches and nothing else. The five `run_*` functions that mapped
+  options onto modules moved into `src/cmd/`, one file per command, and the
+  option struct they share with the parser moved to `src/options.h` — so a
+  command no longer includes the argument parser to find out what it was asked
+  for. `aud_recorder_options`, `aud_play_options` and `aud_tune_options` had one
+  caller each and are now internal to the command that uses them.
+
+- Three files that had grown past what one unit should hold were split along
+  seams they already had: the CLI's help text out of `cli.c` into `cli/usage.c`,
+  the monitor-and-metronome output out of the capture loop into
+  `cmd/playback.c`, and the desktop window's 1,300 lines into `gui/main.c`,
+  `args.c`, `devices.c` and `screen.c` over a shared `gui/app.h`. The `--list`
+  table moved out of `backend/device.c`, which no longer decides how anything is
+  laid out.
+
 - `--monitor-device` no longer implies `--monitor` when `--click` is also given.
   Naming an output used to mean "play the input through this one", because there
   was nothing else it could mean; with a metronome there is, and it now names

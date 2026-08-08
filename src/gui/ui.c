@@ -1,5 +1,5 @@
 /* SPDX-License-Identifier: MIT */
-#include "ui.h"
+#include "gui/ui.h"
 
 #include <math.h>
 #include <stdio.h>

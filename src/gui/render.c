@@ -1,9 +1,9 @@
 /* SPDX-License-Identifier: MIT */
-#include "render.h"
+#include "gui/render.h"
 
-#include "ffmpeg.h"
-#include "log.h"
-#include "wav.h"
+#include "media/ffmpeg.h"
+#include "media/wav.h"
+#include "util/log.h"
 
 #include <errno.h>
 #include <stdio.h>

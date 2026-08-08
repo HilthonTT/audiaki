@@ -54,8 +54,11 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # The ALSA-free modules must keep building on their own; this is what
-      # keeps libasound confined to src/device.c.
+      # The sound-server-free layers must keep building on their own; this is
+      # what keeps libasound confined to src/backend. `make test` links only
+      # PORTABLE_SRCS, which is every layer below src/cli and src/cmd, so a
+      # module that starts reaching for a device fails this job rather than
+      # quietly making the suite unbuildable for anyone without the headers.
       - name: Run unit tests
         run: make STRICT=1 test
 

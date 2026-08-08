@@ -21,7 +21,7 @@
 #ifndef AUDIAKI_GUI_ENGINE_H
 #define AUDIAKI_GUI_ENGINE_H
 
-#include "format.h"
+#include "audio/format.h"
 
 #include <stddef.h>
 #include <stdint.h>

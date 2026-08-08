@@ -21,7 +21,7 @@
 #ifndef AUDIAKI_GUI_RENDER_H
 #define AUDIAKI_GUI_RENDER_H
 
-#include "viz.h"
+#include "gui/viz.h"
 
 #include <stddef.h>
 

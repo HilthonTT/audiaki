@@ -4,7 +4,7 @@
 # Check the shell completions against the option tables they describe.
 #
 # Completions are the one part of a CLI that nothing else exercises: an option
-# added to cli.c works perfectly while its completion quietly does not exist,
+# added to cli/cli.c works perfectly while its completion quietly does not exist,
 # and nobody finds out until they press Tab. This compares the long options
 # each parser accepts with the ones each completion file declares, in both
 # directions - missing and stale - and is run by `make check` and by CI.
@@ -35,10 +35,10 @@ is_alias()
 
 # What each parser accepts.
 sed -n 's/^ *{"\([a-z0-9-]*\)", *\(no\|required\|optional\)_argument.*/--\1/p' \
-    src/cli.c | sort -u > "$work/cli.opts"
+    src/cli/cli.c | sort -u > "$work/cli.opts"
 # grep rather than sed: a line testing two spellings at once would give sed's
 # greedy match only the second one.
-grep -oE 'strcmp\(arg, "--[a-z0-9-]+"\)' src/gui/app.c \
+grep -oE 'strcmp\(arg, "--[a-z0-9-]+"\)' src/gui/args.c \
     | grep -oE -- '--[a-z0-9-]+' | sort -u > "$work/gui.opts"
 
 for f in "$work/cli.opts" "$work/gui.opts"; do
@@ -77,8 +77,8 @@ report()
 # Every option the parser takes is offered, and everything offered still exists.
 for cmd in cli gui; do
     case $cmd in
-        cli) parser=src/cli.c; name=audiaki ;;
-        *) parser=src/gui/app.c; name=audiaki-gui ;;
+        cli) parser=src/cli/cli.c; name=audiaki ;;
+        *) parser=src/gui/args.c; name=audiaki-gui ;;
     esac
 
     for shell in bash zsh fish; do

@@ -76,21 +76,29 @@ LDLIBS    += $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lm
 
 # -- sources -----------------------------------------------------------------
 
-SRCS      := $(sort $(wildcard src/*.c))
+# One directory per layer; see DESIGN.md. src/gui is built separately, against
+# raylib, and is the only part that may be absent.
+SRC_DIRS  := src src/cli src/cmd src/backend src/audio src/take src/media \
+             src/term src/util
+
+SRCS      := $(sort $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c)))
 ifeq ($(HAVE_PIPEWIRE),)
-SRCS      := $(filter-out src/device_pipewire.c src/monitor_pipewire.c,$(SRCS))
+SRCS      := $(filter-out src/backend/%_pipewire.c,$(SRCS))
 endif
 OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-# Objects that do not touch libasound. Tests link against these so the suite
-# runs on machines without ALSA headers.
-PORTABLE_SRCS := src/format.c src/wav.c src/parse.c src/log.c src/fft.c \
-                 src/spectrum.c src/canvas.c src/jsonout.c src/info.c \
-                 src/take.c src/ringbuf.c src/preroll.c src/tuner.c src/meta.c \
-                 src/click.c
+# Objects that do not touch a sound server. Tests link against these, so the
+# suite runs on machines with neither ALSA nor PipeWire headers.
+#
+# A directory rule rather than a list of files, which is the point of the
+# layout. src/backend is the only place a sound server is reached; src/cmd and
+# src/cli sit on top of it (backend.c binds a capture table at file scope, so
+# anything reaching it drags libasound in). Every layer below that is portable
+# by construction, and is tested without anyone having to remember to say so.
+PORTABLE_SRCS := $(filter-out src/backend/% src/cmd/% src/cli/% src/main.c,$(SRCS))
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-TEST_SRCS := $(sort $(wildcard tests/test_*.c))
+TEST_SRCS := $(sort $(wildcard tests/*/test_*.c))
 TEST_BINS := $(TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
 
 # -- desktop app -------------------------------------------------------------
@@ -107,21 +115,23 @@ GUI_BIN   := $(BUILD_DIR)/$(PROJECT)-gui
 GUI_SRCS  := $(sort $(wildcard src/gui/*.c))
 GUI_OBJS  := $(GUI_SRCS:src/gui/%.c=$(OBJ_DIR)/gui/%.o)
 
-# The core the window shares with the CLI. Not the whole of src/: the GUI has
-# no use for the terminal meter, the argument parser or the ffmpeg pipe.
-# jsonout is here only because device.c's --list and --probe reference it; the
-# window never calls either.
-GUI_CORE_SRCS := src/device.c src/device_alsa.c src/backend.c src/format.c \
-                 src/wav.c src/log.c src/fft.c src/spectrum.c src/monitor.c \
-                 src/monitor_alsa.c src/ringbuf.c src/preroll.c src/take.c \
-                 src/tuner.c src/jsonout.c src/parse.c src/ffmpeg_posix.c \
-                 src/meta.c
-ifneq ($(HAVE_PIPEWIRE),)
-GUI_CORE_SRCS += src/device_pipewire.c src/monitor_pipewire.c
-endif
+# The core the window shares with the CLI: all of src/backend, and the layers
+# under it that the window actually reaches. Not src/term (the window draws its
+# own meter), src/cli or src/cmd (it parses its own, much smaller, argv and
+# owns its own transport).
+#
+# jsonout is here only because the backends print --probe tables through it;
+# the window never asks for one.
+GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
+                 src/audio/format.c src/audio/fft.c src/audio/spectrum.c \
+                 src/audio/tuner.c \
+                 src/take/take.c src/take/meta.c src/take/preroll.c \
+                 src/media/wav.c src/media/ffmpeg_posix.c \
+                 src/util/log.c src/util/jsonout.c src/util/ringbuf.c \
+                 src/util/parse.c
 GUI_CORE_OBJS := $(GUI_CORE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-GUI_CPPFLAGS := -Isrc/gui -I$(RAYLIB_SRC)
+GUI_CPPFLAGS := -I$(RAYLIB_SRC)
 GUI_LDLIBS   := $(RAYLIB_LIB) $(ALSA_LIBS) $(PIPEWIRE_LIBS) \
                 -lGL -lX11 -lm -lpthread -ldl -lrt
 
@@ -185,13 +195,16 @@ $(BIN): $(OBJS) | $(BUILD_DIR)
 # rejects in strict ISO mode, so the two backend objects are built without it -
 # the same exception raylib already gets. Everything audiaki itself writes,
 # including the rest of these files, still gets the full warning set.
-$(OBJ_DIR)/device_pipewire.o $(OBJ_DIR)/monitor_pipewire.o: \
+$(OBJ_DIR)/backend/device_pipewire.o $(OBJ_DIR)/backend/monitor_pipewire.o: \
   CFLAGS := $(filter-out -Wpedantic,$(CFLAGS))
 
-$(OBJ_DIR)/%.o: src/%.c | $(OBJ_DIR)
+# $(@D) rather than a fixed list of order-only prerequisites: the object tree
+# mirrors src/, so adding a layer must not mean adding a rule here too.
+$(OBJ_DIR)/%.o: src/%.c
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) $(CFLAGS) -c -o $@ $<
 
-$(BUILD_DIR) $(OBJ_DIR) $(OBJ_DIR)/gui $(TEST_DIR):
+$(BUILD_DIR):
 	@mkdir -p $@
 
 # -- desktop app -------------------------------------------------------------
@@ -216,13 +229,17 @@ $(GUI_BIN): $(GUI_OBJS) $(GUI_CORE_OBJS) $(RAYLIB_LIB) | $(BUILD_DIR)
 
 # raylib.h trips -Wpedantic in strict ISO mode, so the GUI objects are built
 # without it. Everything audiaki itself writes still gets the full set.
-$(OBJ_DIR)/gui/%.o: src/gui/%.c | $(OBJ_DIR)/gui
+$(OBJ_DIR)/gui/%.o: src/gui/%.c
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) \
 	      $(filter-out -Wpedantic,$(CFLAGS)) -c -o $@ $<
 
 # -- tests -------------------------------------------------------------------
 
-$(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS) | $(TEST_DIR)
+# tests/ mirrors src/, so which layers are covered - and which are not - is
+# visible from the tree rather than only from this list.
+$(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
+	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
 
 test: $(TEST_BINS)
@@ -243,8 +260,8 @@ check: all test format-check check-completions
 
 # -- style -------------------------------------------------------------------
 
-STYLE_FILES := $(wildcard src/*.c src/*.h src/gui/*.c src/gui/*.h \
-                          tests/*.c tests/*.h)
+STYLE_FILES := $(wildcard $(foreach d,$(SRC_DIRS) src/gui,$(d)/*.c $(d)/*.h) \
+                          tests/*.h tests/*/*.c)
 
 format:
 	$(CLANG_FORMAT) -i $(STYLE_FILES)
