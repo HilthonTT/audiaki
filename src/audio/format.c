@@ -206,6 +206,28 @@ static double peak_s32(const unsigned char *p, size_t n)
   return worst / 2147483648.0;
 }
 
+void aud_format_pick_channel(void *dst, const void *src, size_t frames, unsigned channels,
+                             unsigned channel, aud_format fmt)
+{
+  unsigned char *out = (unsigned char *)dst;
+  const unsigned char *in = (const unsigned char *)src;
+  unsigned bytes = aud_format_hw_bytes(fmt);
+  size_t stride;
+
+  if (out == NULL || in == NULL || bytes == 0 || channels == 0 || channel >= channels)
+  {
+    return;
+  }
+
+  stride = (size_t)channels * bytes;
+  in += (size_t)channel * bytes;
+
+  for (size_t i = 0; i < frames; i++)
+  {
+    memcpy(out + i * bytes, in + i * stride, bytes);
+  }
+}
+
 double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_format fmt)
 {
   const unsigned char *p = (const unsigned char *)buf;

@@ -50,6 +50,13 @@ typedef struct
   int extra_input_count;
   unsigned rate;
   unsigned channels;
+  /*
+   * Which single capture channel to write, counting from 1, or 0 for all of
+   * them. `channels` is still what the device is asked to capture: an interface
+   * that only does stereo is still opened as stereo, and this decides what
+   * reaches the file.
+   */
+  unsigned channel;
   unsigned period_frames;
   unsigned periods;
   aud_format format; /* AUD_FORMAT_UNKNOWN = negotiate */

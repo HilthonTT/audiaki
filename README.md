@@ -78,6 +78,7 @@ audiaki --tune                       # tune up before playing anything
 audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum -t 1:30 take02.wav  # 90 seconds, watching the spectrum
 audiaki --take session               # record the next free session-NNN.wav
+audiaki --channel 1 take03.wav       # a stereo interface, one instrument -> mono
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M take05.wav                # hear it while it records (headphones!)
 audiaki -M --click 120 take05.wav    # ...in time with a metronome

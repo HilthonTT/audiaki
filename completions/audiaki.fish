@@ -22,7 +22,8 @@ complete -c audiaki -k -a '(__fish_complete_suffix .wav)' -d 'take to write'
 complete -c audiaki -s D -l device -d 'Capture device' -x -a '(__audiaki_devices)'
 complete -c audiaki -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa'
 complete -c audiaki -s r -l rate -d 'Sample rate in Hz' -x -a '44100 48000 88200 96000 192000'
-complete -c audiaki -s c -l channels -d 'Channel count' -x -a '1 2 4 6 8'
+complete -c audiaki -s c -l channels -d 'How many channels to capture' -x -a '1 2 4 6 8'
+complete -c audiaki -l channel -d 'Write only capture channel N, as mono' -x -a '1 2 3 4 5 6 7 8'
 complete -c audiaki -s f -l format -d 'Sample format' -x -a 's16_le s24_3le s24_le s32_le'
 complete -c audiaki -s t -l duration -d 'Stop after SS, MM:SS or HH:MM:SS' -x
 complete -c audiaki -s p -l period -d 'Period size in frames' -x

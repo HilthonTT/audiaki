@@ -27,6 +27,12 @@
 typedef struct
 {
   const char *output_path;
+  /*
+   * Which single capture channel to write, counting from 1, or 0 for all of
+   * them. The device is still opened with whatever channel count was asked
+   * for; this is only about what reaches the file.
+   */
+  unsigned channel;
   double duration;   /* seconds; 0 records until interrupted */
   int overwrite;     /* allow replacing an existing file */
   int show_meter;    /* draw a live display at all */
@@ -84,6 +90,64 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
 #define METER_INTERVAL 0.05
 
 /*
+ * How a captured period becomes what the file holds.
+ *
+ * Two things can sit between the device and the WAV: --channel drops every
+ * channel but one, and some capture formats need repacking. The capture loop
+ * and the pre-roll flush both have to apply them, in that order, so it is
+ * worked out once here rather than twice down there.
+ */
+typedef struct
+{
+  aud_format format;
+  unsigned in_channels;  /* what the device delivers */
+  unsigned out_channels; /* what goes in the file; 1 once a channel is picked */
+  unsigned pick;         /* the channel to keep, 0-based; read only when picking */
+  int picking;
+  int repack;
+  unsigned wav_bytes;
+  unsigned char *pick_buf; /* one period of the picked channel, capture layout */
+  unsigned char *out_buf;  /* one period in the WAV layout; NULL without a repack */
+} recorder_shape;
+
+/*
+ * Reduce one captured period to the bytes that go in the file. Returns the
+ * buffer to write and sets *nbytes.
+ *
+ * `analysis` may be NULL; when it is not, it is set to the frames the meter and
+ * the spectrum should read. With a channel picked that is the picked channel
+ * alone, because metering a channel that is not being recorded is worse than
+ * not metering at all - it is the wrong answer rather than no answer.
+ */
+static const unsigned char *shape_frames(const recorder_shape *sh,
+                                         const unsigned char *hw, size_t frames,
+                                         size_t *nbytes, const unsigned char **analysis)
+{
+  const unsigned char *src = hw;
+
+  if (sh->picking)
+  {
+    aud_format_pick_channel(sh->pick_buf, hw, frames, sh->in_channels, sh->pick,
+                            sh->format);
+    src = sh->pick_buf;
+  }
+
+  if (analysis != NULL)
+  {
+    *analysis = src;
+  }
+  *nbytes = frames * sh->out_channels * sh->wav_bytes;
+
+  if (sh->repack)
+  {
+    aud_format_repack(sh->out_buf, src, frames * sh->out_channels, sh->format);
+    return sh->out_buf;
+  }
+
+  return src;
+}
+
+/*
  * Non-zero once the take should begin. Polled between periods rather than read
  * on a thread of its own; a period is a few milliseconds, which is well inside
  * what a keypress needs to feel immediate.
@@ -132,9 +196,10 @@ static int start_requested(void)
  * 0 to start recording, 1 when the wait was interrupted and no take should be
  * created at all, or -1 if the device failed.
  */
-static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre,
-                        aud_meter *meter, aud_spectrum *spectrum, size_t bands,
-                        aud_playback *pb, unsigned *xruns)
+static int arm_and_wait(aud_device *dev, const recorder_shape *shape,
+                        unsigned char *hw_buf, aud_preroll *pre, aud_meter *meter,
+                        aud_spectrum *spectrum, size_t bands, aud_playback *pb,
+                        unsigned *xruns)
 {
   double next_meter_at = 0.0;
   double last_drawn_at = 0.0;
@@ -146,7 +211,9 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
 
   while (!aud_signals_stop_requested())
   {
+    const unsigned char *analysis;
     long got;
+    size_t nbytes;
     double captured;
 
     if (start_requested())
@@ -168,9 +235,17 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
 
     aud_preroll_push(pre, hw_buf, (size_t)got);
 
+    /*
+     * Shaped only to be looked at - what it returns is dropped, and the ring
+     * above keeps every channel. Setting the level is the whole point of being
+     * armed, so the meter has to read the channel the take will be made of.
+     */
+    (void)shape_frames(shape, hw_buf, (size_t)got, &nbytes, &analysis);
+
     if (spectrum != NULL)
     {
-      aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
+      aud_spectrum_push_pcm(spectrum, analysis, (size_t)got, shape->out_channels,
+                            dev->format);
     }
 
     /*
@@ -185,7 +260,8 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
 
     if (captured >= next_meter_at)
     {
-      double peak = aud_format_peak(hw_buf, (size_t)got, dev->channels, dev->format);
+      double peak =
+          aud_format_peak(analysis, (size_t)got, shape->out_channels, dev->format);
       /* what is held, not how long the wait has been: a take would start here */
       double held = (double)aud_preroll_filled(pre) / dev->rate;
 
@@ -214,13 +290,12 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
  * pieces so the repack has somewhere to land.
  */
 static int flush_preroll(wav_writer *wav, const aud_preroll *pre, const aud_device *dev,
-                         unsigned char *out_buf, int repack, const char *path,
+                         const recorder_shape *shape, const char *path,
                          uint64_t *frames_written)
 {
   aud_preroll_segment seg[2];
   unsigned segments = aud_preroll_segments(pre, seg);
   size_t frame_bytes = (size_t)dev->channels * aud_format_hw_bytes(dev->format);
-  unsigned wav_bytes = aud_format_wav_bytes(dev->format);
 
   for (unsigned s = 0; s < segments; s++)
   {
@@ -228,7 +303,8 @@ static int flush_preroll(wav_writer *wav, const aud_preroll *pre, const aud_devi
 
     while (done < seg[s].frames)
     {
-      const unsigned char *src = seg[s].data + done * frame_bytes;
+      const unsigned char *held = seg[s].data + done * frame_bytes;
+      const unsigned char *payload;
       size_t frames = seg[s].frames - done;
       size_t nbytes;
 
@@ -236,7 +312,14 @@ static int flush_preroll(wav_writer *wav, const aud_preroll *pre, const aud_devi
       {
         frames = dev->period_frames;
       }
-      nbytes = frames * dev->channels * wav_bytes;
+
+      /*
+       * The ring holds whole frames as the device delivered them, so the
+       * pre-roll is picked and repacked here on the way out, exactly as a live
+       * period is. Nothing is decided when it goes in, which is what keeps it
+       * bit for bit.
+       */
+      payload = shape_frames(shape, held, frames, &nbytes, NULL);
 
       if (wav_would_overflow(wav, nbytes))
       {
@@ -244,13 +327,7 @@ static int flush_preroll(wav_writer *wav, const aud_preroll *pre, const aud_devi
         return 0;
       }
 
-      if (repack)
-      {
-        aud_format_repack(out_buf, src, frames * dev->channels, dev->format);
-        src = out_buf;
-      }
-
-      if (wav_write(wav, src, nbytes) != 0)
+      if (wav_write(wav, payload, nbytes) != 0)
       {
         aud_perror("cannot write to %s", path);
         return -1;
@@ -273,11 +350,12 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   aud_spectrum *spectrum = NULL;
   aud_playback pb;
   aud_preroll pre;
+  recorder_shape shape;
   size_t bands = 0;
   unsigned char *hw_buf = NULL;
+  unsigned char *pick_buf = NULL;
   unsigned char *out_buf = NULL;
   size_t hw_buf_bytes;
-  size_t out_buf_bytes;
   uint64_t frames_written = 0;
   uint64_t preroll_frames = 0;
   uint64_t recorded = 0; /* frames captured since the take started */
@@ -304,6 +382,33 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     return -1;
   }
 
+  memset(&shape, 0, sizeof(shape));
+  shape.format = dev->format;
+  shape.in_channels = dev->channels;
+  shape.out_channels = dev->channels;
+  shape.repack = repack;
+  shape.wav_bytes = wav_bytes;
+
+  /*
+   * Checked against what the device negotiated rather than what was asked for:
+   * a card that would not give four channels and settled on two makes
+   * '--channel 3' a mistake worth stopping for, and the parser could not have
+   * known that.
+   */
+  if (opts->channel > 0)
+  {
+    if (opts->channel > dev->channels)
+    {
+      aud_error("--channel %u, but %s gave %u channel(s)", opts->channel, dev->name,
+                dev->channels);
+      aud_info("channels are numbered from 1; --probe shows what the device offers");
+      return -1;
+    }
+    shape.picking = 1;
+    shape.pick = opts->channel - 1u;
+    shape.out_channels = 1;
+  }
+
   if (opts->duration > 0.0)
   {
     limit_frames = (uint64_t)(opts->duration * (double)dev->rate + 0.5);
@@ -314,7 +419,6 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   }
 
   hw_buf_bytes = (size_t)dev->period_frames * dev->channels * hw_bytes;
-  out_buf_bytes = (size_t)dev->period_frames * dev->channels * wav_bytes;
 
   hw_buf = malloc(hw_buf_bytes);
   if (hw_buf == NULL)
@@ -323,13 +427,40 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     return -1;
   }
 
-  out_buf = repack ? malloc(out_buf_bytes) : hw_buf;
-  if (out_buf == NULL)
+  if (shape.picking)
   {
-    aud_error("cannot allocate a %zu byte output buffer", out_buf_bytes);
-    free(hw_buf);
-    return -1;
+    size_t pick_bytes = (size_t)dev->period_frames * hw_bytes;
+
+    pick_buf = malloc(pick_bytes);
+    if (pick_buf == NULL)
+    {
+      aud_error("cannot allocate a %zu byte channel buffer", pick_bytes);
+      free(hw_buf);
+      return -1;
+    }
   }
+
+  /*
+   * Only a repack needs a second buffer. Without one the frames go to the
+   * writer straight out of hw_buf, or out of pick_buf when a channel has been
+   * picked, and neither is copied for the sake of it.
+   */
+  if (repack)
+  {
+    size_t out_buf_bytes = (size_t)dev->period_frames * shape.out_channels * wav_bytes;
+
+    out_buf = malloc(out_buf_bytes);
+    if (out_buf == NULL)
+    {
+      aud_error("cannot allocate a %zu byte output buffer", out_buf_bytes);
+      free(pick_buf);
+      free(hw_buf);
+      return -1;
+    }
+  }
+
+  shape.pick_buf = pick_buf;
+  shape.out_buf = out_buf;
 
   /* initialised before any early exit so the cleanup path is unconditional */
   meter_init(&meter, opts->show_meter);
@@ -383,7 +514,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     aud_debug("pre-roll: %zu frames, %.1f MiB", frames,
               (double)(frames * dev->channels * hw_bytes) / (1024.0 * 1024.0));
 
-    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &pb, &xruns);
+    armed = arm_and_wait(dev, &shape, hw_buf, &pre, &meter, spectrum, bands, &pb, &xruns);
     if (armed < 0)
     {
       goto out;
@@ -412,11 +543,11 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   meta.device = dev->name;
   meta.note = opts->note;
   meta.rate = dev->rate;
-  meta.channels = dev->channels;
+  meta.channels = shape.out_channels;
   meta.bits = aud_format_wav_bits(dev->format);
   aud_meta_stamp_now(&meta, dev->rate);
 
-  if (wav_open_meta(&wav, opts->output_path, dev->rate, (uint16_t)dev->channels,
+  if (wav_open_meta(&wav, opts->output_path, dev->rate, (uint16_t)shape.out_channels,
                     (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite,
                     opts->metadata ? &meta : NULL) != 0)
   {
@@ -431,8 +562,18 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     goto out;
   }
 
-  aud_info("recording %s: %u Hz, %u ch, %s -> %u-bit WAV", opts->output_path, dev->rate,
-           dev->channels, aud_format_name(dev->format), aud_format_wav_bits(dev->format));
+  if (shape.picking)
+  {
+    aud_info("recording %s: %u Hz, channel %u of %u as mono, %s -> %u-bit WAV",
+             opts->output_path, dev->rate, opts->channel, dev->channels,
+             aud_format_name(dev->format), aud_format_wav_bits(dev->format));
+  }
+  else
+  {
+    aud_info("recording %s: %u Hz, %u ch, %s -> %u-bit WAV", opts->output_path, dev->rate,
+             dev->channels, aud_format_name(dev->format),
+             aud_format_wav_bits(dev->format));
+  }
   aud_debug("period %lu frames (%.1f ms), buffer %lu frames", dev->period_frames,
             1000.0 * (double)dev->period_frames / dev->rate, dev->buffer_frames);
   if (opts->duration > 0.0)
@@ -446,8 +587,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
 
   if (aud_preroll_filled(&pre) > 0)
   {
-    if (flush_preroll(&wav, &pre, dev, out_buf, repack, opts->output_path,
-                      &frames_written) != 0)
+    if (flush_preroll(&wav, &pre, dev, &shape, opts->output_path, &frames_written) != 0)
     {
       goto finish;
     }
@@ -458,8 +598,9 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   while (!aud_signals_stop_requested())
   {
     unsigned long want = dev->period_frames;
+    const unsigned char *payload;
+    const unsigned char *analysis;
     long got;
-    size_t samples;
     size_t nbytes;
     double elapsed;
 
@@ -483,8 +624,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
       continue;
     }
 
-    samples = (size_t)got * dev->channels;
-    nbytes = samples * wav_bytes;
+    payload = shape_frames(&shape, hw_buf, (size_t)got, &nbytes, &analysis);
 
     if (wav_would_overflow(&wav, nbytes))
     {
@@ -493,12 +633,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
       break;
     }
 
-    if (repack)
-    {
-      aud_format_repack(out_buf, hw_buf, samples, dev->format);
-    }
-
-    if (wav_write(&wav, out_buf, nbytes) != 0)
+    if (wav_write(&wav, payload, nbytes) != 0)
     {
       meter_clear(&meter);
       aud_perror("cannot write to %s", opts->output_path);
@@ -506,14 +641,17 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
 
     /*
-     * Analyse the captured period, not the repacked copy: hw_buf is what the
-     * device delivered, and out_buf may alias it anyway.
+     * Analyse what is being written rather than the repacked bytes: `analysis`
+     * is still in the capture layout, and it is the picked channel when there
+     * is one, so the meter answers for the take rather than for the device.
      */
     if (spectrum != NULL)
     {
-      aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
+      aud_spectrum_push_pcm(spectrum, analysis, (size_t)got, shape.out_channels,
+                            dev->format);
     }
 
+    /* the device as delivered: --channel decides the file, not what you hear */
     aud_playback_feed(&pb, hw_buf, (size_t)got, dev);
 
     frames_written += (uint64_t)got;
@@ -522,7 +660,8 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
 
     if (elapsed >= next_meter_at)
     {
-      double peak = aud_format_peak(hw_buf, (size_t)got, dev->channels, dev->format);
+      double peak =
+          aud_format_peak(analysis, (size_t)got, shape.out_channels, dev->format);
 
       if (spectrum != NULL)
       {
@@ -564,7 +703,8 @@ finish:
   {
     aud_info("wrote %s: %.2f s, %.1f MiB, %u xrun(s)%s", opts->output_path,
              (double)frames_written / dev->rate,
-             (double)(frames_written * dev->channels * wav_bytes) / (1024.0 * 1024.0),
+             (double)(frames_written * shape.out_channels * wav_bytes) /
+                 (1024.0 * 1024.0),
              xruns, meter_clipped(&meter) ? ", clipping detected" : "");
     if (meter_clipped(&meter))
     {
@@ -586,16 +726,14 @@ out:
 
   aud_spectrum_destroy(spectrum);
   aud_preroll_free(&pre);
-  if (repack)
-  {
-    free(out_buf);
-  }
+  free(out_buf);
+  free(pick_buf);
   free(hw_buf);
 
   if (stats != NULL)
   {
     stats->frames = frames_written;
-    stats->bytes = frames_written * dev->channels * wav_bytes;
+    stats->bytes = frames_written * shape.out_channels * wav_bytes;
     stats->preroll_frames = preroll_frames;
     stats->xruns = xruns;
     stats->monitor_dropped = pb.dropped;
@@ -663,6 +801,7 @@ int aud_cmd_record(const aud_options *opts)
   }
 
   rec.output_path = output;
+  rec.channel = opts->channel;
   rec.duration = opts->duration;
   /* a --take name is free by construction, so it never needs clobbering */
   rec.overwrite = opts->take_prefix != NULL ? 0 : opts->overwrite;

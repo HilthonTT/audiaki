@@ -177,6 +177,108 @@ TEST(to_float_edge_cases)
   CHECK_EQ_DBL(out[0], 7.0, 1e-9);
 }
 
+TEST(pick_channel_takes_one_of_the_interleave)
+{
+  /* three frames of stereo s16: left counts up, right counts down */
+  const unsigned char src[12] = {0x01, 0x00, 0xF1, 0x00, 0x02, 0x00,
+                                 0xF2, 0x00, 0x03, 0x00, 0xF3, 0x00};
+  unsigned char out[6];
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_pick_channel(out, src, 3, 2, 0, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0x01);
+  CHECK_EQ_INT(out[2], 0x02);
+  CHECK_EQ_INT(out[4], 0x03);
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_pick_channel(out, src, 3, 2, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0xF1);
+  CHECK_EQ_INT(out[2], 0xF2);
+  CHECK_EQ_INT(out[4], 0xF3);
+}
+
+TEST(pick_channel_carries_the_whole_container)
+{
+  /* the 4 byte 24 bit container: the pad byte travels with its sample, so a
+   * picked period is still exactly what a repack expects to be handed */
+  const unsigned char src[16] = {0x11, 0x22, 0x33, 0x00, 0xAA, 0xBB, 0xCC, 0xFF,
+                                 0x44, 0x55, 0x66, 0x00, 0xDD, 0xEE, 0x77, 0xFF};
+  unsigned char out[8];
+  unsigned char packed[6];
+
+  aud_format_pick_channel(out, src, 2, 2, 1, AUD_FORMAT_S24_LE);
+  CHECK_EQ_INT(out[0], 0xAA);
+  CHECK_EQ_INT(out[1], 0xBB);
+  CHECK_EQ_INT(out[2], 0xCC);
+  CHECK_EQ_INT(out[4], 0xDD);
+  CHECK_EQ_INT(out[6], 0x77);
+
+  /* and the pair still composes the way the recorder relies on */
+  aud_format_repack(packed, out, 2, AUD_FORMAT_S24_LE);
+  CHECK_EQ_INT(packed[0], 0xAA);
+  CHECK_EQ_INT(packed[2], 0xCC);
+  CHECK_EQ_INT(packed[3], 0xDD);
+  CHECK_EQ_INT(packed[5], 0x77);
+}
+
+TEST(pick_channel_agrees_with_the_float_decoder)
+{
+  /* whichever way a channel is taken out, it has to hold the same level */
+  const unsigned char src[24] = {0x00, 0x40, 0x00, 0x10, 0x00, 0x80, 0x00, 0x20,
+                                 0x00, 0xC0, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40,
+                                 0x00, 0x50, 0x00, 0x60, 0x00, 0x70, 0x00, 0x08};
+  unsigned char one[12];
+  float split[12];
+  float picked[6];
+
+  aud_format_to_float(split, src, 6, 2, AUD_FORMAT_S16_LE);
+  aud_format_pick_channel(one, src, 6, 2, 1, AUD_FORMAT_S16_LE);
+  aud_format_to_float(picked, one, 6, 1, AUD_FORMAT_S16_LE);
+
+  for (size_t i = 0; i < 6; i++)
+  {
+    CHECK_EQ_DBL(picked[i], split[i * 2 + 1], 1e-9);
+  }
+
+  /*
+   * And the peak of the picked channel is that channel's own. This is the
+   * reason the meter reads the picked buffer: the left channel here hits full
+   * scale and the right reaches 24576/32768, so metering the pair would report
+   * clipping on a take that never comes close to it.
+   */
+  CHECK_EQ_DBL(aud_format_peak(one, 6, 1, AUD_FORMAT_S16_LE), 0.75, 1e-6);
+  CHECK_EQ_DBL(aud_format_peak(src, 6, 2, AUD_FORMAT_S16_LE), 1.0, 1e-6);
+}
+
+TEST(pick_channel_edge_cases)
+{
+  const unsigned char src[4] = {0x11, 0x22, 0x33, 0x44};
+  unsigned char out[4];
+
+  /* out of range writes nothing rather than reading past the frame */
+  memset(out, 0xEE, sizeof(out));
+  aud_format_pick_channel(out, src, 2, 2, 2, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0xEE);
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_pick_channel(out, src, 2, 0, 0, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0xEE);
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_pick_channel(out, src, 2, 2, 0, AUD_FORMAT_UNKNOWN);
+  CHECK_EQ_INT(out[0], 0xEE);
+
+  /* mono in, mono out: the copy is the identity */
+  aud_format_pick_channel(out, src, 2, 1, 0, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0x11);
+  CHECK_EQ_INT(out[3], 0x44);
+
+  /* NULLs are survivable */
+  aud_format_pick_channel(NULL, src, 2, 2, 0, AUD_FORMAT_S16_LE);
+  aud_format_pick_channel(out, NULL, 2, 2, 0, AUD_FORMAT_S16_LE);
+  aud_format_pick_channel(out, src, 0, 2, 0, AUD_FORMAT_S16_LE);
+}
+
 int main(void)
 {
   RUN(format_sizes);
@@ -191,5 +293,9 @@ int main(void)
   RUN(to_float_agrees_across_the_24_bit_layouts);
   RUN(to_float_averages_nothing_where_to_mono_does);
   RUN(to_float_edge_cases);
+  RUN(pick_channel_takes_one_of_the_interleave);
+  RUN(pick_channel_carries_the_whole_container);
+  RUN(pick_channel_agrees_with_the_float_decoder);
+  RUN(pick_channel_edge_cases);
   return TEST_RESULT();
 }

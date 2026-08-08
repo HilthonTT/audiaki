@@ -93,7 +93,18 @@ Sample rate in Hz (default 44100). If the device cannot provide it, the nearest
 supported rate is used and a warning is printed.
 .TP
 .BR \-c ", " \-\-channels " " \fIN\fR
-Channel count (default 2).
+How many channels to capture (default 2).
+.TP
+.BI \-\-channel " N"
+Write only capture channel
+.IR N ,
+counting from 1, as a mono take. The device is still opened with
+.B \-\-channels
+channels; this decides which one reaches the file, for an interface that only
+offers stereo with a single input in use. The meter and the spectrum follow the
+picked channel, so the level being set is the level that is written. Monitoring
+is unaffected and still plays every channel the device delivered. Asking for a
+channel the device did not negotiate is an error.
 .TP
 .BR \-f ", " \-\-format " " \fINAME\fR
 Force a capture format:

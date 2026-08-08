@@ -10,6 +10,7 @@ systems also have `man audiaki`.
 - [Reading the meter](#reading-the-meter)
 - [Tuning up](#tuning-up)
 - [Numbering takes](#numbering-takes)
+- [Recording one channel](#recording-one-channel)
 - [Pre-roll](#pre-roll)
 - [Hearing yourself](#hearing-yourself)
 - [Playing to a click](#playing-to-a-click)
@@ -44,7 +45,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-D, --device NAME` | Capture device (default `default`, or `$AUDIAKI_DEVICE`) |
 | `--backend NAME` | `auto`, `pipewire` or `alsa` (default `auto`, or `$AUDIAKI_BACKEND`) |
 | `-r, --rate HZ` | Sample rate (default 44100) |
-| `-c, --channels N` | Channel count (default 2) |
+| `-c, --channels N` | How many channels to capture (default 2) |
+| `--channel N` | Write only capture channel `N`, counting from 1, as a mono take |
 | `-f, --format NAME` | Force `s16_le`, `s24_3le`, `s24_le` or `s32_le` |
 | `-t, --duration SPEC` | Stop after `SS`, `MM:SS` or `HH:MM:SS` |
 | `-p, --period FRAMES` | Period size (default 1024) |
@@ -179,6 +181,47 @@ It picks the first free number, so it never overwrites anything and `--force`
 never comes into it. A prefix that already carries an extension keeps it —
 `--take session.wav` also writes `session-001.wav` — and a path works as well
 as a bare name: `--take takes/riff`.
+
+## Recording one channel
+
+Plenty of interfaces only offer stereo. Plug one instrument into the first input
+and the take is half silence at twice the size, and every tool downstream has to
+be told which side the music is on. `--channel` writes one capture channel and
+nothing else:
+
+```sh
+audiaki --channel 1 riff.wav      # the left input, as a mono file
+audiaki --channel 2 riff.wav      # the right one
+```
+
+It does not change what the device is asked for. `-c` still decides how many
+channels are captured — the interface is opened as stereo either way, because
+that is all it does — and `--channel` decides which one reaches the file. The
+result is a genuine mono WAV: one channel in the header, half the bytes, and no
+silent track for an editor to strip out later.
+
+Not sure which input you are in? Record a few seconds of both and ask:
+
+```sh
+$ audiaki -t 5 -y check.wav && audiaki --info check.wav
+channels:    ch 1: peak   -8.4 dBFS  rms  -18.1 dBFS  dc +0.00000
+             ch 2: peak  -68.2 dBFS  rms  -74.9 dBFS  dc +0.00000
+```
+
+Channel 2 is an unplugged input, so `--channel 1` is the one to keep.
+
+The meter follows the channel you picked, which is the point of picking it
+before you play rather than after: the level you are setting is the level that
+lands in the file, and a channel you are not recording can clip without it
+meaning anything. Monitoring is the exception — `-M` plays back what the device
+delivered, both channels, because the output was opened to match the device and
+what you hear is a convenience rather than the product.
+
+Numbering is from 1, matching what `--info` prints. Asking for a channel the
+device did not give is an error rather than a silent fallback, and it is checked
+against what the device actually negotiated: if a card was asked for four
+channels and settled on two, `--channel 3` stops rather than recording something
+you did not ask for.
 
 ## Pre-roll
 
@@ -519,6 +562,8 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   output buffer is. It keeps the tempo; it does not sample-align the take.
 - The click is one tempo for the whole take. No tempo changes, no subdivisions,
   and nothing is written into the file to say what it was set to.
+- `--channel` picks one channel of the capture; it does not mix several down
+  to one, and monitoring still plays every channel the device delivered.
 - `--play` runs start to finish. There is no seeking, no pausing and no
   playlist; `-t` is the only way to hear less than all of it.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between

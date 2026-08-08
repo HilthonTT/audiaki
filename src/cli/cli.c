@@ -70,12 +70,14 @@ enum
   OPT_CLICK,
   OPT_CLICK_BEATS,
   OPT_CLICK_GAIN,
+  OPT_CHANNEL,
 };
 
 static const struct option long_options[] = {
     {"device", required_argument, NULL, 'D'},
     {"rate", required_argument, NULL, 'r'},
     {"channels", required_argument, NULL, 'c'},
+    {"channel", required_argument, NULL, OPT_CHANNEL},
     {"format", required_argument, NULL, 'f'},
     {"duration", required_argument, NULL, 't'},
     {"period", required_argument, NULL, 'p'},
@@ -129,6 +131,7 @@ void cli_defaults(aud_options *opts)
   opts->output_path = NULL;
   opts->rate = AUD_DEFAULT_RATE;
   opts->channels = AUD_DEFAULT_CHANNELS;
+  opts->channel = 0;
   opts->period_frames = AUD_DEFAULT_PERIOD_FRAMES;
   opts->periods = AUD_DEFAULT_PERIODS;
   opts->format = AUD_FORMAT_UNKNOWN;
@@ -207,6 +210,20 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_uint(optarg, AUD_CHANNELS_MIN, AUD_CHANNELS_MAX, &opts->channels) != 0)
       {
         bad_value("--channels", optarg, "1..64");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_CHANNEL:
+      /*
+       * Bounded against the widest capture audiaki accepts, not against what
+       * this device offers - the device has not been opened yet, and a machine
+       * with the interface unplugged should still be told that 0 is not a
+       * channel number. The real check is against the negotiated count, in
+       * cmd/record.c, once there is something to check against.
+       */
+      if (parse_uint(optarg, 1u, AUD_CHANNELS_MAX, &opts->channel) != 0)
+      {
+        bad_value("--channel", optarg, "a channel number, counting from 1");
         return CLI_EXIT_USAGE;
       }
       break;

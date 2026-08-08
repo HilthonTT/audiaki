@@ -53,6 +53,25 @@ aud_format aud_format_from_name(const char *name);
 void aud_format_repack(void *dst, const void *src, size_t samples, aud_format fmt);
 
 /*
+ * Copy channel `channel` (0-based) out of an interleaved buffer, leaving the
+ * samples in the capture layout.
+ *
+ * dst must hold frames * aud_format_hw_bytes(fmt) bytes. src must hold
+ * frames * channels * that. The buffers must not overlap.
+ *
+ * Staying in the capture layout is what makes --channel cheap: the repack, the
+ * peak, the spectrum and the WAV writer all then run unchanged with a channel
+ * count of one, rather than each growing a second path that knows about picked
+ * channels.
+ *
+ * Writes nothing when `channel` is out of range, so a caller that has not
+ * checked it against the device produces silence rather than reading past the
+ * end of a frame.
+ */
+void aud_format_pick_channel(void *dst, const void *src, size_t frames, unsigned channels,
+                             unsigned channel, aud_format fmt);
+
+/*
  * Absolute peak of an interleaved buffer, normalised to [0.0, 1.0].
  * Returns 0.0 for unknown formats or empty buffers.
  */

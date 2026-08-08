@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--channel N` records a single capture channel as a mono take. Plenty of
+  interfaces only offer stereo, so an instrument in the first input costs a file
+  that is half silence at twice the size, and every tool after it has to be told
+  which side the music is on. The device is still opened with `--channels`
+  channels; this decides which one reaches the file, and the result is a real
+  mono WAV rather than a stereo one with a dead track.
+
+- The meter and the spectrum follow the picked channel, so the level being set
+  while recording - or while armed under `--preroll` - is the level that lands
+  in the file. Metering the pair would report clipping on a channel that is not
+  being written, which is a wrong answer rather than no answer. Monitoring is
+  deliberately left alone: `-M` still plays every channel the device delivered,
+  because the output was opened to match the device and what is heard is a
+  convenience, not the product.
+
+- Channels are numbered from 1, matching what `--info` prints per channel, so
+  the report that shows one input is silent names the channel to keep. Asking
+  for one the device did not negotiate is an error rather than a silent
+  fallback, checked against the count the device actually settled on.
+
 - A metronome. `audiaki -M --click 120 take01.wav` plays a click at 120 BPM
   through the same output monitoring uses, so a take can be played in tempo
   rather than measured for it afterwards. `--click-beats` sets the bar - four by
