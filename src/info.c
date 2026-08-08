@@ -90,6 +90,7 @@ int aud_info_analyse(const char *path, aud_info_report *out)
   }
 
   channels = r.channels;
+  out->meta = r.meta;
   /* the reader shrinks r.frames the moment a file turns out to be short, so
    * what the data chunk claimed has to be taken down before reading starts */
   header_frames = r.frames;
@@ -286,6 +287,102 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   {
     fprintf(out, "dc offset:   %+.5f\n", r->channel_dc[0]);
   }
+
+  /*
+   * Last, and only what is there. Most WAV files carry none of this, and a
+   * column of empty fields would say less than their absence does.
+   */
+  if (r->meta.recorded[0] != '\0')
+  {
+    fprintf(out, "recorded:    %s\n", r->meta.recorded);
+  }
+  if (r->meta.device[0] != '\0')
+  {
+    fprintf(out, "device:      %s\n", r->meta.device);
+  }
+  if (r->meta.software[0] != '\0')
+  {
+    fprintf(out, "software:    %s\n", r->meta.software);
+  }
+  if (r->meta.note[0] != '\0')
+  {
+    fprintf(out, "note:        %s\n", r->meta.note);
+  }
+}
+
+/* -- one line per take ----------------------------------------------------- */
+
+/* room for a name, without letting one long path push the numbers off screen */
+#define INFO_NAME_MIN 12u
+#define INFO_NAME_MAX 40u
+
+unsigned aud_info_row_width(unsigned longest_name)
+{
+  if (longest_name < INFO_NAME_MIN)
+  {
+    return INFO_NAME_MIN;
+  }
+  return longest_name > INFO_NAME_MAX ? INFO_NAME_MAX : longest_name;
+}
+
+/*
+ * Long names lose their middle rather than their end: takes in a session differ
+ * in the last few characters, and a column of identical prefixes would not say
+ * which take is which.
+ */
+static void fit_name(char *dst, size_t size, const char *path, unsigned width)
+{
+  size_t len = path != NULL ? strlen(path) : 1u;
+  size_t keep;
+
+  if (path == NULL)
+  {
+    path = "-";
+  }
+  if (len <= width || width + 1u > size)
+  {
+    snprintf(dst, size, "%s", path);
+    return;
+  }
+
+  keep = width - 3u; /* the ellipsis */
+  snprintf(dst, size, "...%s", path + (len - keep));
+}
+
+void aud_info_print_row_header(FILE *out, unsigned width)
+{
+  if (out == NULL)
+  {
+    return;
+  }
+  fprintf(out, "%-*s  %10s %8s %8s %9s\n", (int)width, "FILE", "DURATION", "PEAK", "RMS",
+          "CLIPPED");
+}
+
+void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
+                        unsigned width)
+{
+  char name[INFO_NAME_MAX + 8u];
+  char clock[32];
+
+  if (out == NULL || r == NULL)
+  {
+    return;
+  }
+
+  fit_name(name, sizeof(name), path, width);
+  format_clock(clock, sizeof(clock), r->duration);
+
+  fprintf(out, "%-*s  %10s %8.1f %8.1f %9llu%s\n", (int)width, name, clock,
+          aud_format_dbfs(r->peak), aud_format_dbfs(r->rms),
+          (unsigned long long)r->clipped, r->clipped > 0 ? "  CLIP" : "");
+}
+
+/* An absent metadata field is JSON null rather than "", which aud_json_string
+ * writes for a NULL pointer. */
+static const char *or_null(const char *s)
+{
+  return *s != '\0' ? s : NULL;
 }
 
 void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
@@ -327,5 +424,23 @@ void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
     aud_json_number(out, r->channel_dc[c], 6);
     fputc('}', out);
   }
-  fputs(r->channels > 0 ? "\n  ]\n}\n" : "]\n}\n", out);
+  fputs(r->channels > 0 ? "\n  ]" : "]", out);
+
+  /*
+   * Always present, so a script can read .metadata.note without checking
+   * whether the key exists; the fields inside are null when the file said
+   * nothing, which is what "unknown" looks like in JSON.
+   */
+  fputs(",\n  \"metadata\": {", out);
+  fputs("\n    \"recorded\": ", out);
+  aud_json_string(out, or_null(r->meta.recorded));
+  fputs(",\n    \"device\": ", out);
+  aud_json_string(out, or_null(r->meta.device));
+  fputs(",\n    \"software\": ", out);
+  aud_json_string(out, or_null(r->meta.software));
+  fputs(",\n    \"note\": ", out);
+  aud_json_string(out, or_null(r->meta.note));
+  fputs(",\n    \"coding_history\": ", out);
+  aud_json_string(out, or_null(r->meta.coding_history));
+  fputs("\n  }\n}\n", out);
 }

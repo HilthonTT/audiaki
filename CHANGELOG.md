@@ -9,6 +9,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Takes that say what they are. Every recording is now stamped with the software
+  that made it, the date and time it started, the capture device it came from
+  and the signal chain, and `--note "second chorus, clean tone"` adds whatever
+  else is worth remembering. `--info` prints it all back. A take that has been
+  copied off the machine used to be a filename and a modification date, and both
+  are lost the first time someone moves it.
+- Two standard chunks rather than one invention: a `LIST`/`INFO` block, which is
+  what taggers and most players already read, and `bext`, the Broadcast Wave
+  extension every field recorder writes. Other tools pick them up without being
+  told - `ffprobe` reports the comment, the date and the coding history. `bext`
+  also carries a time reference, the samples between local midnight and the
+  first frame, which is what lets two takes from one session line up on a
+  timeline with no timecode involved.
+- `meta` module: building both chunks and reading them back, with the clock kept
+  out of the builder so the layout can be unit tested against fixed values
+  rather than against itself. The chunks go **before** the audio - where BWF
+  requires `bext`, and where they are already on disk if a recording is
+  interrupted - which is why the writer now patches its two size fields
+  separately instead of rewriting one 44 byte header.
+- `--no-metadata` for the plain 44 byte header, unchanged from what audiaki
+  wrote before, for anything that wants nothing between `fmt` and `data`. The
+  desktop app stamps its takes the same way, without a note: there is nowhere in
+  the window to type one.
+
+- `--info` over more than one file. `audiaki --info session-*.wav` reports a row
+  per take instead of a page per take, which is the shape the question actually
+  has at the end of a session - which of these do I keep, and which one clipped:
+
+  ```
+  FILE                DURATION     PEAK      RMS   CLIPPED
+  session-001.wav        41.20     -4.4    -10.7         0
+  session-002.wav      1:12.34     -0.0     -6.1      1820  CLIP
+  ```
+
+  A file that cannot be read is reported and stepped over rather than ending the
+  run, since one bad take hiding the state of the eleven after it is the
+  opposite of what measuring a session is for; the exit status is still
+  non-zero. With `--json` the same run writes an array of the objects `--info`
+  already wrote for one file, and a single file still writes the single object.
+
 - Hearing the take while it is recorded. `audiaki -M take01.wav` plays the
   capture stream through an output as it is written, so the level, the tone and
   the room can be checked while playing rather than afterwards. The desktop app

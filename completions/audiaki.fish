@@ -29,6 +29,8 @@ complete -c audiaki -s p -l period -d 'Period size in frames' -x
 complete -c audiaki -s n -l periods -d 'Periods per buffer' -x
 complete -c audiaki -l take -d 'Write the next free PREFIX-001.wav' -r
 complete -c audiaki -l preroll -d 'Hold SECS and wait for Enter before recording' -x
+complete -c audiaki -l note -d 'Stamp the take with a note, up to 200 characters' -x
+complete -c audiaki -l no-metadata -d 'Write a plain 44-byte header, unstamped'
 complete -c audiaki -l spectrum -d 'Show live spectrum bars instead of the peak bar'
 complete -c audiaki -l no-meter -d 'Draw nothing while recording'
 complete -c audiaki -s M -l monitor -d 'Hear the input while recording it (use headphones)'
@@ -45,7 +47,7 @@ complete -c audiaki -l bars -d 'Number of spectrum bars' -x
 complete -c audiaki -l tune -d 'Show the pitch of what is being played, then exit'
 complete -c audiaki -l a4 -d 'Tuner reference pitch in Hz' -x
 
-complete -c audiaki -l info -d 'Report levels and clipping for a WAV and exit' -r -a '(__fish_complete_suffix .wav)'
+complete -c audiaki -l info -d 'Report levels and clipping for one or more WAVs and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l play -d 'Play a WAV through the output and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l json -d 'Machine readable --list, --probe and --info'
 complete -c audiaki -s y -l force -d 'Overwrite the output file if it exists'

@@ -12,6 +12,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 - [Pitch detection](#pitch-detection)
 - [Pre-roll](#pre-roll)
 - [Measuring a take](#measuring-a-take)
+- [What a take carries](#what-a-take-carries)
 - [Playing one back](#playing-one-back)
 
 ## Layout
@@ -26,6 +27,7 @@ src/
   device_pipewire.c ...over libpipewire, when it was compiled in
   recorder.c/.h capture loop: device -> repack -> WAV
   wav.c/.h      streaming WAV writer, and a tolerant WAV reader
+  meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
   info.c/.h     measure a finished take: levels, clipping, noise floor
   preroll.c/.h  the seconds held before a take starts, kept bit for bit
   take.c/.h     numbered take filenames for --take
@@ -61,8 +63,9 @@ vendor/raylib/  submodule, only needed for the desktop app
 No audio system appears above `backend.h`: `device.c` and `monitor.c` are
 dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
 `<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
-`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll` and
-`jsonout` are plain C that builds and tests anywhere — which is what CI does.
+`fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll`,
+`meta` and `jsonout` are plain C that builds and tests anywhere — which is what
+CI does.
 
 The analysis is shared three ways: the terminal display, the video renderer and
 the desktop app all run the same `spectrum` module, the terminal and desktop
@@ -224,6 +227,37 @@ The reader is deliberately more forgiving than the writer is strict, because it
 has to cope with files other tools produced: 8/16/24/32-bit PCM and 32/64-bit
 float, in any chunk order, with unknown chunks skipped. A take interrupted
 before its header was patched is reported as truncated rather than refused.
+
+## What a take carries
+
+A take is stamped with a `LIST`/`INFO` block and a `bext` block — the Broadcast
+Wave extension every field recorder writes. Two chunk formats rather than one
+because they are read by different things: `LIST`/`INFO` is what taggers and
+players already understand, and `bext` is what audio tools expect, including the
+time reference that lets two takes from a session line up on a timeline without
+either carrying timecode.
+
+They go **before** the audio, which costs more than appending them would. The
+data chunk no longer starts at offset 44, so the two size fields are patched
+separately on close rather than by rewriting one header. What that buys is a
+file that is already described before a single frame is in it: a recording
+killed halfway still says what made it and when, and BWF requires `bext` ahead
+of `data` in any case.
+
+Reading them back is the same walk `--info` already did, so only chunks before
+the audio are seen — the reader stops at `data`, and continuing past it would
+mean seeking through gigabytes of payload on every open to find tags almost no
+file has.
+
+The clock is not in `meta.c`'s builder. `aud_meta_build()` is a pure function of
+the struct it is handed and `aud_meta_stamp_now()` is what asks the system for
+the time, which is the whole reason the chunk layout can be unit tested at all —
+a builder that called `time()` could only be tested against itself.
+
+There is no standard RIFF tag for "the device this was captured from". The
+device goes in the `bext` coding history, whose free text `T=` field is meant
+for exactly this, and in `ISRC`, which in RIFF/INFO means the source of the
+material rather than the music industry's recording code.
 
 ## Playing one back
 

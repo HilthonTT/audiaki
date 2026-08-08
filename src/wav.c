@@ -24,8 +24,15 @@ static void put_u32(unsigned char *p, uint32_t v)
   p[3] = (unsigned char)((v >> 24) & 0xFFu);
 }
 
-void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
-                      uint32_t rate, uint16_t channels, uint16_t bits)
+/*
+ * The canonical header, with `extra_bytes` of chunks understood to sit between
+ * the fmt and data chunks. They are not written here - only counted, because
+ * the RIFF size has to include them - so the caller writes the first 36 bytes,
+ * then its own chunks, then the last 8.
+ */
+static void build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
+                         uint32_t extra_bytes, uint32_t rate, uint16_t channels,
+                         uint16_t bits)
 {
   uint16_t block_align = (uint16_t)(channels * (bits / 8u));
   uint32_t byte_rate = rate * block_align;
@@ -33,7 +40,7 @@ void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
   uint32_t pad = data_bytes & 1u;
 
   memcpy(out + 0, "RIFF", 4);
-  put_u32(out + 4, 36u + data_bytes + pad);
+  put_u32(out + 4, 36u + extra_bytes + data_bytes + pad);
   memcpy(out + 8, "WAVE", 4);
 
   memcpy(out + 12, "fmt ", 4);
@@ -49,32 +56,61 @@ void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
   put_u32(out + 40, data_bytes);
 }
 
+void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
+                      uint32_t rate, uint16_t channels, uint16_t bits)
+{
+  build_header(out, data_bytes, 0, rate, channels, bits);
+}
+
+/*
+ * Patch the two size fields in place. With no metadata this is one write of the
+ * whole 44 byte header; with metadata the header is in two pieces with the
+ * chunks between them, and each piece is written where it belongs.
+ */
 static int write_header(wav_writer *w, uint32_t data_bytes)
 {
   unsigned char header[WAV_HEADER_BYTES];
 
-  wav_build_header(header, data_bytes, w->rate, w->channels, w->bits);
+  build_header(header, data_bytes, w->meta_bytes, w->rate, w->channels, w->bits);
 
   if (fseek(w->file, 0, SEEK_SET) != 0)
   {
     return -1;
   }
-  if (fwrite(header, 1, sizeof(header), w->file) != sizeof(header))
+  if (w->meta_bytes == 0)
+  {
+    return fwrite(header, 1, sizeof(header), w->file) == sizeof(header) ? 0 : -1;
+  }
+
+  if (fwrite(header, 1, 36u, w->file) != 36u)
   {
     return -1;
   }
-  return 0;
+  if (fseek(w->file, (long)(36u + w->meta_bytes), SEEK_SET) != 0)
+  {
+    return -1;
+  }
+  return fwrite(header + 36, 1, 8u, w->file) == 8u ? 0 : -1;
 }
 
-int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
-             uint16_t bits, int overwrite)
+int wav_open_meta(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
+                  uint16_t bits, int overwrite, const aud_meta *meta)
 {
+  unsigned char chunks[AUD_META_MAX_BYTES];
+  unsigned char header[WAV_HEADER_BYTES];
+  size_t meta_bytes = 0;
+
   memset(w, 0, sizeof(*w));
 
   if (path == NULL || rate == 0 || channels == 0 || bits == 0 || (bits % 8u) != 0)
   {
     errno = EINVAL;
     return -1;
+  }
+
+  if (meta != NULL)
+  {
+    meta_bytes = aud_meta_build(meta, chunks, sizeof(chunks));
   }
 
   /* "x" fails with EEXIST rather than truncating someone's earlier take. */
@@ -89,8 +125,13 @@ int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
   w->channels = channels;
   w->bits = bits;
   w->data_bytes = 0;
+  w->meta_bytes = (uint32_t)meta_bytes;
 
-  if (write_header(w, 0) != 0)
+  /* straight through, in file order: RIFF and fmt, the chunks, the data header */
+  build_header(header, 0, w->meta_bytes, rate, channels, bits);
+  if (fwrite(header, 1, 36u, w->file) != 36u ||
+      (meta_bytes > 0 && fwrite(chunks, 1, meta_bytes, w->file) != meta_bytes) ||
+      fwrite(header + 36, 1, 8u, w->file) != 8u)
   {
     int saved = errno;
     fclose(w->file);
@@ -99,6 +140,12 @@ int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
     return -1;
   }
   return 0;
+}
+
+int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
+             uint16_t bits, int overwrite)
+{
+  return wav_open_meta(w, path, rate, channels, bits, overwrite, NULL);
 }
 
 int wav_write(wav_writer *w, const void *data, size_t bytes)
@@ -312,6 +359,35 @@ int wav_read_open(wav_reader *r, const char *path)
         tag = get_u16(fmt + 24);
       }
       have_fmt = 1;
+    }
+    /*
+     * Metadata is read where it belongs, ahead of the audio - the loop stops
+     * at the data chunk, so chunks an editor appended after the payload are
+     * not seen. A take audiaki wrote always has its own before the data.
+     */
+    else if (memcmp(head, "LIST", 4) == 0 || memcmp(head, "bext", 4) == 0)
+    {
+      unsigned char body[AUD_META_MAX_BYTES];
+      size_t take = size < sizeof(body) ? size : sizeof(body);
+
+      if (read_exact(r->file, body, take) != 0)
+      {
+        break;
+      } /* truncated: the audio may still be readable */
+
+      if (memcmp(head, "LIST", 4) == 0)
+      {
+        aud_meta_read_list(&r->meta, body, take);
+      }
+      else
+      {
+        aud_meta_read_bext(&r->meta, body, take);
+      }
+
+      if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
+      {
+        break;
+      }
     }
     else if (memcmp(head, "data", 4) == 0)
     {

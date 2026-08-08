@@ -93,6 +93,78 @@ TEST(write_and_finalise)
   remove(g_path);
 }
 
+TEST(metadata_sits_between_fmt_and_data)
+{
+  wav_writer w;
+  wav_reader r;
+  unsigned char file[4096];
+  const unsigned char pcm[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  aud_meta meta;
+  long size;
+  uint32_t meta_bytes;
+
+  aud_meta_defaults(&meta);
+  meta.device = "hw:CARD=Box,DEV=0";
+  meta.note = "take three";
+  meta.rate = 48000;
+  meta.channels = 2;
+  meta.bits = 16;
+  meta.year = 2026;
+  meta.month = 8;
+  meta.day = 8;
+
+  CHECK_EQ_INT(wav_open_meta(&w, g_path, 48000, 2, 16, 1, &meta), 0);
+  meta_bytes = w.meta_bytes;
+  CHECK(meta_bytes > 0);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  size = slurp(g_path, file, sizeof(file));
+  CHECK_EQ_INT(size, (long)(WAV_HEADER_BYTES + meta_bytes + sizeof(pcm)));
+
+  /* fmt where it always was, the chunks after it, then data */
+  CHECK(memcmp(file + 12, "fmt ", 4) == 0);
+  CHECK(memcmp(file + 36, "LIST", 4) == 0);
+  CHECK(memcmp(file + 36 + meta_bytes, "data", 4) == 0);
+
+  /* both sizes account for what is between them */
+  CHECK_EQ_INT(read_u32(file + 4), 36 + (long)meta_bytes + (long)sizeof(pcm));
+  CHECK_EQ_INT(read_u32(file + 36 + meta_bytes + 4), (long)sizeof(pcm));
+  CHECK(memcmp(file + 44 + meta_bytes, pcm, sizeof(pcm)) == 0);
+
+  /* and the reader finds the audio and the description of it */
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.rate, 48000);
+  CHECK_EQ_INT(r.channels, 2);
+  CHECK_EQ_INT(r.frames, 2);
+  CHECK(r.meta.present);
+  CHECK_EQ_STR(r.meta.note, "take three");
+  CHECK_EQ_STR(r.meta.device, "hw:CARD=Box,DEV=0");
+  CHECK_EQ_STR(r.meta.recorded, "2026-08-08 00:00:00");
+  wav_read_close(&r);
+
+  remove(g_path);
+}
+
+TEST(a_file_without_metadata_reads_back_empty)
+{
+  wav_writer w;
+  wav_reader r;
+  const unsigned char pcm[4] = {0, 0, 0, 0};
+
+  CHECK_EQ_INT(wav_open(&w, g_path, 44100, 1, 16, 1), 0);
+  CHECK_EQ_INT(w.meta_bytes, 0);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.meta.present, 0);
+  CHECK_EQ_STR(r.meta.note, "");
+  wav_read_close(&r);
+
+  remove(g_path);
+}
+
 TEST(odd_payload_gets_pad_byte)
 {
   wav_writer w;
@@ -466,6 +538,8 @@ int main(void)
   RUN(header_layout);
   RUN(header_counts_pad_byte_in_riff_size);
   RUN(write_and_finalise);
+  RUN(metadata_sits_between_fmt_and_data);
+  RUN(a_file_without_metadata_reads_back_empty);
   RUN(odd_payload_gets_pad_byte);
   RUN(refuses_to_clobber_without_force);
   RUN(rejects_invalid_geometry);

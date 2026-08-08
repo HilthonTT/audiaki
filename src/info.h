@@ -11,6 +11,8 @@
 #ifndef AUDIAKI_INFO_H
 #define AUDIAKI_INFO_H
 
+#include "meta.h"
+
 #include <stdint.h>
 #include <stdio.h>
 
@@ -41,6 +43,9 @@ typedef struct
   double channel_peak[AUD_INFO_MAX_CHANNELS];
   double channel_rms[AUD_INFO_MAX_CHANNELS];
   double channel_dc[AUD_INFO_MAX_CHANNELS]; /* mean sample value */
+
+  /* what the file says about itself, if anything; see meta.h */
+  aud_meta_info meta;
 } aud_info_report;
 
 /*
@@ -60,5 +65,19 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r);
 
 /* The same numbers as a single JSON object, for --json. */
 void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r);
+
+/*
+ * One take per line instead, for the several files --info accepts at once.
+ * Twelve takes down a session, the question is which of them clipped and which
+ * came out too quiet - not the full report on each, twelve times over.
+ *
+ * aud_info_print_row_header() writes the column headings once, then a row per
+ * file. `width` is how much room to give the name column; pass the longest name
+ * about to be printed, and aud_info_row_width() will bound it sensibly.
+ */
+unsigned aud_info_row_width(unsigned longest_name);
+void aud_info_print_row_header(FILE *out, unsigned width);
+void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
+                        unsigned width);
 
 #endif /* AUDIAKI_INFO_H */

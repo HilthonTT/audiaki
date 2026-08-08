@@ -90,6 +90,10 @@ _audiaki()
             _audiaki_files
             return
             ;;
+        # free text, with nothing to guess
+        --note)
+            return
+            ;;
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
         --preroll | --pre-roll | --monitor-gain)
@@ -101,7 +105,8 @@ _audiaki()
 
     if [[ $cur == -* ]]; then
         opts="--device --backend --rate --channels --format --duration --period
-              --periods --output --force --take --preroll --spectrum --no-meter
+              --periods --output --force --take --preroll --note --no-metadata
+              --spectrum --no-meter
               --monitor --monitor-device --monitor-gain
               --visualize --style --size --fps --bars --tune --a4 --info --play --json
               --quiet --verbose --list --probe --help --version"

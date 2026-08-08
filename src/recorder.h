@@ -34,6 +34,15 @@ typedef struct
   int monitor;
   const char *monitor_device;
   float monitor_gain;
+  /*
+   * Stamp the take with what made it, when, and from what device - see meta.h.
+   * On by default; clearing it writes the plain 44 byte header instead, for
+   * anyone whose tools want nothing between the fmt and data chunks.
+   *
+   * `note` is free text to carry along with it, or NULL for none.
+   */
+  int metadata;
+  const char *note;
 } aud_recorder_options;
 
 typedef struct

@@ -86,6 +86,8 @@ static int run_record(const aud_options *opts)
   rec_opts.monitor = opts->monitor;
   rec_opts.monitor_device = opts->monitor_device;
   rec_opts.monitor_gain = (float)opts->monitor_gain;
+  rec_opts.metadata = opts->metadata;
+  rec_opts.note = opts->note;
 
   rc = aud_recorder_run(&dev, &rec_opts, NULL);
   aud_device_close(&dev);
@@ -200,25 +202,101 @@ static int run_play(const aud_options *opts)
   return aud_play_run(&play) == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+/* The file --info named, then any that followed it. */
+static const char *info_path(const aud_options *opts, int index)
+{
+  return index == 0 ? opts->input_path : opts->extra_inputs[index - 1];
+}
+
+/*
+ * One file gets the full report it always did. Several get a row each, because
+ * the question behind 'audiaki --info session-*.wav' is which take to keep, and
+ * twelve reports in a row answer it worse than twelve lines do.
+ */
 static int run_info(const aud_options *opts)
 {
-  aud_info_report report;
+  int count = opts->extra_input_count + 1;
+  unsigned width = 0;
+  int failures = 0;
+  int printed = 0;
 
-  if (aud_info_analyse(opts->input_path, &report) != 0)
+  if (count == 1)
   {
-    return EXIT_FAILURE;
+    aud_info_report report;
+
+    if (aud_info_analyse(opts->input_path, &report) != 0)
+    {
+      return EXIT_FAILURE;
+    }
+
+    if (opts->json)
+    {
+      aud_info_print_json(stdout, opts->input_path, &report);
+    }
+    else
+    {
+      aud_info_print(stdout, opts->input_path, &report);
+    }
+    return EXIT_SUCCESS;
+  }
+
+  for (int i = 0; i < count; i++)
+  {
+    size_t len = strlen(info_path(opts, i));
+
+    if (len > width)
+    {
+      width = (unsigned)len;
+    }
+  }
+  width = aud_info_row_width(width);
+
+  if (opts->json)
+  {
+    fputs("[\n", stdout);
+  }
+
+  for (int i = 0; i < count; i++)
+  {
+    const char *path = info_path(opts, i);
+    aud_info_report report;
+
+    /*
+     * A file that cannot be read is reported and stepped over. Stopping at the
+     * first one would hide the state of every take after it, which is the
+     * opposite of what measuring a whole session is for.
+     */
+    if (aud_info_analyse(path, &report) != 0)
+    {
+      failures++;
+      continue;
+    }
+
+    if (opts->json)
+    {
+      if (printed > 0)
+      {
+        fputs(",\n", stdout);
+      }
+      aud_info_print_json(stdout, path, &report);
+    }
+    else
+    {
+      if (printed == 0)
+      {
+        aud_info_print_row_header(stdout, width);
+      }
+      aud_info_print_row(stdout, path, &report, width);
+    }
+    printed++;
   }
 
   if (opts->json)
   {
-    aud_info_print_json(stdout, opts->input_path, &report);
-  }
-  else
-  {
-    aud_info_print(stdout, opts->input_path, &report);
+    fputs("]\n", stdout);
   }
 
-  return EXIT_SUCCESS;
+  return failures > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }
 
 int main(int argc, char *argv[])

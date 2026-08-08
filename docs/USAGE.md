@@ -12,6 +12,7 @@ systems also have `man audiaki`.
 - [Numbering takes](#numbering-takes)
 - [Pre-roll](#pre-roll)
 - [Hearing yourself](#hearing-yourself)
+- [What a take says about itself](#what-a-take-says-about-itself)
 - [Checking a take](#checking-a-take)
 - [Playing one back](#playing-one-back)
 - [Scripting](#scripting)
@@ -48,6 +49,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-n, --periods N` | Periods per buffer (default 4) |
 | `-y, --force` | Overwrite an existing output file |
 | `--take PREFIX` | Write the next free `PREFIX-001.wav` |
+| `--note TEXT` | Stamp the take with a note, up to 200 characters |
+| `--no-metadata` | Write a plain 44-byte header with nothing about the take |
 | `--preroll SECS` | Hold SECS and wait for Enter; the take starts that far back |
 | `--spectrum` | Live spectrum bars instead of the peak bar |
 | `--no-meter` | Do not draw anything while recording |
@@ -62,7 +65,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--bars N` | Spectrum bar count (default 64) |
 | `--tune` | Show the pitch of what is being played, until Ctrl+C |
 | `--a4 HZ` | Tuner reference pitch (default 440) |
-| `--info FILE` | Report levels and clipping for a WAV and exit |
+| `--info FILE` | Report levels and clipping for a WAV and exit; more files may follow |
 | `--play FILE` | Play a WAV through the output and exit |
 | `--json` | Machine-readable `--list`, `--probe` and `--info` |
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
@@ -247,6 +250,54 @@ against. Frames the output cannot keep up with are
 dropped rather than queued, so the monitor may skip on a busy machine without
 that reaching the file — `-v` reports the count at the end.
 
+## What a take says about itself
+
+Every take is stamped with what made it, when, and from what:
+
+```sh
+audiaki --note "second chorus, clean tone" take01.wav
+```
+
+```
+$ audiaki --info take01.wav
+...
+recorded:    2026-08-08 12:13:23
+device:      hw:CARD=Box,DEV=0
+software:    audiaki 1.0.0
+note:        second chorus, clean tone
+```
+
+The stamp is two standard chunks written ahead of the audio: a `LIST`/`INFO`
+block, which is what taggers and players read, and a `bext` block — the
+Broadcast Wave extension every field recorder writes. Other tools see them
+without being told to:
+
+```sh
+$ ffprobe -show_format take01.wav
+TAG:comment=second chorus, clean tone
+TAG:date=2026-08-08
+TAG:coding_history=A=PCM,F=48000,W=24,M=stereo,T=audiaki 1.0.0; hw:CARD=Box,DEV=0
+```
+
+`bext` also carries a **time reference**: how many samples separate local
+midnight from the first frame. Two takes from one session line up on a timeline
+from that alone, with no timecode involved.
+
+The time is when the take started. With `--preroll` that is when you pressed
+Enter, so the pre-roll seconds are older than the timestamp by exactly the
+pre-roll — the only reading of it that does not need the pre-roll length to
+make sense of.
+
+None of it touches a sample of audio: the payload is the same PCM it always
+was, and the whole stamp costs under a kilobyte. `--no-metadata` writes the
+plain 44-byte header instead, for a tool that wants nothing between the `fmt`
+and `data` chunks. The desktop app stamps its takes the same way, minus the
+note, since there is nowhere in the window to type one.
+
+Metadata is read back from chunks that sit **before** the audio, which is where
+audiaki writes them and where the BWF specification requires `bext`. A file
+whose editor appended tags after the payload will read as having none.
+
 ## Checking a take
 
 ```
@@ -268,6 +319,22 @@ Peak is the loudest single sample; if `clipped` is not zero, that many samples
 sat at full scale and the take is distorted. `--info` reads whatever the reader
 accepts, including files other tools wrote. What the noise floor and DC figures
 mean: [DESIGN.md](../DESIGN.md#measuring-a-take).
+
+Name more than one file and each gets a line instead, which is the shape the
+question takes at the end of a session — which of these do I keep?
+
+```
+$ audiaki --info session-*.wav
+FILE                DURATION     PEAK      RMS   CLIPPED
+session-001.wav        41.20     -4.4    -10.7         0
+session-002.wav      1:12.34     -0.0     -6.1      1820  CLIP
+session-003.wav        38.05    -14.2    -22.8         0
+```
+
+A file that cannot be read is reported on stderr and stepped over, so one bad
+take does not hide the state of the rest; the exit status is still non-zero.
+With `--json` the same run writes an array of the single-file objects rather
+than a table.
 
 ## Playing one back
 
@@ -307,7 +374,13 @@ array to stdout, with diagnostics staying on stderr:
 ```sh
 audiaki --list --json | jq -r '.[].device'
 audiaki --info take01.wav --json | jq '.peak_dbfs, .clipped_samples'
+audiaki --info take01.wav --json | jq -r '.metadata.note'
+audiaki --info session-*.wav --json | jq -r '.[] | select(.clipped_samples > 0).file'
 ```
+
+`--info` over several files writes an array; over one it writes the single
+object it always did. Every report carries a `metadata` object, whose fields
+are `null` when the file said nothing about itself.
 
 ## Rendering a video
 
@@ -369,8 +442,11 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 ## Limitations
 
 - Little-endian hosts only; WAV is little-endian and no byte swapping is done.
-- Plain 44-byte PCM WAV, so recordings stop at the 4 GB RIFF limit
-  (about 3.5 hours of 24-bit stereo at 48 kHz).
+- PCM WAV with a `LIST`/`INFO` and `bext` stamp ahead of the audio, so
+  recordings stop at the 4 GB RIFF limit (about 3.5 hours of 24-bit stereo at
+  48 kHz). `--no-metadata` gets the plain 44-byte header back.
+- Metadata is read only from chunks before the audio. A file whose tags were
+  appended after the payload reads as having none.
 - Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.

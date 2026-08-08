@@ -152,6 +152,19 @@ duration. When standard input reaches its end - a pipe, or
 The buffer is resident memory: a minute of 24\-bit stereo at 48 kHz is about
 17 MiB, and a wider or faster stream is proportionally more.
 .TP
+.BR \-\-note " " \fITEXT\fR
+Stamp the take with a note, up to 200 characters, readable again with
+.BR \-\-info .
+It goes in both metadata chunks: the LIST/INFO comment tag that taggers and
+players read, and the bext description field.
+.TP
+.B \-\-no\-metadata
+Write the plain 44 byte header, with nothing between the fmt and data chunks.
+Takes are stamped with the software, the date and time, the capture device and
+the signal chain by default; this is for a tool that wants none of it. See
+.B TAKE METADATA
+below.
+.TP
 .B \-\-spectrum
 Draw live spectrum bars instead of the peak bar. The number of bars follows the
 terminal width. Block drawing characters are used when the locale is UTF-8, and
@@ -305,9 +318,21 @@ Measure
 .I FILE
 and exit. Reports its format and duration, the peak and RMS level in dBFS, an
 estimated noise floor, how many samples reached full scale, and the peak, RMS
-and DC offset of each channel separately. See
+and DC offset of each channel separately, followed by whatever the file says
+about itself. See
 .B TAKE REPORT
 below.
+.IP
+Further files may follow the first, and then each is reported as a single row
+instead \- which is the shape the question takes at the end of a session:
+.IP
+.nf
+audiaki \-\-info session\-*.wav
+.fi
+.IP
+A file that cannot be read is reported on standard error and stepped over, so
+one unreadable take does not hide the state of the rest. The exit status is
+still non\-zero.
 .TP
 .B \-\-json
 Write the output of
@@ -420,7 +445,16 @@ each note is reported once as it settles instead:
  clipped:     0 sample(s)
  channels:    ch 1: peak   \-4.4 dBFS  rms   \-8.7 dBFS  dc +0.00000
               ch 2: peak  \-10.5 dBFS  rms  \-14.7 dBFS  dc \-0.00029
+ recorded:    2026\-08\-08 12:13:23
+ device:      hw:CARD=Box,DEV=0
+ software:    audiaki 1.0.0
+ note:        second chorus, clean tone
 .fi
+.PP
+The last four lines are what the file says about itself, and appear only when
+it says it. See
+.B TAKE METADATA
+below.
 .PP
 .B peak
 is the loudest single sample in the take and
@@ -444,6 +478,80 @@ about it.
 A file whose data chunk claims more frames than it holds \- a recording killed
 before its header was patched \- is reported as truncated, and every figure
 describes what is actually there.
+.PP
+Naming more than one file reports a row each instead, for triaging a session:
+.PP
+.nf
+ $ audiaki \-\-info session\-*.wav
+ FILE                DURATION     PEAK      RMS   CLIPPED
+ session\-001.wav        41.20     \-4.4    \-10.7         0
+ session\-002.wav      1:12.34     \-0.0     \-6.1      1820  CLIP
+ session\-003.wav        38.05    \-14.2    \-22.8         0
+.fi
+.PP
+A long name loses its middle rather than its end, because takes in a session
+differ in the last few characters and a column of identical prefixes would not
+say which take is which.
+.SH TAKE METADATA
+Every take audiaki records is stamped with what made it, when, and from what.
+Two standard chunks go in ahead of the audio:
+.TP
+.B LIST/INFO
+The tags taggers and most players already read: the software
+.RB ( ISFT ),
+the date
+.RB ( ICRD ),
+the capture device
+.RB ( ISRC ,
+which in RIFF/INFO means the source of the material rather than the music
+industry's recording code) and the note from
+.B \-\-note
+.RB ( ICMT ).
+.TP
+.B bext
+The Broadcast Wave extension, EBU Tech 3285, which every field recorder writes:
+the origination date and time, a description, and a coding history line naming
+the format and the device in the EBU R98 form
+.IR "A=PCM,F=48000,W=24,M=stereo,T=audiaki 1.0.0; hw:CARD=Box,DEV=0" .
+.IP
+It also carries a
+.BR "time reference" :
+the number of samples between local midnight and the first frame of the take.
+Two takes from one session line up on a timeline from that alone, without
+either carrying timecode.
+.PP
+The time recorded is when the take started. With
+.B \-\-preroll
+that is the moment Enter was pressed, so the pre\-roll seconds are older than
+the timestamp by exactly the pre\-roll \- the only reading of it that does not
+need the pre\-roll length to make sense of.
+.PP
+None of it touches a sample of audio: the payload is the same interleaved PCM,
+the whole stamp costs under a kilobyte, and the chunks sit between
+.B fmt
+and
+.BR data ,
+which is where the BWF specification requires bext and where they are already
+on disk if a recording is interrupted.
+.B \-\-no\-metadata
+writes the plain 44 byte header instead.
+.PP
+.B \-\-info
+reads the stamp back, and so does anything else that walks a chunk list:
+.PP
+.nf
+ $ ffprobe \-show_format take01.wav
+ TAG:comment=second chorus, clean tone
+ TAG:date=2026\-08\-08
+ TAG:coding_history=A=PCM,F=48000,W=24,M=stereo,T=audiaki 1.0.0; hw:CARD=Box,DEV=0
+.fi
+.PP
+Only chunks ahead of the audio are read back. A file whose editor appended its
+tags after the payload reads as having none.
+.PP
+.B audiaki\-gui
+stamps its takes the same way, without a note: there is nowhere in the window
+to type one.
 .SH PLAYBACK
 .B \-\-play
 draws the meter described under
@@ -794,13 +902,21 @@ audiaki \-\-visualize take01.wav \-\-size 1080p
 .RE
 .fi
 .PP
-Track a part over several attempts, then check how the last one came out:
+Track a part over several attempts, then check how they came out:
 .PP
 .nf
 .RS
-audiaki \-\-take session
-audiaki \-\-take session
-audiaki \-\-info session\-002.wav
+audiaki \-\-take session \-\-note "clean tone"
+audiaki \-\-take session \-\-note "with the pedal"
+audiaki \-\-info session\-*.wav
+.RE
+.fi
+.PP
+Find the takes that clipped, out of a session's worth:
+.PP
+.nf
+.RS
+audiaki \-\-info session\-*.wav \-\-json | jq \-r '.[] | select(.clipped_samples > 0).file'
 .RE
 .fi
 .PP

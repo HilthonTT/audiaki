@@ -537,6 +537,7 @@ aud_format aud_engine_format(const aud_engine *e)
 
 int aud_engine_start(aud_engine *e, const char *path, int overwrite)
 {
+  aud_meta meta;
   int rc = -1;
 
   if (e == NULL || path == NULL || path[0] == '\0')
@@ -564,9 +565,18 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
   }
   snprintf(e->path, sizeof(e->path), "%s", path);
 
+  /* the window has nowhere to type a note, but the rest of it is known here
+   * just as well as it is on the command line */
+  aud_meta_defaults(&meta);
+  meta.device = e->dev.name;
+  meta.rate = e->dev.rate;
+  meta.channels = e->dev.channels;
+  meta.bits = aud_format_wav_bits(e->dev.format);
+  aud_meta_stamp_now(&meta, e->dev.rate);
+
   /* e->path, not the caller's buffer: the writer keeps the pointer */
-  if (wav_open(&e->wav, e->path, e->dev.rate, (uint16_t)e->dev.channels,
-               (uint16_t)aud_format_wav_bits(e->dev.format), overwrite) != 0)
+  if (wav_open_meta(&e->wav, e->path, e->dev.rate, (uint16_t)e->dev.channels,
+                    (uint16_t)aud_format_wav_bits(e->dev.format), overwrite, &meta) != 0)
   {
     if (errno == EEXIST)
     {

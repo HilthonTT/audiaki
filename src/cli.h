@@ -44,6 +44,12 @@ typedef struct
   const char *output_path;
   const char *input_path;  /* --visualize, --info and --play source WAV */
   const char *take_prefix; /* --take; output_path is derived from it */
+  /*
+   * Files named after the first one, which only --info accepts: measuring a
+   * session means measuring every take in it. Points into argv.
+   */
+  char **extra_inputs;
+  int extra_input_count;
   unsigned rate;
   unsigned channels;
   unsigned period_frames;
@@ -57,6 +63,8 @@ typedef struct
   int monitor;                /* hear the input while it is being recorded */
   const char *monitor_device; /* output to monitor through; NULL = the default */
   double monitor_gain;        /* what the monitor is scaled by, not the file */
+  int metadata;               /* stamp the take with what made it; see meta.h */
+  const char *note;           /* free text to stamp along with it */
   unsigned viz_width;
   unsigned viz_height;
   unsigned viz_fps;

@@ -2,6 +2,7 @@
 #include "cli.h"
 
 #include "device.h"
+#include "meta.h"
 #include "monitor.h"
 #include "parse.h"
 #include "preroll.h"
@@ -67,6 +68,8 @@ enum
   OPT_PLAY,
   OPT_MONITOR_DEVICE,
   OPT_MONITOR_GAIN,
+  OPT_NOTE,
+  OPT_NO_METADATA,
 };
 
 static const struct option long_options[] = {
@@ -81,6 +84,8 @@ static const struct option long_options[] = {
     {"force", no_argument, NULL, 'y'},
     {"quiet", no_argument, NULL, 'q'},
     {"verbose", no_argument, NULL, 'v'},
+    {"note", required_argument, NULL, OPT_NOTE},
+    {"no-metadata", no_argument, NULL, OPT_NO_METADATA},
     {"monitor", no_argument, NULL, 'M'},
     {"monitor-device", required_argument, NULL, OPT_MONITOR_DEVICE},
     {"monitor-gain", required_argument, NULL, OPT_MONITOR_GAIN},
@@ -131,6 +136,10 @@ void cli_defaults(aud_options *opts)
   opts->monitor = 0;
   opts->monitor_device = NULL;
   opts->monitor_gain = 1.0;
+  opts->metadata = 1;
+  opts->note = NULL;
+  opts->extra_inputs = NULL;
+  opts->extra_input_count = 0;
   opts->input_path = NULL;
   opts->take_prefix = NULL;
   opts->viz_width = AUD_VIZ_DEFAULT_WIDTH;
@@ -184,6 +193,10 @@ void cli_print_usage(FILE *out)
           "      --take PREFIX     write the next free PREFIX-001.wav\n"
           "      --preroll SECS    hold SECS of audio and wait for Enter, so the\n"
           "                        take starts SECS before the keypress\n"
+          "      --note TEXT       stamp the take with a note (up to %u\n"
+          "                        characters), readable again with --info\n"
+          "      --no-metadata     write a plain 44-byte header, with nothing\n"
+          "                        about the take in it\n"
           "      --spectrum        show live spectrum bars instead of the peak bar\n"
           "      --no-meter        do not draw anything while recording\n"
           "  -M, --monitor         play the input back while recording it; use\n"
@@ -191,7 +204,16 @@ void cli_print_usage(FILE *out)
           "      --monitor-device NAME\n"
           "                        output to monitor through (default: %s)\n"
           "      --monitor-gain X  scale what is monitored, 0.0 to 2.0; the file\n"
-          "                        is unaffected (default: 1.0)\n"
+          "                        is unaffected (default: 1.0)\n",
+          CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
+          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_META_NOTE_MAX,
+          AUD_MONITOR_DEFAULT_DEVICE);
+
+  /*
+   * A second call rather than a longer string: C99 only guarantees 4095
+   * characters in a string literal, and the help text passed that.
+   */
+  fprintf(out,
           "\n"
           "Visualiser options:\n"
           "      --visualize FILE  render FILE (a WAV) to a video and exit\n"
@@ -217,7 +239,9 @@ void cli_print_usage(FILE *out)
           "Common options:\n"
           "      --backend NAME    auto, pipewire or alsa (default: auto,\n"
           "                        $AUDIAKI_BACKEND)\n"
-          "      --info FILE       report levels and clipping for FILE and exit\n"
+          "      --info FILE       report levels and clipping for FILE and exit;\n"
+          "                        further files may follow, and are reported as\n"
+          "                        one row each\n"
           "      --json            machine readable --list, --probe and --info\n"
           "  -y, --force           overwrite the output file if it exists\n"
           "  -q, --quiet           errors only\n"
@@ -238,8 +262,10 @@ void cli_print_usage(FILE *out)
           "  " AUDIAKI_NAME " -M take01.wav               hear it while it "
           "records\n"
           "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
+          "  " AUDIAKI_NAME " --note 'clean tone' take01.wav\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
           "out?\n"
+          "  " AUDIAKI_NAME " --info session-*.wav        ...and all the others\n"
           "  " AUDIAKI_NAME " --play take01.wav           listen to it\n"
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --size 1080p\n"
@@ -248,8 +274,6 @@ void cli_print_usage(FILE *out)
           "Rendering a video needs ffmpeg(1) on PATH. Recording does not.\n"
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
-          CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
-          CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_MONITOR_DEFAULT_DEVICE,
           AUD_VIZ_DEFAULT_WIDTH, AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS,
           AUD_VIZ_DEFAULT_BARS, AUD_TUNER_DEFAULT_A4);
 }
@@ -329,6 +353,17 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case 'y':
       opts->overwrite = 1;
+      break;
+    case OPT_NOTE:
+      if (strlen(optarg) > AUD_META_NOTE_MAX)
+      {
+        aud_error("--note is limited to %u characters", AUD_META_NOTE_MAX);
+        return CLI_EXIT_USAGE;
+      }
+      opts->note = optarg;
+      break;
+    case OPT_NO_METADATA:
+      opts->metadata = 0;
       break;
     case 'M':
       opts->monitor = 1;
@@ -491,6 +526,22 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   }
 
   /*
+   * Both describe a take being made. On any other command there is no take to
+   * describe, and --note in particular would be quietly discarded text.
+   */
+  if (opts->note != NULL && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--note only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (!opts->metadata && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--no-metadata only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
    * Monitoring means hearing an input while it is being captured, so it has
    * nowhere to apply outside a recording. --play gets its own message because
    * it is already playing something, and the option to say which output is -D.
@@ -528,12 +579,18 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     return 0;
   }
 
+  /*
+   * The one command that takes more than one file. Measuring a session means
+   * measuring every take in it, and a shell glob is how anyone would ask:
+   * 'audiaki --info session-*.wav' reads the first from --info and the rest
+   * from here.
+   */
   if (opts->command == AUD_CMD_INFO)
   {
     if (optind < argc)
     {
-      aud_error("unexpected argument '%s' (the file comes from --info)", argv[optind]);
-      return CLI_EXIT_USAGE;
+      opts->extra_inputs = argv + optind;
+      opts->extra_input_count = argc - optind;
     }
     return 0;
   }

@@ -309,6 +309,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
 {
   wav_writer wav;
   aud_meter meter;
+  aud_meta meta;
   aud_spectrum *spectrum = NULL;
   recorder_monitor rm;
   aud_preroll pre;
@@ -431,8 +432,24 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     meter_reset_peaks(&meter);
   }
 
-  if (wav_open(&wav, opts->output_path, dev->rate, (uint16_t)dev->channels,
-               (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite) != 0)
+  /*
+   * Stamped when the take starts rather than when it ends, so the time in the
+   * file is the time the first frame was captured. With --preroll that is the
+   * moment Enter was pressed; the seconds before it are older than their own
+   * timestamp by exactly the pre-roll, which is the only reading of it that
+   * does not need the pre-roll length to make sense of.
+   */
+  aud_meta_defaults(&meta);
+  meta.device = dev->name;
+  meta.note = opts->note;
+  meta.rate = dev->rate;
+  meta.channels = dev->channels;
+  meta.bits = aud_format_wav_bits(dev->format);
+  aud_meta_stamp_now(&meta, dev->rate);
+
+  if (wav_open_meta(&wav, opts->output_path, dev->rate, (uint16_t)dev->channels,
+                    (uint16_t)aud_format_wav_bits(dev->format), opts->overwrite,
+                    opts->metadata ? &meta : NULL) != 0)
   {
     if (errno == EEXIST)
     {
