@@ -49,7 +49,8 @@ void app_usage(FILE *out, const app *a)
           "Video is rendered from the finished take when recording stops, so it\n"
           "needs ffmpeg on PATH. The audio WAV is written either way.\n"
           "\n"
-          "keys: space record or pause, S stop, M monitor, V style, F fullscreen\n",
+          "keys: space record or pause, S stop, M monitor, V style, 1-6 a style\n"
+          "      outright, F fullscreen, ? the list of them in the window\n",
           a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
           aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
           a->video_height, a->video_fps);

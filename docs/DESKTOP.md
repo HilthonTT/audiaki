@@ -80,10 +80,20 @@ back.
 | Key | Does |
 | --- | --- |
 | `space` | Record, or pause and resume once a take is running |
-| `S` | Stop |
+| `S` | Stop, or cancel a video render |
 | `M` | Toggle monitoring |
 | `V` | Next visualiser style |
+| `1`–`6` | A visualiser style outright |
 | `F` | Fullscreen |
+| `?` | The list of keys, over the window; `Esc` closes it |
+
+The same list is behind the `?` in the header, because a shortcut nobody can
+find is a shortcut nobody has. Resting the pointer on any control says what it
+does and which key does it too — including the greyed-out ones, which is the
+point: a disabled button is a question, and the answer should not be in here.
+
+The window title carries the transport, so a window behind another one still
+answers "is it still recording?" — `audiaki - recording 00:12 - take-003.wav`.
 
 The device dropdown is disabled while a take is open: switching closes the
 capture stream, which would truncate the recording. Stop first. The list

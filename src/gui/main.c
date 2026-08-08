@@ -341,6 +341,48 @@ void app_toggle_record(app *a, const aud_engine_status *st)
     return;
   }
 }
+
+/*
+ * The title bar, which is all a window behind another one gets to say. "Is it
+ * still recording?" should not need the window raised to answer.
+ */
+static void app_update_title(app *a, const aud_engine_status *st)
+{
+  char want[160];
+
+  if (a->render != NULL)
+  {
+    snprintf(want, sizeof(want), AUDIAKI_NAME " - rendering %.0f%%",
+             aud_render_progress(a->render) * 100.0);
+  }
+  else if (st == NULL || st->state == AUD_ENGINE_FAILED)
+  {
+    snprintf(want, sizeof(want), AUDIAKI_NAME " - no capture device");
+  }
+  else if (st->state == AUD_ENGINE_RECORDING || st->state == AUD_ENGINE_PAUSED)
+  {
+    const char *slash = strrchr(st->path, '/');
+    const char *name = slash != NULL ? slash + 1 : st->path;
+    unsigned secs = st->elapsed > 0.0 ? (unsigned)st->elapsed : 0u;
+
+    /* whole seconds, not the status line's tenths: this is a window property,
+     * and the display server does not need ten of them a second */
+    snprintf(want, sizeof(want), AUDIAKI_NAME " - %s %02u:%02u - %.80s",
+             st->state == AUD_ENGINE_PAUSED ? "paused" : "recording", secs / 60u,
+             secs % 60u, name);
+  }
+  else
+  {
+    snprintf(want, sizeof(want), AUDIAKI_NAME);
+  }
+
+  if (strcmp(want, a->title) != 0)
+  {
+    snprintf(a->title, sizeof(a->title), "%s", want);
+    SetWindowTitle(a->title);
+  }
+}
+
 static void handle_keys(app *a, const aud_engine_status *st)
 {
   /* the menu owns the keyboard while it is open, same as it owns the mouse */
@@ -349,6 +391,22 @@ static void handle_keys(app *a, const aud_engine_status *st)
     if (IsKeyPressed(KEY_ESCAPE))
     {
       a->device_menu_open = 0;
+    }
+    return;
+  }
+
+  if (IsKeyPressed(KEY_F1) || IsKeyPressed(KEY_SLASH) || IsKeyPressed(KEY_H))
+  {
+    a->help_open = !a->help_open;
+    return;
+  }
+
+  /* the shortcut list sits over the window, so nothing behind it answers */
+  if (a->help_open)
+  {
+    if (IsKeyPressed(KEY_ESCAPE))
+    {
+      a->help_open = 0;
     }
     return;
   }
@@ -383,6 +441,16 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (IsKeyPressed(KEY_F))
   {
     ToggleFullscreen();
+  }
+
+  /* straight to a style, for the one you keep coming back to */
+  for (int i = 0; i < AUD_VIZ_MODE_COUNT; i++)
+  {
+    if (IsKeyPressed(KEY_ONE + i))
+    {
+      a->style_selected = i;
+      aud_viz_set_mode(a->viz, (aud_viz_mode)i);
+    }
   }
 }
 
@@ -477,6 +545,11 @@ int main(int argc, char *argv[])
         a.device_menu_open = 0;
       }
 
+      /* the shortcut list is not drawn over this screen, so it cannot be left
+       * open to reappear when the device comes back */
+      a.help_open = 0;
+      app_update_title(&a, NULL);
+
       BeginDrawing();
       app_draw_fatal(&a);
       EndDrawing();
@@ -495,6 +568,7 @@ int main(int argc, char *argv[])
      * doing that inside the window's pass would leave the wrong one current.
      */
     app_pump_render(&a);
+    app_update_title(&a, &st);
 
     BeginDrawing();
     app_draw_frame(&a, &st);

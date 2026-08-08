@@ -749,13 +749,27 @@ Keys:
 .B space
 records, or pauses and resumes a running take;
 .B S
-stops;
+stops, or cancels a video render;
 .B M
 toggles monitoring;
 .B V
-steps through the visualiser styles;
+steps through the visualiser styles and
+.BR 1 \- 6
+pick one outright;
 .B F
-toggles fullscreen.
+toggles fullscreen;
+.B ?
+puts the whole list over the window, and
+.B Esc
+takes it away again.
+.PP
+The same list is behind the
+.B ?
+in the header, and resting the pointer on any control says what it does and
+which key does it. Disabled controls answer too, which is the point of them
+having a tooltip at all: the transport greys out for a reason, and the reason
+should be readable where the button is. The window title carries the transport
+as well, so a window behind another one still says whether it is recording.
 .PP
 The styles all read the same analysis described under
 .BR VISUALISER .

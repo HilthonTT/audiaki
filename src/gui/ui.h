@@ -81,6 +81,11 @@ int aud_ui_toggle(Rectangle bounds, const char *label, int on, Color tint, int e
 /*
  * A horizontal slider over [min, max]. Writes through to *value while it is
  * being dragged and returns non-zero on any frame the value changed.
+ *
+ * The drag is held until the button is let go, wherever the pointer wanders to
+ * in the meantime: a control that stops following the moment you leave its few
+ * pixels reads as broken rather than as precise. The wheel nudges it while the
+ * pointer is over it, for the correction a drag is a clumsy way to make.
  */
 int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color tint,
                   int enabled);
@@ -120,6 +125,20 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
  */
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,
                     int *open, int *scroll, int enabled);
+
+/*
+ * Hover help. A control asks for its own line while the pointer rests on it,
+ * and the one pending gets drawn after every widget rather than beside the one
+ * that asked - a tooltip underneath the button next to it would be worse than
+ * no tooltip at all.
+ *
+ * Disabled controls are why this exists. A greyed-out button is a question, and
+ * the answer to it should not live in the manual.
+ */
+void aud_ui_tooltip(Rectangle bounds, const char *text);
+
+/* Draw whatever tooltip was asked for this frame. Called last, exactly once. */
+void aud_ui_tooltip_draw(void);
 
 /* Text helpers that take a colour and an alignment rather than raw positions. */
 void aud_ui_text(float x, float y, int size, Color color, const char *text);

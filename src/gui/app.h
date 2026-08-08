@@ -110,6 +110,16 @@ typedef struct
   int device_menu_open;
   int device_menu_scroll; /* top visible row, for a list longer than the menu */
 
+  /* the shortcut list, over the top of everything while it is up */
+  int help_open;
+
+  /*
+   * What the title bar last said. A window behind another one should still be
+   * able to answer "is it still recording?", and setting the title is a round
+   * trip to the display server, so it is only set when the answer changes.
+   */
+  char title[160];
+
   aud_backend_kind backend; /* chosen once, before the first enumeration */
 
   /* the visualiser style selector, mirroring the mode held by aud_viz */

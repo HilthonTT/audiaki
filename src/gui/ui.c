@@ -12,6 +12,14 @@
 #define UI_HOVER_LIFT 0.10f
 #define UI_PRESS_DROP 0.06f
 
+/* One wheel notch, as a fraction of the slider's range. */
+#define UI_SLIDER_WHEEL 0.02f
+
+/* How long the pointer has to rest on a control before it explains itself. */
+#define UI_TIP_DELAY 0.45f
+#define UI_TIP_FONT 16
+#define UI_TIP_PAD 9.0f
+
 static Color mix(Color a, Color b, float t)
 {
   Color out;
@@ -41,6 +49,16 @@ static Color fade_to(Color c, float alpha)
 static int hovering(Rectangle bounds)
 {
   return CheckCollisionPointRec(GetMousePosition(), bounds);
+}
+
+/*
+ * Immediate mode has no widget identity, so a control that has to be
+ * remembered between frames is remembered by where it is. Nothing here moves
+ * while it is being held, and two controls never share a rectangle.
+ */
+static int same_rect(Rectangle a, Rectangle b)
+{
+  return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
 
 void aud_ui_text(float x, float y, int size, Color color, const char *text)
@@ -118,6 +136,10 @@ int aud_ui_toggle(Rectangle bounds, const char *label, int on, Color tint, int e
   return clickable(bounds, label, tint, enabled, on);
 }
 
+/* The slider the pointer grabbed, so the drag survives leaving its bounds. */
+static Rectangle ui_slider_held;
+static int ui_slider_dragging;
+
 int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color tint,
                   int enabled)
 {
@@ -130,6 +152,7 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
   Rectangle track;
   int changed = 0;
   int hover;
+  int held; /* this slider is the one being dragged */
 
   if (value == NULL || !(span > 0.0f) || usable <= 0.0f)
   {
@@ -137,8 +160,21 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
   }
 
   hover = enabled && hovering(bounds);
+  held = ui_slider_dragging && same_rect(ui_slider_held, bounds);
 
-  if (enabled && hover && IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+  if (held && (!enabled || !IsMouseButtonDown(MOUSE_BUTTON_LEFT)))
+  {
+    ui_slider_dragging = 0;
+    held = 0;
+  }
+  else if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+  {
+    ui_slider_held = bounds;
+    ui_slider_dragging = 1;
+    held = 1;
+  }
+
+  if (held)
   {
     float want = (GetMousePosition().x - bounds.x - knob_r) / usable;
     float next;
@@ -157,6 +193,29 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
     {
       *value = next;
       changed = 1;
+    }
+  }
+  else if (hover)
+  {
+    float wheel = GetMouseWheelMove();
+
+    if (wheel != 0.0f)
+    {
+      float next = *value + wheel * span * UI_SLIDER_WHEEL;
+
+      if (next < min)
+      {
+        next = min;
+      }
+      if (next > max)
+      {
+        next = max;
+      }
+      if (next != *value)
+      {
+        *value = next;
+        changed = 1;
+      }
     }
   }
 
@@ -186,9 +245,10 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
   }
 
   DrawCircle((int)knob_x, (int)track_y, knob_r - 3.0f,
-             enabled ? (hover ? WHITE : AUD_UI_TEXT) : fade_to(AUD_UI_MUTED, 0.5f));
+             enabled ? ((hover || held) ? WHITE : AUD_UI_TEXT)
+                     : fade_to(AUD_UI_MUTED, 0.5f));
 
-  if (hover)
+  if (hover || held)
   {
     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
   }
@@ -510,6 +570,91 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
   }
 
   return changed;
+}
+
+/* The one line of hover help a frame can show, held between ask and draw. */
+static struct
+{
+  Rectangle over; /* the control the pointer settled on */
+  char text[128];
+  float waited; /* seconds it has rested there */
+  int pending;  /* asked for this frame */
+} ui_tip;
+
+void aud_ui_tooltip(Rectangle bounds, const char *text)
+{
+  if (text == NULL || *text == '\0' || !hovering(bounds))
+  {
+    return;
+  }
+
+  /*
+   * Crossing to another control starts the wait again, so dragging the pointer
+   * along the transport does not trail a tooltip behind it.
+   */
+  if (!same_rect(ui_tip.over, bounds))
+  {
+    ui_tip.over = bounds;
+    ui_tip.waited = 0.0f;
+  }
+
+  snprintf(ui_tip.text, sizeof(ui_tip.text), "%s", text);
+  ui_tip.waited += GetFrameTime();
+  ui_tip.pending = 1;
+}
+
+void aud_ui_tooltip_draw(void)
+{
+  Vector2 mouse;
+  Rectangle box;
+
+  if (!ui_tip.pending)
+  {
+    Rectangle nowhere = {-1.0f, -1.0f, 0.0f, 0.0f};
+
+    ui_tip.over = nowhere;
+    ui_tip.waited = 0.0f;
+    return;
+  }
+  ui_tip.pending = 0;
+
+  if (ui_tip.waited < UI_TIP_DELAY)
+  {
+    return;
+  }
+
+  mouse = GetMousePosition();
+  box.width = (float)MeasureText(ui_tip.text, UI_TIP_FONT) + 2.0f * UI_TIP_PAD;
+  box.height = (float)UI_TIP_FONT + 2.0f * UI_TIP_PAD;
+  box.x = mouse.x + 14.0f;
+  box.y = mouse.y + 22.0f;
+
+  /* the controls it describes are at the edges of the window, so it has to be
+   * allowed to open the other way rather than half off the screen */
+  if (box.x + box.width > (float)GetScreenWidth() - 6.0f)
+  {
+    box.x = (float)GetScreenWidth() - 6.0f - box.width;
+  }
+  if (box.x < 6.0f)
+  {
+    box.x = 6.0f;
+  }
+
+  /* above the pointer down at the foot of the window: the transport lives there
+   * and its help should not be sitting on the clock and the meter */
+  if (box.y + box.height > (float)GetScreenHeight() * 0.75f)
+  {
+    box.y = mouse.y - 14.0f - box.height;
+  }
+  if (box.y < 6.0f)
+  {
+    box.y = 6.0f;
+  }
+
+  DrawRectangleRounded(box, UI_CORNER / box.height, 8,
+                       mix(AUD_UI_PANEL, AUD_UI_EDGE, 0.4f));
+  DrawRectangleRoundedLines(box, UI_CORNER / box.height, 8, AUD_UI_EDGE);
+  aud_ui_text_centred(box, UI_TIP_FONT, AUD_UI_TEXT, ui_tip.text);
 }
 
 void aud_ui_format_clock(char *dst, size_t size, double seconds)

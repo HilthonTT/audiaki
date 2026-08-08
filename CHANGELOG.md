@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The desktop app explains itself. `?` - or the button now beside the device
+  picker - puts every key it answers to over the window, and `Esc` takes it
+  away. The keys were real and documented and completely invisible, which for
+  anyone who never opened the manual meant the window had no keyboard at all.
+
+- `1` to `6` select a visualiser style outright, rather than pressing `V` until
+  the right one comes round. Six styles is one too many to cycle through when
+  you know which one you want.
+
+- Hover help on every control, disabled ones included. A greyed-out **Pause**
+  is a question - the pointer resting on it now answers "nothing to pause - no
+  take is open" rather than leaving it to be worked out. The device picker says
+  why it will not open mid-take, **Audio** says to turn **Video** on first, and
+  the ones that are simply doing their job name their shortcut.
+
+- The monitoring level reads out in decibels above the slider. A knob two
+  thirds along is not a level you can set deliberately or come back to
+  tomorrow, and the range it sits on - silent to +6 dB - was only in the manual.
+
+- The window title carries the transport: `audiaki - recording 00:12 -
+  take-003.wav`. A recorder behind a browser should be able to answer "is it
+  still running?" from the taskbar rather than by being raised. Whole seconds
+  rather than the status line's tenths, because the title is a window property
+  and the display server does not need ten of them a second.
+
+### Fixed
+
+- Dragging the monitor slider no longer lets go when the pointer wanders off
+  the track. It follows the mouse until the button is released, wherever that
+  ends up, which is what every other slider does; stopping dead a few pixels
+  above the control read as the app losing the drag rather than as precision.
+  The wheel nudges it too, for a correction a drag is a clumsy way to make.
+
 - `--channel N` records a single capture channel as a mono take. Plenty of
   interfaces only offer stereo, so an instrument in the first input costs a file
   that is half silence at twice the size, and every tool after it has to be told
