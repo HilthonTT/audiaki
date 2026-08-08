@@ -35,6 +35,18 @@ typedef struct
   const char *monitor_device;
   float monitor_gain;
   /*
+   * A metronome mixed into that same output, so you can play to a grid the
+   * take is aligned to - see click.h. Zero BPM is off, which is the default.
+   *
+   * It reaches the headphones and not the file: like monitor_gain, it changes
+   * what the person recording hears and nothing about what is written. Asking
+   * for one opens the output whether or not `monitor` is set, which is how a
+   * click can be heard without also hearing the input.
+   */
+  double click_bpm;
+  unsigned click_beats; /* beats to a bar; the first of each is accented */
+  float click_gain;
+  /*
    * Stamp the take with what made it, when, and from what device - see meta.h.
    * On by default; clearing it writes the plain 44 byte header instead, for
    * anyone whose tools want nothing between the fmt and data chunks.

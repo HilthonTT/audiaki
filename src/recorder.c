@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "recorder.h"
 
+#include "click.h"
 #include "format.h"
 #include "log.h"
 #include "meter.h"
@@ -12,6 +13,7 @@
 
 #include <errno.h>
 #include <poll.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -25,40 +27,92 @@ int aud_recorder_install_signals(void)
 }
 
 /*
- * The optional playback of what is being captured. `mon` is NULL whenever
- * monitoring is off, which is both the default and where an output that has
- * failed ends up: nothing here is allowed to interrupt the take.
+ * The optional playback stream: what the person recording hears while they
+ * record. Two things can go into it, either or both - the input as it is being
+ * captured, and a metronome - and one output carries them because they are
+ * heard together, in the same headphones, at the same time.
+ *
+ * `mon` is NULL whenever neither was asked for, which is the default, and it
+ * is where an output that has failed ends up: nothing here is allowed to
+ * interrupt the take.
  */
 typedef struct
 {
   aud_monitor *mon;
   float *buf; /* period_frames * channels, interleaved */
-  float gain;
+  int input;  /* mix the captured audio in, i.e. --monitor */
+  float gain; /* scales the input alone - not the click, and never the file */
+  int clicking;
+  aud_click click;
   unsigned long dropped;
-} recorder_monitor;
+} recorder_playback;
+
+/* What would be lost if the output went away, for the messages that say so. */
+static const char *playback_what(const recorder_playback *pb)
+{
+  if (pb->input && pb->clicking)
+  {
+    return "monitoring or a metronome";
+  }
+  return pb->input ? "monitoring" : "a metronome";
+}
 
 /*
- * Open the output to monitor through, if one was asked for. Never fails in a
- * way the caller has to handle: an output that will not open costs the
- * monitoring and leaves the recording alone, which is the trade monitor.h
- * expects callers to make.
+ * Open the output to play through, if anything was asked to come out of it.
+ * Never fails in a way the caller has to handle: an output that will not open
+ * costs what would have been heard and leaves the recording alone, which is
+ * the trade monitor.h expects callers to make.
  */
-static void monitor_start(recorder_monitor *rm, const aud_device *dev,
-                          const aud_recorder_options *opts)
+static void playback_start(recorder_playback *pb, const aud_device *dev,
+                           const aud_recorder_options *opts)
 {
   aud_monitor_config cfg;
+  char bars[32];
 
-  rm->gain = opts->monitor_gain;
+  pb->input = opts->monitor;
+  pb->gain = opts->monitor_gain;
+  bars[0] = '\0';
 
-  if (!opts->monitor)
+  if (opts->click_bpm > 0.0)
+  {
+    aud_click_config click_cfg;
+
+    /*
+     * Counted in capture frames, so the grid is the capture clock rather than
+     * anything the output does with it: a beat is at the frame the tempo says,
+     * whatever the playback stream drops keeping up. See click.h.
+     */
+    aud_click_config_defaults(&click_cfg, opts->click_bpm, dev->rate);
+    click_cfg.beats_per_bar = opts->click_beats;
+    click_cfg.gain = opts->click_gain;
+
+    if (aud_click_init(&pb->click, &click_cfg) == 0)
+    {
+      pb->clicking = 1;
+      if (opts->click_beats > 1u)
+      {
+        snprintf(bars, sizeof(bars), ", %u to the bar", opts->click_beats);
+      }
+    }
+    else
+    {
+      aud_warn("cannot run a metronome at %.4g BPM, recording without one",
+               opts->click_bpm);
+    }
+  }
+
+  if (!pb->input && !pb->clicking)
   {
     return;
   }
 
-  rm->buf = malloc((size_t)dev->period_frames * dev->channels * sizeof(*rm->buf));
-  if (rm->buf == NULL)
+  pb->buf = malloc((size_t)dev->period_frames * dev->channels * sizeof(*pb->buf));
+  if (pb->buf == NULL)
   {
-    aud_warn("cannot allocate a monitoring buffer, recording without monitoring");
+    aud_warn("cannot allocate a playback buffer, recording without %s",
+             playback_what(pb));
+    pb->input = 0;
+    pb->clicking = 0;
     return;
   }
 
@@ -68,13 +122,15 @@ static void monitor_start(recorder_monitor *rm, const aud_device *dev,
     cfg.name = opts->monitor_device;
   }
 
-  rm->mon = aud_monitor_open(&cfg);
-  if (rm->mon == NULL)
+  pb->mon = aud_monitor_open(&cfg);
+  if (pb->mon == NULL)
   {
     /* the backend has already said which part of opening the output failed */
-    aud_warn("recording without monitoring");
-    free(rm->buf);
-    rm->buf = NULL;
+    aud_warn("recording without %s", playback_what(pb));
+    free(pb->buf);
+    pb->buf = NULL;
+    pb->input = 0;
+    pb->clicking = 0;
     return;
   }
 
@@ -84,23 +140,38 @@ static void monitor_start(recorder_monitor *rm, const aud_device *dev,
    * default output is the speaker beside it. That is a feedback loop, and it
    * reaches full scale in a fraction of a second.
    */
-  aud_warn("monitoring through %s - use headphones; a microphone played through "
-           "speakers will feed back",
-           cfg.name);
+  if (pb->input)
+  {
+    aud_warn("monitoring through %s - use headphones; a microphone played through "
+             "speakers will feed back",
+             cfg.name);
+  }
+
+  /*
+   * The click is heard and not written, which is worth saying outright: the
+   * take will not have it in it, unless the room hands it back through the
+   * input, which is the other reason for headphones.
+   */
+  if (pb->clicking)
+  {
+    aud_info("metronome: %.4g BPM%s through %s - heard but not recorded, so use "
+             "headphones or the input will pick it up",
+             opts->click_bpm, bars, cfg.name);
+  }
 }
 
 /* Idempotent, so the cleanup path can run it whichever way the take ended. */
-static void monitor_stop(recorder_monitor *rm)
+static void playback_stop(recorder_playback *pb)
 {
-  if (rm->mon != NULL)
+  if (pb->mon != NULL)
   {
-    rm->dropped = aud_monitor_dropped(rm->mon);
-    aud_monitor_close(rm->mon);
-    rm->mon = NULL;
+    pb->dropped = aud_monitor_dropped(pb->mon);
+    aud_monitor_close(pb->mon);
+    pb->mon = NULL;
   }
 
-  free(rm->buf);
-  rm->buf = NULL;
+  free(pb->buf);
+  pb->buf = NULL;
 }
 
 /*
@@ -108,22 +179,51 @@ static void monitor_stop(recorder_monitor *rm)
  * repacked copy for the same reason the analysis does: that is what the device
  * delivered, and the two may be the same buffer anyway.
  */
-static void monitor_feed(recorder_monitor *rm, const unsigned char *hw_buf, size_t frames,
-                         const aud_device *dev)
+static void playback_feed(recorder_playback *pb, const unsigned char *hw_buf,
+                          size_t frames, const aud_device *dev)
 {
-  if (rm->mon == NULL)
+  size_t samples = frames * dev->channels;
+
+  if (pb->mon == NULL)
   {
     return;
   }
 
-  aud_format_to_float(rm->buf, hw_buf, frames, dev->channels, dev->format);
-
-  if (aud_monitor_write(rm->mon, rm->buf, frames, rm->gain) != 0)
+  if (pb->input)
   {
-    rm->dropped = aud_monitor_dropped(rm->mon);
-    aud_monitor_close(rm->mon);
-    rm->mon = NULL;
-    aud_warn("monitoring stopped: the output failed (the take is still recording)");
+    aud_format_to_float(pb->buf, hw_buf, frames, dev->channels, dev->format);
+
+    /*
+     * Applied here rather than passed to aud_monitor_write(), which would
+     * scale the click by it as well. --monitor-gain is about how loud the
+     * input is against the click, so it cannot be allowed to move both.
+     */
+    if (pb->gain != 1.0f)
+    {
+      for (size_t i = 0; i < samples; i++)
+      {
+        pb->buf[i] *= pb->gain;
+      }
+    }
+  }
+  else
+  {
+    /* nothing to hear but the beat, and aud_click_mix() adds to what it finds */
+    memset(pb->buf, 0, samples * sizeof(*pb->buf));
+  }
+
+  if (pb->clicking)
+  {
+    aud_click_mix(&pb->click, pb->buf, frames, dev->channels);
+  }
+
+  /* the sum is clipped inside the write, which is where every path is clipped */
+  if (aud_monitor_write(pb->mon, pb->buf, frames, 1.0f) != 0)
+  {
+    pb->dropped = aud_monitor_dropped(pb->mon);
+    aud_monitor_close(pb->mon);
+    pb->mon = NULL;
+    aud_warn("playback stopped: the output failed (the take is still recording)");
   }
 }
 
@@ -178,7 +278,7 @@ static int start_requested(void)
  */
 static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre,
                         aud_meter *meter, aud_spectrum *spectrum, size_t bands,
-                        recorder_monitor *rm, unsigned *xruns)
+                        recorder_playback *pb, unsigned *xruns)
 {
   double next_meter_at = 0.0;
   double last_drawn_at = 0.0;
@@ -217,8 +317,12 @@ static int arm_and_wait(aud_device *dev, unsigned char *hw_buf, aud_preroll *pre
       aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
     }
 
-    /* audible while armed too: the level is set before the take, not during it */
-    monitor_feed(rm, hw_buf, (size_t)got, dev);
+    /*
+     * Audible while armed too: the level is set before the take, not during
+     * it, and a metronome that only started at the keypress would be a count-in
+     * nobody got to hear.
+     */
+    playback_feed(pb, hw_buf, (size_t)got, dev);
 
     seen += (uint64_t)got;
     captured = (double)seen / dev->rate;
@@ -311,7 +415,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   aud_meter meter;
   aud_meta meta;
   aud_spectrum *spectrum = NULL;
-  recorder_monitor rm;
+  recorder_playback pb;
   aud_preroll pre;
   size_t bands = 0;
   unsigned char *hw_buf = NULL;
@@ -332,7 +436,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
   int rc = -1;
 
   memset(&pre, 0, sizeof(pre));
-  memset(&rm, 0, sizeof(rm));
+  memset(&pb, 0, sizeof(pb));
 
   if (stats != NULL)
   {
@@ -393,7 +497,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     }
   }
 
-  monitor_start(&rm, dev, opts);
+  playback_start(&pb, dev, opts);
 
   if (opts->preroll > 0.0)
   {
@@ -414,7 +518,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
     aud_debug("pre-roll: %zu frames, %.1f MiB", frames,
               (double)(frames * dev->channels * hw_bytes) / (1024.0 * 1024.0));
 
-    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &rm, &xruns);
+    armed = arm_and_wait(dev, hw_buf, &pre, &meter, spectrum, bands, &pb, &xruns);
     if (armed < 0)
     {
       goto out;
@@ -545,7 +649,7 @@ int aud_recorder_run(aud_device *dev, const aud_recorder_options *opts,
       aud_spectrum_push_pcm(spectrum, hw_buf, (size_t)got, dev->channels, dev->format);
     }
 
-    monitor_feed(&rm, hw_buf, (size_t)got, dev);
+    playback_feed(&pb, hw_buf, (size_t)got, dev);
 
     frames_written += (uint64_t)got;
     recorded += (uint64_t)got;
@@ -604,15 +708,15 @@ finish:
   }
 
 out:
-  monitor_stop(&rm);
-  if (rm.dropped > 0)
+  playback_stop(&pb);
+  if (pb.dropped > 0)
   {
     /*
      * Expected rather than wrong: capture and playback do not share a clock, so
      * the monitor skips instead of drifting further behind. Worth having under
      * -v when what was heard did not sound like what was written.
      */
-    aud_debug("the monitor dropped %lu frame(s) keeping up with the input", rm.dropped);
+    aud_debug("the monitor dropped %lu frame(s) keeping up with the input", pb.dropped);
   }
 
   aud_spectrum_destroy(spectrum);
@@ -629,7 +733,7 @@ out:
     stats->bytes = frames_written * dev->channels * wav_bytes;
     stats->preroll_frames = preroll_frames;
     stats->xruns = xruns;
-    stats->monitor_dropped = rm.dropped;
+    stats->monitor_dropped = pb.dropped;
     stats->clipped = meter_clipped(&meter);
     stats->interrupted = aud_signals_stop_requested();
     stats->cancelled = cancelled;

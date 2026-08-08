@@ -96,7 +96,7 @@ _audiaki()
             ;;
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
-        --preroll | --pre-roll | --monitor-gain)
+        --preroll | --pre-roll | --monitor-gain | --click | --click-beats | --click-gain)
             return
             ;;
     esac
@@ -108,6 +108,7 @@ _audiaki()
               --periods --output --force --take --preroll --note --no-metadata
               --spectrum --no-meter
               --monitor --monitor-device --monitor-gain
+              --click --click-beats --click-gain
               --visualize --style --size --fps --bars --tune --a4 --info --play --json
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "cli.h"
 
+#include "click.h"
 #include "device.h"
 #include "meta.h"
 #include "monitor.h"
@@ -70,6 +71,9 @@ enum
   OPT_MONITOR_GAIN,
   OPT_NOTE,
   OPT_NO_METADATA,
+  OPT_CLICK,
+  OPT_CLICK_BEATS,
+  OPT_CLICK_GAIN,
 };
 
 static const struct option long_options[] = {
@@ -89,6 +93,10 @@ static const struct option long_options[] = {
     {"monitor", no_argument, NULL, 'M'},
     {"monitor-device", required_argument, NULL, OPT_MONITOR_DEVICE},
     {"monitor-gain", required_argument, NULL, OPT_MONITOR_GAIN},
+    {"click", required_argument, NULL, OPT_CLICK},
+    {"metronome", required_argument, NULL, OPT_CLICK},
+    {"click-beats", required_argument, NULL, OPT_CLICK_BEATS},
+    {"click-gain", required_argument, NULL, OPT_CLICK_GAIN},
     {"no-meter", no_argument, NULL, OPT_NO_METER},
     {"spectrum", no_argument, NULL, OPT_SPECTRUM},
     {"visualize", required_argument, NULL, OPT_VISUALIZE},
@@ -136,6 +144,9 @@ void cli_defaults(aud_options *opts)
   opts->monitor = 0;
   opts->monitor_device = NULL;
   opts->monitor_gain = 1.0;
+  opts->click_bpm = 0.0;
+  opts->click_beats = AUD_CLICK_DEFAULT_BEATS;
+  opts->click_gain = AUD_CLICK_DEFAULT_GAIN;
   opts->metadata = 1;
   opts->note = NULL;
   opts->extra_inputs = NULL;
@@ -204,10 +215,17 @@ void cli_print_usage(FILE *out)
           "      --monitor-device NAME\n"
           "                        output to monitor through (default: %s)\n"
           "      --monitor-gain X  scale what is monitored, 0.0 to 2.0; the file\n"
-          "                        is unaffected (default: 1.0)\n",
+          "                        is unaffected (default: 1.0)\n"
+          "      --click BPM       play a metronome at BPM (20 to 300) through the\n"
+          "                        monitoring output; heard, never written to the\n"
+          "                        take, so use headphones\n"
+          "      --click-beats N   beats to a bar, accenting the first (default:\n"
+          "                        %u; 0 or 1 for a bare pulse)\n"
+          "      --click-gain X    how loud the click is, 0.0 to 2.0 (default: "
+          "%.2g)\n",
           CLI_DEFAULT_DEVICE, CLI_DEFAULT_RATE, CLI_DEFAULT_CHANNELS,
           CLI_DEFAULT_PERIOD_FRAMES, CLI_DEFAULT_PERIODS, AUD_META_NOTE_MAX,
-          AUD_MONITOR_DEFAULT_DEVICE);
+          AUD_MONITOR_DEFAULT_DEVICE, AUD_CLICK_DEFAULT_BEATS, AUD_CLICK_DEFAULT_GAIN);
 
   /*
    * A second call rather than a longer string: C99 only guarantees 4095
@@ -261,6 +279,7 @@ void cli_print_usage(FILE *out)
           "Enter\n"
           "  " AUDIAKI_NAME " -M take01.wav               hear it while it "
           "records\n"
+          "  " AUDIAKI_NAME " -M --click 120 take01.wav   ...to a metronome\n"
           "  " AUDIAKI_NAME " --tune                      tune up before recording\n"
           "  " AUDIAKI_NAME " --note 'clean tone' take01.wav\n"
           "  " AUDIAKI_NAME " --info take01.wav           how did that take come "
@@ -291,6 +310,8 @@ static void bad_value(const char *option, const char *value, const char *expecte
 int cli_parse(int argc, char **argv, aud_options *opts)
 {
   int opt;
+  int click_shape = 0;          /* --click-beats or --click-gain was typed */
+  int monitor_device_given = 0; /* --monitor-device was typed */
 
   cli_defaults(opts);
 
@@ -369,12 +390,19 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       opts->monitor = 1;
       break;
     /*
-     * Naming an output or a level is asking to hear it, so neither needs -M as
-     * well. The alternative is a flag that silently does nothing on its own.
+     * Naming a level is asking to hear the input, since scaling it is all
+     * --monitor-gain does, so it does not need -M as well; the alternative is a
+     * flag that silently does nothing on its own.
+     *
+     * Naming an output is not the same thing once there is a metronome, which
+     * plays through the same stream without the input going anywhere near it.
+     * So --monitor-device only turns monitoring on when nothing else would
+     * have opened the output - decided after the loop, where the tempo is
+     * known whichever order the two were typed in.
      */
     case OPT_MONITOR_DEVICE:
       opts->monitor_device = optarg;
-      opts->monitor = 1;
+      monitor_device_given = 1;
       break;
     case OPT_MONITOR_GAIN:
       if (parse_double(optarg, MONITOR_GAIN_MIN, MONITOR_GAIN_MAX, &opts->monitor_gain) !=
@@ -384,6 +412,36 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       opts->monitor = 1;
+      break;
+    case OPT_CLICK:
+      if (parse_double(optarg, AUD_CLICK_BPM_MIN, AUD_CLICK_BPM_MAX, &opts->click_bpm) !=
+          0)
+      {
+        bad_value("--click", optarg, "a tempo in BPM, 20 to 300");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    /*
+     * Neither of these implies --click, unlike the monitoring pair above: what
+     * they shape is the tempo, and there is no tempo to guess. Saying so beats
+     * inventing one, so the check after the loop rejects them on their own.
+     */
+    case OPT_CLICK_BEATS:
+      if (parse_uint(optarg, 0u, AUD_CLICK_BEATS_MAX, &opts->click_beats) != 0)
+      {
+        bad_value("--click-beats", optarg, "beats to a bar, 0..32");
+        return CLI_EXIT_USAGE;
+      }
+      click_shape = 1;
+      break;
+    case OPT_CLICK_GAIN:
+      if (parse_double(optarg, AUD_CLICK_GAIN_MIN, AUD_CLICK_GAIN_MAX,
+                       &opts->click_gain) != 0)
+      {
+        bad_value("--click-gain", optarg, "0.0 to 2.0, where 1.0 is full scale");
+        return CLI_EXIT_USAGE;
+      }
+      click_shape = 1;
       break;
     case 'q':
       opts->log_level = AUD_LOG_QUIET;
@@ -502,6 +560,17 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   }
 
   /*
+   * See OPT_MONITOR_DEVICE: naming the output means "play the input through
+   * this one" until a metronome gives the output something else to carry, and
+   * then it means "play the click through this one" and leaves the input where
+   * it was. Either way the flag does something, which is the point.
+   */
+  if (monitor_device_given && opts->click_bpm <= 0.0)
+  {
+    opts->monitor = 1;
+  }
+
+  /*
    * --json describes a report, not a recording. Silently ignoring it on a
    * command that has nothing to serialise would let a script believe it was
    * getting parseable output right up until it tried to parse it.
@@ -556,6 +625,23 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     {
       aud_error("--monitor only applies when recording");
     }
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * A metronome is something to play a take to, so like monitoring it has
+   * nowhere to apply outside a recording.
+   */
+  if (opts->click_bpm > 0.0 && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--click only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (click_shape && opts->click_bpm <= 0.0)
+  {
+    aud_error("--click-beats and --click-gain shape a metronome; --click sets its "
+              "tempo and turns it on");
     return CLI_EXIT_USAGE;
   }
 

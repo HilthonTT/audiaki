@@ -63,6 +63,9 @@ typedef struct
   int monitor;                /* hear the input while it is being recorded */
   const char *monitor_device; /* output to monitor through; NULL = the default */
   double monitor_gain;        /* what the monitor is scaled by, not the file */
+  double click_bpm;           /* metronome tempo; 0 = no metronome */
+  unsigned click_beats;       /* beats to a bar; the first of each is accented */
+  double click_gain;          /* how loud the click is, on the same scale as above */
   int metadata;               /* stamp the take with what made it; see meta.h */
   const char *note;           /* free text to stamp along with it */
   unsigned viz_width;

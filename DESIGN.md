@@ -6,6 +6,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 
 - [Layout](#layout)
 - [Backends](#backends)
+- [The metronome](#the-metronome)
 - [Analysis](#analysis)
 - [The visualisers](#the-visualisers)
 - [Rendering video](#rendering-video)
@@ -44,6 +45,7 @@ src/
   ffmpeg_posix.c  its fork/exec/pipe implementation
   signals.c/.h  the shared Ctrl+C flag
   parse.c/.h    strict CLI value parsing
+  click.c/.h    the metronome: a beat grid, mixed into what you hear
   monitor.c/.h  the playback side: monitoring an input, and --play
   monitor_alsa.c     ...over libasound
   monitor_pipewire.c ...over libpipewire
@@ -64,8 +66,8 @@ No audio system appears above `backend.h`: `device.c` and `monitor.c` are
 dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
 `<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. So `format`, `wav`, `parse`,
 `fft`, `spectrum`, `tuner`, `canvas`, `info`, `take`, `ringbuf`, `preroll`,
-`meta` and `jsonout` are plain C that builds and tests anywhere — which is what
-CI does.
+`meta`, `click` and `jsonout` are plain C that builds and tests anywhere — which
+is what CI does.
 
 The analysis is shared three ways: the terminal display, the video renderer and
 the desktop app all run the same `spectrum` module, the terminal and desktop
@@ -115,6 +117,49 @@ Under ALSA, monitoring needs an output that accepts the capture rate directly.
 Resampling would mean carrying an interpolator around for a convenience feature,
 so audiaki declines to monitor rather than play back at the wrong pitch. The
 PipeWire backend has no such limit, because the server resamples anyway.
+
+## The metronome
+
+The click goes into the monitoring stream and nowhere else. That is the same
+rule `--monitor-gain` follows and for the same reason: the file is written from
+the samples the device delivered, so what the person recording was listening to
+at the time cannot get into it. Mixing the click into the take would also be
+irreversible, and a take with a click printed on it is worth less than the take
+plus the tempo written down.
+
+Because one output carries both, `recorder.c` owns a single playback path with
+two optional sources rather than two streams. Two would mean two clocks, two
+sets of dropped frames, and a click that drifts against the monitoring beside
+it. It also means asking for a click opens the output whether or not `--monitor`
+was given, which is what lets you play to a metronome without hearing yourself
+through it — and why `--monitor-device` stops implying `--monitor` once there is
+a click, since naming the output is then no longer a request to hear the input.
+
+The grid is a pure function of the absolute frame index, not a counter ticked
+once per period. Beat *n* is at `round(n * 60 * rate / bpm)` whatever happened to
+the periods before it, so rounding cannot accumulate and a dropped buffer costs
+one click rather than shifting every click after it. Since the frames counted
+are the frames captured, the tempo is measured by the capture clock — the one
+clock that cannot drift against the recording — and at 120 BPM and 48 kHz the
+beats were generated at frames 0, 24000, 48000 and so on exactly. This is the
+same reasoning as `--play`'s backpressure: pace on the audio, never on
+`CLOCK_MONOTONIC`.
+
+What that exactness does **not** buy is a sample-aligned take. The click reaches
+the player through the output's buffer, tens of milliseconds under ALSA and
+around a tenth of a second under PipeWire, so a performance played perfectly in
+time sits that far behind the grid it was played to. Closing that gap means
+measuring the round trip and compensating, which is a different feature with a
+calibration step in it. A metronome keeps you at a tempo; it does not make the
+result line up with a timeline, and the documentation says so rather than
+letting anyone assume otherwise.
+
+A beat is a sine burst under an exponential decay — 50 ms over an 8 ms time
+constant — with the downbeat an octave above the others. No wavetable, so
+there is nothing to load or to ship, and the accent is the same sound rather
+than a second one. The 50 ms burst is also what keeps the mixing loop simple:
+the fastest tempo accepted is 300 BPM, 200 ms apart, so two bursts can never
+sound at once and the walk over a buffer only ever has one beat to think about.
 
 ## Analysis
 

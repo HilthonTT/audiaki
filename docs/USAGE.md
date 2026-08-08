@@ -12,6 +12,7 @@ systems also have `man audiaki`.
 - [Numbering takes](#numbering-takes)
 - [Pre-roll](#pre-roll)
 - [Hearing yourself](#hearing-yourself)
+- [Playing to a click](#playing-to-a-click)
 - [What a take says about itself](#what-a-take-says-about-itself)
 - [Checking a take](#checking-a-take)
 - [Playing one back](#playing-one-back)
@@ -31,6 +32,7 @@ audiaki --spectrum take01.wav        # record, watching the spectrum
 audiaki -t 1:30 take02.wav           # record 90 seconds
 audiaki --take session               # record the next free session-NNN.wav
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
+audiaki -M --click 120 take05.wav    # play to a metronome (headphones!)
 audiaki --info take01.wav            # how did that take come out?
 audiaki --play take01.wav            # ...and what does it sound like?
 audiaki -D plughw:CARD=Box,DEV=0 -r 48000 -c 2 take03.wav
@@ -57,6 +59,9 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-M, --monitor` | Hear the input while it is recorded (use headphones) |
 | `--monitor-device NAME` | Output to monitor through (default `default`) |
 | `--monitor-gain X` | Scale what is monitored, 0.0 to 2.0 (default 1.0) |
+| `--click BPM` | Play a metronome at BPM (20 to 300) while recording |
+| `--click-beats N` | Beats to a bar, accenting the first (default 4; 0 or 1 for a bare pulse) |
+| `--click-gain X` | How loud the click is, 0.0 to 2.0 (default 0.5) |
 | `--visualize FILE` | Render a WAV to a visualiser video and exit |
 | `-o, --output FILE` | Output file (video default: input with `.mp4`) |
 | `--style NAME` | `bars`, `scope` or `waveform` (default `bars`) |
@@ -226,8 +231,11 @@ directly into itself. Check what `-D` is actually pointing at before adding
 `--monitor-gain` scales what you hear and nothing else — the file is always
 written from the samples the device delivered, so turning the monitor down
 does not record a quieter take, and the meter does not move. It goes from
-`0.0` (silent) to `2.0` (+6 dB), with `1.0` unchanged. Naming a device or a
-gain switches monitoring on by itself, so `-M` is only needed on its own.
+`0.0` (silent) to `2.0` (+6 dB), with `1.0` unchanged. Naming a gain switches
+monitoring on by itself, so `-M` is only needed on its own. So does naming a
+device — unless `--click` is also given, since then the output has something to
+play without the input going anywhere near it, and `--monitor-device` is how
+you say which output the click comes out of.
 
 Monitoring is a convenience, and it is never allowed to cost you a take. If
 the output will not open, or fails part way through, audiaki says so and keeps
@@ -249,6 +257,51 @@ fine for checking a level, a tone or a room; it is not latency to play in time
 against. Frames the output cannot keep up with are
 dropped rather than queued, so the monitor may skip on a busy machine without
 that reaching the file — `-v` reports the count at the end.
+
+## Playing to a click
+
+`--click` runs a metronome at the tempo you give it, from 20 to 300 BPM,
+through the same output monitoring uses:
+
+```sh
+audiaki -M --click 120 take01.wav              # play along, hearing yourself
+audiaki --click 96 take02.wav                  # just the click, not the input
+audiaki --click 140 --click-beats 3 waltz.wav  # three to the bar
+audiaki --click 120 --click-beats 0 take03.wav # a bare pulse, no accent
+audiaki -M --click 120 --click-gain 0.8 take04.wav   # louder in the headphones
+audiaki --preroll 8 --click 120 --take riff    # count yourself in, then record
+```
+
+The first beat of each bar is a tone an octave above the others, so you can
+hear where the bar starts. `--click-beats` sets how many beats that is — 4 by
+default, `3` for a waltz, `0` or `1` for a bare pulse with no accent at all.
+`--click-gain` sets how loud it is against the instrument, on the same 0.0 to
+2.0 scale as `--monitor-gain`, and the two are independent: turning the monitor
+down does not take the click with it.
+
+**The click is never written to the take.** Like `--monitor-gain`, it changes
+what the person recording hears and nothing about the file — which is also why
+you want headphones. Played out of a speaker, the click is in the room, and the
+microphone will put it in the take after all.
+
+It does not need `-M`. Asking for a click opens the output on its own, so you
+can play to a metronome without also hearing yourself through it; add `-M` when
+you want both, and name the output with `--monitor-device` either way. With
+`--preroll` the click starts as soon as the recorder is armed, so the seconds
+before you press Enter are a count-in.
+
+The grid is counted in captured frames rather than off the clock, so it cannot
+drift against the recording: at 120 BPM and 48 kHz the clicks were generated at
+frames 0, 24000, 48000 and so on, exactly. Without `--preroll` frame 0 is the
+first frame of the file, so the beats fall on round numbers you can line a
+session up on later.
+
+What you cannot assume is that your *playing* lands on those frames. You hear
+the click through the output's own buffer — tens of milliseconds under ALSA,
+around a tenth of a second under PipeWire — so a take played perfectly in time
+is late against the grid by however long that path is. It is a metronome, which
+is to say it will keep you at 120 BPM; it is not a DAW's click, and the take is
+not sample-aligned to a timeline by having been played to one.
 
 ## What a take says about itself
 
@@ -461,6 +514,11 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - `-M` monitors through a buffer of its own, so what you hear is tens of
   milliseconds behind what you played. It is for checking a sound, not for
   playing along with one.
+- `--click` reaches you down that same path, so a take played in time with it
+  is late against the grid the clicks were generated on by however long the
+  output buffer is. It keeps the tempo; it does not sample-align the take.
+- The click is one tempo for the whole take. No tempo changes, no subdivisions,
+  and nothing is written into the file to say what it was set to.
 - `--play` runs start to finish. There is no seeking, no pausing and no
   playlist; `-t` is the only way to hear less than all of it.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between

@@ -86,7 +86,8 @@ OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 # runs on machines without ALSA headers.
 PORTABLE_SRCS := src/format.c src/wav.c src/parse.c src/log.c src/fft.c \
                  src/spectrum.c src/canvas.c src/jsonout.c src/info.c \
-                 src/take.c src/ringbuf.c src/preroll.c src/tuner.c src/meta.c
+                 src/take.c src/ringbuf.c src/preroll.c src/tuner.c src/meta.c \
+                 src/click.c
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 TEST_SRCS := $(sort $(wildcard tests/test_*.c))

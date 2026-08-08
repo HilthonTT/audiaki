@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A metronome. `audiaki -M --click 120 take01.wav` plays a click at 120 BPM
+  through the same output monitoring uses, so a take can be played in tempo
+  rather than measured for it afterwards. `--click-beats` sets the bar - four by
+  default, `3` for a waltz, `0` for a bare pulse - and accents the first beat an
+  octave up; `--click-gain` sets how loud it sits against the instrument,
+  independent of `--monitor-gain`. With `--preroll` the click starts as soon as
+  the recorder is armed, so the wait before Enter is a count-in.
+
+- The click is never written to the take. It reaches the headphones and stops
+  there, on the same rule `--monitor-gain` follows: the file is made of the
+  samples the device delivered, whatever was being played to the person making
+  it. Use headphones - from a speaker the click is in the room, and the input
+  will record it after all.
+
+- Asking for a click opens the output on its own, so a metronome does not
+  require hearing yourself as well; `-M` adds the input to it. One output
+  carries both, because two streams would mean two clocks and a click that
+  drifts against the monitoring beside it.
+
+- `click` module: the beat grid as a pure function of the absolute frame index,
+  with unit tests. Beat *n* lands where `n * 60 * rate / bpm` says it does
+  however the periods arrived, so rounding cannot accumulate and a dropped
+  buffer costs one click rather than moving every click after it. The frames
+  counted are the frames captured, which makes the tempo the capture clock: at
+  120 BPM and 48 kHz the beats are generated at frames 0, 24000, 48000 and so
+  on, exactly.
+
+  What that does not do is align a take to a timeline. The click reaches the
+  player through the output's buffer, so a performance played perfectly in time
+  is that far behind the grid it was played to. It keeps the tempo; it is not a
+  DAW's click, and [docs/USAGE.md](docs/USAGE.md#playing-to-a-click) says so.
+
 - Takes that say what they are. Every recording is now stamped with the software
   that made it, the date and time it started, the capture device it came from
   and the signal chain, and `--note "second chorus, clean tone"` adds whatever
@@ -125,6 +157,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `--monitor-device` no longer implies `--monitor` when `--click` is also given.
+  Naming an output used to mean "play the input through this one", because there
+  was nothing else it could mean; with a metronome there is, and it now names
+  where the click comes out without switching monitoring on. Unchanged without
+  `--click`, as is `--monitor-gain`, which only ever scaled the input.
 - The terminal meter takes a total length, and draws `00:12 / 03:45` with no
   xrun counter when it has one. The recording line is unchanged to the byte.
 - `device.h` no longer includes `<alsa/asoundlib.h>`, and the stream handle in

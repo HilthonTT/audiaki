@@ -86,6 +86,9 @@ static int run_record(const aud_options *opts)
   rec_opts.monitor = opts->monitor;
   rec_opts.monitor_device = opts->monitor_device;
   rec_opts.monitor_gain = (float)opts->monitor_gain;
+  rec_opts.click_bpm = opts->click_bpm;
+  rec_opts.click_beats = opts->click_beats;
+  rec_opts.click_gain = (float)opts->click_gain;
   rec_opts.metadata = opts->metadata;
   rec_opts.note = opts->note;
 

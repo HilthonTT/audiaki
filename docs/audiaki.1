@@ -200,7 +200,12 @@ monitoring and nothing else: audiaki says so and carries on recording.
 .TP
 .BR \-\-monitor\-device " " \fINAME\fR
 The output to monitor through, rather than the default one. Implies
-.BR \-\-monitor .
+.BR \-\-monitor ,
+unless
+.B \-\-click
+was given as well: the metronome plays through this same output without the
+input going near it, so there the flag names where the click comes out and
+leaves monitoring alone.
 Under ALSA the output has to accept the capture rate directly, because audiaki
 does not resample; the
 .B plug
@@ -212,7 +217,51 @@ Scale what is monitored, from 0.0 (silent) to 2.0 (+6 dB), default 1.0. Implies
 .BR \-\-monitor .
 This is the monitoring level and nothing else: the file is written from the
 samples the device delivered, so a quiet monitor does not make a quiet take, and
-the meter does not move with it.
+the meter does not move with it. It does not touch the click either.
+.TP
+.BR \-\-click " " \fIBPM\fR
+Play a metronome at
+.I BPM
+beats per minute, from 20 to 300, through the output monitoring uses. Opens that
+output on its own, so
+.B \-M
+is only needed when you want to hear the input as well;
+.B \-\-monitor\-device
+names the output either way.
+.IP
+The click is heard and never written: the take is made of the samples the device
+delivered, exactly as with
+.BR \-\-monitor\-gain .
+Use headphones — from a speaker the click is in the room, and the input will
+record it after all.
+.IP
+With
+.B \-\-preroll
+the metronome starts as soon as the recorder is armed, so the wait before Enter
+is a count\-in.
+.IP
+The grid is counted in captured frames, so it cannot drift against the
+recording: at 120 BPM and 48 kHz the clicks are generated at frames 0, 24000,
+48000 and so on. What you hear arrives through the output's own buffer, though,
+so a take played in time with the click is late against that grid by however
+long the buffer is. It keeps the tempo; it does not sample\-align the take.
+.TP
+.BR \-\-click\-beats " " \fIN\fR
+Beats to a bar, 0 to 32, default 4. The first beat of each bar is a tone an
+octave above the others.
+.B 0
+and
+.B 1
+both mean a bare pulse with no accent. Needs
+.BR \-\-click ,
+which is what sets the tempo and turns the metronome on.
+.TP
+.BR \-\-click\-gain " " \fIX\fR
+How loud the click is, from 0.0 (silent) to 2.0, default 0.5, on the same scale
+as
+.BR \-\-monitor\-gain
+and independent of it. Needs
+.BR \-\-click .
 .SS Visualiser
 .TP
 .BR \-\-visualize " " \fIFILE\fR
@@ -890,6 +939,22 @@ Hear the take through headphones on the interface while it is recorded:
 .nf
 .RS
 audiaki \-D plughw:CARD=Box,DEV=0 \-M \-\-monitor\-device plughw:CARD=Box,DEV=0 take03.wav
+.RE
+.fi
+.PP
+Play along to a metronome at 120 BPM, four to the bar, hearing yourself:
+.PP
+.nf
+.RS
+audiaki \-M \-\-click 120 take04.wav
+.RE
+.fi
+.PP
+Count yourself in over eight seconds of pre\-roll, three to the bar:
+.PP
+.nf
+.RS
+audiaki \-\-preroll 8 \-\-click 140 \-\-click\-beats 3 \-\-take waltz
 .RE
 .fi
 .PP

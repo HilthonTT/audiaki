@@ -42,7 +42,8 @@ plug in an instrument, get a clean take, see the level while you play. It speaks
 PipeWire as well as ALSA so it need not be told to get out of the way of the
 browser holding the same interface, negotiates the widest format the device
 offers (S32 → S24 → S16), shows a peak meter or a live spectrum, tunes the
-instrument, plays the input back so you hear the take as you make it, keeps the
+instrument, plays the input back so you hear the take as you make it, counts you
+in and keeps time with a metronome only you can hear, keeps the
 seconds before you pressed record, stamps each take with what made it and when,
 numbers takes so it
 cannot overwrite one, stops on an exact frame count so a 30 second take is
@@ -79,6 +80,7 @@ audiaki --spectrum -t 1:30 take02.wav  # 90 seconds, watching the spectrum
 audiaki --take session               # record the next free session-NNN.wav
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M take05.wav                # hear it while it records (headphones!)
+audiaki -M --click 120 take05.wav    # ...in time with a metronome
 audiaki --note "clean tone" take06.wav  # ...and say what it was
 audiaki --info take01.wav            # how did that take come out?
 audiaki --info session-*.wav         # ...and the rest of them, a row each
@@ -87,8 +89,8 @@ audiaki --visualize take01.wav       # render take01.mp4
 audiaki-gui                          # the desktop app
 ```
 
-Every option, the meter, the tuner, pre-roll, monitoring, take metadata,
-playback, `--json` output and troubleshooting:
+Every option, the meter, the tuner, pre-roll, monitoring, the metronome, take
+metadata, playback, `--json` output and troubleshooting:
 [docs/USAGE.md](docs/USAGE.md), `man audiaki`, or
 `audiaki --help`. The window, its keys and its visualisers:
 [docs/DESKTOP.md](docs/DESKTOP.md).
