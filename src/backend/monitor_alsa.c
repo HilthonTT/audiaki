@@ -336,6 +336,18 @@ static int alsa_monitor_write(void *impl, const float *interleaved, size_t frame
       return 0;
     }
 
+    /*
+     * A write that took nothing is not an error and not progress either. Going
+     * round again would spin here forever, on the capture thread, with the take
+     * behind it - so it counts as dropped like any other frames the output
+     * would not take.
+     */
+    if (wrote == 0)
+    {
+      m->dropped += (unsigned long)frames;
+      return 0;
+    }
+
     interleaved += (size_t)wrote * m->channels;
     frames -= (size_t)wrote;
   }

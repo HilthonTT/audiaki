@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "edit/edit.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -303,6 +304,8 @@ int aud_edit_duplicate(aud_doc *d)
   {
     aud_track piece;
     aud_track *fresh;
+    char name[AUD_TRACK_NAME_MAX];
+    unsigned channels;
 
     if (!d->tracks[i].selected)
     {
@@ -314,7 +317,15 @@ int aud_edit_duplicate(aud_doc *d)
       return -1;
     }
 
-    fresh = aud_doc_add_track(d, d->tracks[i].name, d->tracks[i].channels);
+    /*
+     * Taken before the add, not passed out of the array into it: the track list
+     * is one block and aud_doc_add_track() reallocs it, so a pointer into the
+     * old one is dangling by the time the new track is initialised from it.
+     */
+    snprintf(name, sizeof(name), "%s", d->tracks[i].name);
+    channels = d->tracks[i].channels;
+
+    fresh = aud_doc_add_track(d, name, channels);
     if (fresh == NULL)
     {
       aud_track_free(&piece);

@@ -45,6 +45,12 @@ static uint64_t clip_end(const aud_clip *c)
 /*
  * Make room for a clip at `index` and return it, uninitialised. The caller
  * fills it in and is responsible for the sort order still holding.
+ *
+ * `recording` is a position in this list, so it moves with the list. Splitting
+ * or deleting on a lane that is being recorded into is a perfectly ordinary
+ * thing to do from the window, and an index left pointing at whatever slid into
+ * its place would send the next captured period to the wrong clip - or, once
+ * the list had shrunk past it, off the end of it.
  */
 static aud_clip *clip_insert(aud_track *t, size_t index)
 {
@@ -55,6 +61,11 @@ static aud_clip *clip_insert(aud_track *t, size_t index)
 
   memmove(&t->clips[index + 1], &t->clips[index], (t->count - index) * sizeof(*t->clips));
   t->count++;
+
+  if (t->recording >= (long)index)
+  {
+    t->recording++;
+  }
   return &t->clips[index];
 }
 
@@ -64,6 +75,17 @@ static void clip_remove(aud_track *t, size_t index)
   memmove(&t->clips[index], &t->clips[index + 1],
           (t->count - index - 1) * sizeof(*t->clips));
   t->count--;
+
+  /* the take's own clip going away ends the take, rather than moving it onto
+   * whichever clip inherited the index */
+  if (t->recording == (long)index)
+  {
+    t->recording = -1;
+  }
+  else if (t->recording > (long)index)
+  {
+    t->recording--;
+  }
 }
 
 int aud_track_init(aud_track *t, const char *name, unsigned channels)
@@ -569,7 +591,7 @@ void aud_track_tidy(aud_track *t)
 
 int aud_track_recording(const aud_track *t)
 {
-  return t != NULL && t->recording >= 0;
+  return t != NULL && t->recording >= 0 && (size_t)t->recording < t->count;
 }
 
 int aud_track_record_begin(aud_track *t, uint64_t start, size_t capacity_hint)
@@ -617,7 +639,9 @@ size_t aud_track_record_push(aud_track *t, const float *interleaved, size_t fram
 {
   aud_clip *c;
 
-  if (t == NULL || t->recording < 0 || interleaved == NULL || frames == 0)
+  /* aud_track_recording() rather than the field, so an index the clip list has
+   * outgrown can never be dereferenced; see clip_insert() */
+  if (!aud_track_recording(t) || interleaved == NULL || frames == 0)
   {
     return 0;
   }
@@ -638,8 +662,12 @@ void aud_track_record_end(aud_track *t)
 {
   aud_clip *c;
 
-  if (t == NULL || t->recording < 0)
+  if (!aud_track_recording(t))
   {
+    if (t != NULL)
+    {
+      t->recording = -1;
+    }
     return;
   }
 

@@ -217,19 +217,36 @@ static void feed_monitor(aud_engine *e, size_t frames)
  */
 static void publish_take(aud_engine *e, const unsigned char *hw, size_t frames)
 {
+  size_t channels = e->dev.channels;
+  size_t samples;
+  size_t room;
   size_t took;
 
-  if (e->take_buf == NULL)
+  if (e->take_buf == NULL || channels == 0)
   {
     return;
   }
 
   aud_format_to_float(e->take_buf, hw, frames, e->dev.channels, e->dev.format);
-  took = aud_ringbuf_write(&e->take, e->take_buf, frames * e->dev.channels);
-  if (took < frames * e->dev.channels)
+  samples = frames * channels;
+
+  /*
+   * Whole frames or nothing. The ring's capacity is a power of two and has no
+   * reason to be a multiple of the channel count, so a write that filled it
+   * exactly would leave half a frame behind - and aud_engine_read_take() counts
+   * in frames, so every frame after that one would come out a channel askew.
+   */
+  room = (aud_ringbuf_space(&e->take) / channels) * channels;
+  if (room > samples)
+  {
+    room = samples;
+  }
+
+  took = room > 0 ? aud_ringbuf_write(&e->take, e->take_buf, room) : 0;
+  if (took < samples)
   {
     atomic_fetch_add_explicit(&e->take_dropped,
-                              (unsigned long)(frames - took / e->dev.channels),
+                              (unsigned long)((samples - took) / channels),
                               memory_order_relaxed);
   }
 }

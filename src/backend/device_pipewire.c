@@ -722,6 +722,30 @@ static void on_stream_param_changed(void *userdata, uint32_t id,
   }
 
   pthread_mutex_lock(&c->lock);
+
+  /*
+   * The first agreement is what the caller is handed, and it is what every
+   * buffer above this was then sized from - a period is period_frames *
+   * dev->channels wide, and dev->channels does not change again. The server can
+   * renegotiate later if it moves the stream, so a second format that is a
+   * different shape has to end the stream rather than start filling those
+   * buffers to a wider frame. Same shape is simply the stream carrying on.
+   */
+  if (c->negotiated)
+  {
+    unsigned channels = info.info.raw.channels;
+    aud_format format = from_spa_format(info.info.raw.format);
+
+    if (channels != c->channels || format != c->format)
+    {
+      c->broken = 1;
+      pthread_cond_signal(&c->cond);
+    }
+    pthread_mutex_unlock(&c->lock);
+    pw_thread_loop_signal(c->conn.loop, false);
+    return;
+  }
+
   c->rate = info.info.raw.rate;
   c->channels = info.info.raw.channels;
   c->format = from_spa_format(info.info.raw.format);

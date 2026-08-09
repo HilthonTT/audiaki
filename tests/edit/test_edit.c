@@ -301,6 +301,38 @@ TEST(duplicate_puts_a_copy_on_a_new_lane_at_the_same_place)
   aud_doc_free(&d);
 }
 
+/*
+ * The track list is one block that grows by doubling, so a duplicate that
+ * tips it over a capacity boundary moves every track while it is reading the
+ * name of one of them. Four lanes is exactly where the first move happens.
+ */
+TEST(duplicate_keeps_the_name_across_a_list_that_moved)
+{
+  aud_doc d;
+
+  build(&d, 4, 100);
+  for (size_t i = 0; i < d.count; i++)
+  {
+    snprintf(d.tracks[i].name, sizeof(d.tracks[i].name), "lane-%zu", i);
+    d.tracks[i].selected = 1;
+  }
+  aud_doc_select(&d, 10, 20);
+
+  CHECK_EQ_INT(aud_edit_duplicate(&d), 0);
+  CHECK_EQ_INT(d.count, 8);
+
+  for (size_t i = 0; i < 4; i++)
+  {
+    char want[32];
+
+    snprintf(want, sizeof(want), "lane-%zu", i);
+    CHECK(strcmp(d.tracks[i].name, want) == 0);
+    CHECK(strcmp(d.tracks[4 + i].name, want) == 0);
+  }
+
+  aud_doc_free(&d);
+}
+
 TEST(split_cuts_at_both_edges_without_removing_anything)
 {
   aud_doc d;
@@ -445,6 +477,7 @@ int main(void)
   RUN(a_clipboard_wider_than_the_project_grows_it);
   RUN(trim_keeps_only_what_was_selected);
   RUN(duplicate_puts_a_copy_on_a_new_lane_at_the_same_place);
+  RUN(duplicate_keeps_the_name_across_a_list_that_moved);
   RUN(split_cuts_at_both_edges_without_removing_anything);
   RUN(undo_puts_the_project_back_and_redo_takes_it_forward);
   RUN(undo_walks_back_through_several_edits);

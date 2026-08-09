@@ -419,6 +419,70 @@ TEST(a_mono_block_on_a_stereo_track_does_not_read_past_its_frame)
   aud_track_free(&t);
 }
 
+/*
+ * The recording index is a position in the clip list, and the window lets a
+ * lane be edited while a take is running down it. So every list operation has
+ * to carry the index with it, and a list that has lost the clip it named has to
+ * end the take rather than leave the next captured period pointing at whatever
+ * moved into the slot.
+ */
+TEST(an_edit_ahead_of_a_take_leaves_the_take_where_it_is)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+  float buf[8] = {7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f};
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT(aud_track_record_begin(&t, 200, 64), 0);
+  CHECK(aud_track_recording(&t));
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 8), 8);
+
+  /* a split of the clip before it inserts a clip underneath the take's index */
+  CHECK_EQ_INT(aud_track_split(&t, 50), 0);
+  CHECK_EQ_INT(t.count, 3);
+  CHECK(aud_track_recording(&t));
+
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 8), 8);
+  aud_track_record_end(&t);
+
+  /* the take is still its own clip, holding both pushes and nothing else */
+  CHECK(well_formed(&t));
+  CHECK_EQ_INT((int)aud_track_end(&t), 216);
+  CHECK(at(&t, 200) == 7.0f);
+  CHECK(at(&t, 215) == 7.0f);
+  CHECK(at(&t, 49) == 49.0f); /* the split clip is untouched */
+
+  aud_track_free(&t);
+}
+
+TEST(deleting_the_clip_a_take_is_going_into_ends_the_take)
+{
+  aud_track t;
+  float buf[8] = {7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f, 7.0f};
+
+  aud_track_init(&t, "t", 1);
+
+  CHECK_EQ_INT(aud_track_record_begin(&t, 0, 64), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 8), 8);
+  CHECK_EQ_INT(t.count, 1);
+
+  /* the user selects the growing take and presses Delete */
+  CHECK_EQ_INT(aud_track_delete(&t, 0, 8, 1), 0);
+  CHECK_EQ_INT(t.count, 0);
+  CHECK(!aud_track_recording(&t));
+
+  /* whatever the engine had still in flight has nowhere to go, and says so
+   * rather than being written through a clip index that no longer exists */
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 8), 0);
+  aud_track_record_end(&t);
+  CHECK_EQ_INT(t.count, 0);
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -437,6 +501,8 @@ int main(void)
   RUN(a_copied_track_shares_its_audio_and_is_independent);
   RUN(a_range_over_a_hole_takes_in_the_silence);
   RUN(a_mono_block_on_a_stereo_track_does_not_read_past_its_frame);
+  RUN(an_edit_ahead_of_a_take_leaves_the_take_where_it_is);
+  RUN(deleting_the_clip_a_take_is_going_into_ends_the_take);
 
   return TEST_RESULT();
 }

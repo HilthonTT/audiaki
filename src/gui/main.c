@@ -80,7 +80,10 @@ void app_load_track(app *a, const char *path)
 /* Open the device and build the display for whatever it negotiated. */
 static int app_open_engine(app *a)
 {
+  unsigned channels;
+
   a->fatal[0] = '\0';
+  a->take_buf_frames = 0;
 
   if (a->device_selected < 0 || a->device_selected >= a->devices.count)
   {
@@ -109,6 +112,14 @@ static int app_open_engine(app *a)
     return -1;
   }
 
+  /*
+   * The drain is a fixed block of samples, so how many frames of it can be
+   * asked for is whatever this device's channel count divides into. Asking for
+   * more than that would have the engine write the extra channels past the end.
+   */
+  channels = aud_engine_channels(a->engine);
+  a->take_buf_frames = channels > 0 ? APP_TAKE_BUF_SAMPLES / channels : 0;
+
   /* the style survives a device change; the analyser behind it does not */
   aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
   aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
@@ -121,6 +132,7 @@ static void app_close_engine(app *a)
   a->viz = NULL;
   aud_engine_destroy(a->engine);
   a->engine = NULL;
+  a->take_buf_frames = 0;
 }
 
 /*
@@ -987,12 +999,12 @@ int main(int argc, char *argv[])
   a.record_track = -1;
 
   /*
-   * A quarter of a second of drain per pass. The ring holds four seconds, so
-   * this empties it comfortably faster than it fills even on a frame that took
-   * far longer than a frame should.
+   * A quarter of a second of drain per pass at the usual channel counts. The
+   * ring holds four seconds, so this empties it comfortably faster than it
+   * fills even on a frame that took far longer than a frame should. How many
+   * frames that is depends on the device, and is worked out in app_open_engine.
    */
-  a.take_buf_frames = 16384u;
-  a.take_buf = malloc(a.take_buf_frames * AUD_TAKE_BUF_CHANNELS * sizeof(float));
+  a.take_buf = malloc(APP_TAKE_BUF_SAMPLES * sizeof(float));
   if (a.take_buf == NULL)
   {
     aud_error("cannot allocate the take buffer");

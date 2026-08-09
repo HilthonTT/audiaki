@@ -64,11 +64,17 @@
 #define APP_MAX_OPEN 32
 
 /*
- * Channels the take drain buffer is sized for. Wider than any interface anyone
- * records a band through, and the engine's own channel count is what is
- * actually used - this is only how much room to leave.
+ * The take drain buffer, as a flat sample count: a quarter of a second at
+ * sixteen channels. It is allocated once, before there is a device to ask, so
+ * it is sized in samples and divided by the channel count the engine actually
+ * negotiated - see app.take_buf_frames, which is what the drain is asked for.
+ *
+ * Sixteen is a shape, not a limit: -c accepts up to AUD_CHANNELS_MAX, and an
+ * interface that wide simply drains fewer frames per pass rather than writing
+ * past the end of this.
  */
-#define AUD_TAKE_BUF_CHANNELS 16u
+#define APP_TAKE_BUF_CHANNELS 16u
+#define APP_TAKE_BUF_SAMPLES (16384u * APP_TAKE_BUF_CHANNELS)
 
 /* Samples pulled from the engine per drawn frame. */
 #define APP_DRAIN 4096u
@@ -200,7 +206,8 @@ typedef struct
    */
   long record_track;
   uint64_t record_at;
-  float *take_buf; /* one drain's worth, interleaved */
+  float *take_buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
+  /* frames of those the current engine's channel count fits; 0 without one */
   size_t take_buf_frames;
 
   /*
