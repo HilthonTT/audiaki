@@ -5,8 +5,8 @@
 <h1 align="center">audiaki</h1>
 
 <p align="center">
-  Minimal capture-to-WAV recorder for Linux, with live metering, a
-  spectrum visualiser and a desktop app. Talks to PipeWire or ALSA.
+  Capture-to-WAV recorder for Linux with a multi-track editor, live
+  metering and a spectrum visualiser. Talks to PipeWire or ALSA.
 </p>
 
 <p align="center">
@@ -25,8 +25,9 @@ and can record another application's output; through ALSA it opens the card with
 nothing in between.
 
 Two binaries share one capture and analysis core: `audiaki`, the command line
-recorder, and `audiaki-gui`, a desktop window with a transport, playback
-monitoring and a live glowing spectrum. Written for a Sonicake Smart Box
+recorder, and `audiaki-gui`, a multi-track recorder and editor — record onto a
+timeline with the waveform growing as you play, cut and paste it about, play it
+back and export a mix. Written for a Sonicake Smart Box
 (QME-20) guitar interface, but it works with any ALSA capture device — USB
 interfaces, built-in codecs, `plughw` plugins.
 
@@ -88,7 +89,8 @@ audiaki --info take01.wav            # how did that take come out?
 audiaki --info session-*.wav         # ...and the rest of them, a row each
 audiaki --play take01.wav            # ...and what does it sound like?
 audiaki --visualize take01.wav       # render take01.mp4
-audiaki-gui                          # the desktop app
+audiaki-gui                          # the multi-track recorder and editor
+audiaki-gui take01.wav take02.wav    # ...opened on those takes
 ```
 
 When a take finishes, audiaki asks where to keep it and what to call it — Enter
@@ -99,8 +101,11 @@ go by default is one line in `~/.config/audiaki/config`:
 take_dir = ~/Takes
 ```
 
-Every option, the meter, the tuner, pre-roll, monitoring, the metronome, take
-metadata, playback, `--json` output and troubleshooting:
+The window records at the cursor onto whichever track is free, draws the
+waveform as it arrives, plays back the mix, cuts, copies, pastes, splits and
+trims with 64 steps of undo, and exports a WAV. The visualiser is a panel of it
+you can shut. Every option, the meter, the tuner, pre-roll, monitoring, the
+metronome, take metadata, playback, `--json` output and troubleshooting:
 [docs/USAGE.md](docs/USAGE.md), `man audiaki`, or
 `audiaki --help`. The window, its keys and its visualisers:
 [docs/DESKTOP.md](docs/DESKTOP.md).

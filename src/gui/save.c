@@ -31,6 +31,7 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #define SAVE_PANEL_W 560.0f
 #define SAVE_PANEL_H 430.0f
@@ -45,12 +46,28 @@ static int compare_rows(const void *a, const void *b)
   return strcmp((const char *)a, (const char *)b);
 }
 
+/* Non-zero when `name` ends in .wav, whichever case it was written in. */
+static int is_wav(const char *name)
+{
+  size_t len = strlen(name);
+  const char *ext;
+
+  if (len < 5u)
+  {
+    return 0;
+  }
+  ext = name + len - 4u;
+  return (ext[0] == '.') && (ext[1] == 'w' || ext[1] == 'W') &&
+         (ext[2] == 'a' || ext[2] == 'A') && (ext[3] == 'v' || ext[3] == 'V');
+}
+
 /*
- * Fill `s->rows` with the sub-folders of `s->folder`.
+ * Fill `s->rows` with what can be clicked in `s->folder`.
  *
- * Folders only. This picks where a take goes, and the files already in a
- * folder are not something to click on - offering them would only invite
- * someone to save one take over another. Hidden ones are left out for the same
+ * Saving lists folders only: the files already there are not something to aim
+ * at, and offering them would invite saving one take over another. Opening
+ * lists the WAVs as well, because a browser that would not show you the file
+ * you came for is not one. Hidden entries are left out either way, for the same
  * reason nobody keeps recordings in them.
  */
 static void relist(app_save *s)
@@ -66,6 +83,7 @@ static void relist(app_save *s)
   /* '/' is the one folder with nothing above it */
   if (strcmp(s->folder, "/") != 0)
   {
+    s->row_is_dir[s->count] = 1;
     snprintf(s->rows[s->count++], APP_NAME_MAX, "%s", SAVE_PARENT);
   }
   first = s->count;
@@ -90,8 +108,20 @@ static void relist(app_save *s)
      * answer that holds everywhere. It is one per entry of one folder, at the
      * moment a take stopped, which is nowhere near often enough to matter.
      */
-    if (aud_path_join(full, sizeof(full), s->folder, entry->d_name) != 0 ||
-        !aud_path_is_dir(full))
+    if (aud_path_join(full, sizeof(full), s->folder, entry->d_name) != 0)
+    {
+      continue;
+    }
+
+    if (aud_path_is_dir(full))
+    {
+      s->row_is_dir[s->count] = 1;
+    }
+    else if (s->mode != APP_SAVE_MODE_KEEP && is_wav(entry->d_name))
+    {
+      s->row_is_dir[s->count] = 0;
+    }
+    else
     {
       continue;
     }
@@ -101,10 +131,34 @@ static void relist(app_save *s)
 
   closedir(dir);
 
-  /* readdir hands them back in whatever order the filesystem stored them */
+  /*
+   * readdir hands them back in whatever order the filesystem stored them, and
+   * the folders go above the files so a browser reads the way every other one
+   * does. Sorted by the key the rows are drawn with, which is why the flag is
+   * folded into it rather than sorted alongside.
+   */
+  for (int i = first; i < s->count; i++)
+  {
+    if (s->row_is_dir[i])
+    {
+      memmove(s->rows[i] + 1, s->rows[i], APP_NAME_MAX - 1u);
+      s->rows[i][0] = '\t'; /* sorts before any printable character */
+      s->rows[i][APP_NAME_MAX - 1u] = '\0';
+    }
+  }
+
   if (s->count - first > 1)
   {
     qsort(s->rows[first], (size_t)(s->count - first), APP_NAME_MAX, compare_rows);
+  }
+
+  for (int i = first; i < s->count; i++)
+  {
+    s->row_is_dir[i] = s->rows[i][0] == '\t';
+    if (s->row_is_dir[i])
+    {
+      memmove(s->rows[i], s->rows[i] + 1, APP_NAME_MAX - 1u);
+    }
   }
 
   for (int i = 0; i < s->count; i++)
@@ -118,6 +172,7 @@ void app_save_open(app *a, const char *path, double seconds)
   app_save *s = &a->save;
 
   memset(s, 0, sizeof(*s));
+  s->mode = APP_SAVE_MODE_KEEP;
   snprintf(s->take, sizeof(s->take), "%s", path);
   snprintf(s->name, sizeof(s->name), "%s", aud_path_basename(path));
   s->seconds = seconds;
@@ -129,6 +184,77 @@ void app_save_open(app *a, const char *path, double seconds)
 
   s->focus = APP_SAVE_FIELD_NAME;
   s->open = 1;
+  relist(s);
+}
+
+/*
+ * The same browser, asking the other question. It opens on the folder takes are
+ * kept in, because that is where the file being looked for nearly always is.
+ */
+void app_open_dialog(app *a)
+{
+  app_save *s = &a->save;
+
+  memset(s, 0, sizeof(*s));
+  s->mode = APP_SAVE_MODE_OPEN;
+  s->focus = APP_SAVE_FIELD_NAME;
+  s->open = 1;
+
+  if (a->take_dir[0] != '\0')
+  {
+    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+  }
+  else if (a->prefix[0] != '\0' &&
+           aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) == 0)
+  {
+    /* wherever the takes are being written, which with no take_dir is here */
+  }
+  else
+  {
+    snprintf(s->folder, sizeof(s->folder), ".");
+  }
+
+  relist(s);
+}
+
+/*
+ * ...and asking where the finished thing should be written. It opens on the
+ * take folder with a name derived from the take prefix, so the common answer is
+ * already filled in.
+ */
+void app_export_dialog(app *a)
+{
+  app_save *s = &a->save;
+  const char *base;
+
+  if (a->doc.count == 0)
+  {
+    app_set_status(a, "nothing to export yet");
+    return;
+  }
+
+  memset(s, 0, sizeof(*s));
+  s->mode = APP_SAVE_MODE_EXPORT;
+  s->focus = APP_SAVE_FIELD_NAME;
+  s->open = 1;
+  s->seconds = a->doc.rate > 0 ? (double)(aud_doc_has_range(&a->doc)
+                                              ? a->doc.sel_end - a->doc.sel_start
+                                              : aud_doc_end(&a->doc)) /
+                                     a->doc.rate
+                               : 0.0;
+
+  base = aud_path_basename(a->prefix);
+  snprintf(s->name, sizeof(s->name), "%s-mix.wav", base[0] != '\0' ? base : "project");
+
+  if (a->take_dir[0] != '\0')
+  {
+    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+  }
+  else if (aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) != 0)
+  {
+    snprintf(s->folder, sizeof(s->folder), ".");
+  }
+
   relist(s);
 }
 
@@ -144,7 +270,12 @@ void app_save_dismiss(app *a)
 
   snprintf(take, sizeof(take), "%s", s->take);
   s->open = 0;
-  app_finish_take(a, take);
+
+  /* an import that was cancelled has no take waiting on an answer */
+  if (s->mode == APP_SAVE_MODE_KEEP)
+  {
+    app_finish_take(a, take);
+  }
 }
 
 /*
@@ -162,7 +293,9 @@ static int save_confirm(app *a)
 
   if (s->name[0] == '\0')
   {
-    snprintf(s->note, sizeof(s->note), "the take needs a name");
+    snprintf(s->note, sizeof(s->note),
+             s->mode == APP_SAVE_MODE_OPEN ? "pick a file to open"
+                                           : "the take needs a name");
     return -1;
   }
 
@@ -178,6 +311,47 @@ static int save_confirm(app *a)
   {
     snprintf(s->note, sizeof(s->note), "that is too long a path");
     return -1;
+  }
+
+  if (aud_path_is_dir(target))
+  {
+    snprintf(s->note, sizeof(s->note), "that is a folder - click it to go in");
+    return -1;
+  }
+
+  if (s->mode == APP_SAVE_MODE_OPEN)
+  {
+    s->open = 0;
+    app_load_track(a, target);
+    return 0;
+  }
+
+  if (s->mode == APP_SAVE_MODE_EXPORT)
+  {
+    /*
+     * Asked before writing rather than refused afterwards. An export is
+     * something you do repeatedly to the same name while you get a mix right,
+     * so replacing one has to be possible - but not by accident.
+     */
+    if (access(target, F_OK) == 0 && !s->confirmed)
+    {
+      snprintf(s->note, sizeof(s->note),
+               "%.140s is already there - Export again to "
+               "replace it",
+               aud_path_basename(target));
+      s->confirmed = 1;
+      return -1;
+    }
+
+    if (aud_path_mkdirs(folder) != 0)
+    {
+      snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
+      return -1;
+    }
+
+    s->open = 0;
+    app_export(a, target);
+    return 0;
   }
 
   /* the file is already there and already called that: nothing to do */
@@ -272,9 +446,14 @@ void app_save_draw(app *a)
   DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
   DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, AUD_UI_ACCENT);
 
-  aud_ui_text(panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT, "Keep this take");
+  aud_ui_text(
+      panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT,
+      s->mode == APP_SAVE_MODE_OPEN
+          ? "Open a WAV"
+          : (s->mode == APP_SAVE_MODE_EXPORT ? "Export a mix" : "Keep this take"));
 
   /* how long it was, so the dialog says which take it is asking about */
+  if (s->mode != APP_SAVE_MODE_OPEN)
   {
     char detail[32];
 
@@ -294,6 +473,11 @@ void app_save_draw(app *a)
   if (clicked & AUD_UI_FIELD_CLICKED)
   {
     s->focus = APP_SAVE_FIELD_NAME;
+  }
+  if (clicked & AUD_UI_FIELD_EDITED)
+  {
+    s->confirmed = 0; /* a different name is a different question */
+    s->note[0] = '\0';
   }
   /*
    * Only bail out of the frame when the dialog is actually gone. A refused
@@ -340,24 +524,34 @@ void app_save_draw(app *a)
     char next[AUD_PATH_MAX];
     int ok;
 
-    if (strcmp(s->rows[clicked], SAVE_PARENT) == 0)
+    /* a file is what was being looked for; a folder is a step towards it */
+    if (!s->row_is_dir[clicked])
     {
-      char here[AUD_PATH_MAX];
-
-      /* through the real path, so ".." out of a relative folder still works */
-      ok = aud_path_expand(here, sizeof(here), s->folder) == 0 &&
-           aud_path_dirname(next, sizeof(next), here) == 0;
+      snprintf(s->name, sizeof(s->name), "%s", s->rows[clicked]);
+      s->note[0] = '\0';
+      s->focus = APP_SAVE_FIELD_NAME;
     }
     else
     {
-      ok = aud_path_join(next, sizeof(next), s->folder, s->rows[clicked]) == 0;
-    }
+      if (strcmp(s->rows[clicked], SAVE_PARENT) == 0)
+      {
+        char here[AUD_PATH_MAX];
 
-    if (ok)
-    {
-      snprintf(s->folder, sizeof(s->folder), "%s", next);
-      s->note[0] = '\0';
-      relist(s);
+        /* through the real path, so ".." out of a relative folder still works */
+        ok = aud_path_expand(here, sizeof(here), s->folder) == 0 &&
+             aud_path_dirname(next, sizeof(next), here) == 0;
+      }
+      else
+      {
+        ok = aud_path_join(next, sizeof(next), s->folder, s->rows[clicked]) == 0;
+      }
+
+      if (ok)
+      {
+        snprintf(s->folder, sizeof(s->folder), "%s", next);
+        s->note[0] = '\0';
+        relist(s);
+      }
     }
   }
 
@@ -370,7 +564,12 @@ void app_save_draw(app *a)
   else
   {
     aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_MUTED,
-                "Tab moves between the fields, Enter saves, Esc keeps it where it is");
+                s->mode == APP_SAVE_MODE_OPEN
+                    ? "click a folder to go in, a file to pick it; Enter opens"
+                    : (s->mode == APP_SAVE_MODE_EXPORT
+                           ? "the selection if there is one, the whole project if not"
+                           : "Tab moves between the fields, Enter saves, Esc keeps "
+                             "it here"));
   }
 
   save.width = 130.0f;
@@ -382,13 +581,19 @@ void app_save_draw(app *a)
   keep.width = 150.0f;
   keep.x = save.x - 12.0f - keep.width;
 
-  if (aud_ui_button(keep, "Keep here", AUD_UI_MUTED, 1))
+  if (aud_ui_button(keep, s->mode == APP_SAVE_MODE_KEEP ? "Keep here" : "Cancel",
+                    AUD_UI_MUTED, 1))
   {
     app_save_dismiss(a);
     return;
   }
 
-  if (aud_ui_button(save, "Save", AUD_UI_ACCENT, 1) && save_confirm(a) == 0)
+  if (aud_ui_button(save,
+                    s->mode == APP_SAVE_MODE_OPEN
+                        ? "Open"
+                        : (s->mode == APP_SAVE_MODE_EXPORT ? "Export" : "Save"),
+                    AUD_UI_ACCENT, 1) &&
+      save_confirm(a) == 0)
   {
     return;
   }

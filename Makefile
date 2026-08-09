@@ -51,6 +51,25 @@ CFLAGS    ?= $(OPTFLAGS) -g
 CFLAGS    += -std=c11 $(WARNINGS) $(SANITIZE) -MMD -MP
 LDFLAGS   += $(SANITIZE)
 
+# An object file remembers nothing about the flags it was built with, and one
+# setting genuinely cannot be mixed: a sanitized object refers to runtime
+# symbols an unsanitized link does not pull in. So `make debug` followed by
+# `make` used to fail at the link with a page of undefined __asan_* references -
+# a message about the linker, for a problem that is entirely about stale
+# objects.
+#
+# The setting is stamped into the build directory and compared on every run.
+# Changing it throws the objects away, which is the only sound answer and is
+# what whoever changed it meant anyway.
+SANITIZE_STAMP := $(BUILD_DIR)/.sanitize
+SANITIZE_WAS   := $(shell cat $(SANITIZE_STAMP) 2>/dev/null)
+
+ifneq ($(strip $(SANITIZE)),$(strip $(SANITIZE_WAS)))
+$(info audiaki: sanitizer setting changed, rebuilding)
+$(shell rm -rf $(OBJ_DIR) $(TEST_DIR))
+$(shell mkdir -p $(BUILD_DIR) && printf '%s' '$(strip $(SANITIZE))' > $(SANITIZE_STAMP))
+endif
+
 ALSA_CFLAGS := $(shell $(PKG_CONFIG) --cflags alsa 2>/dev/null)
 ALSA_LIBS   := $(shell $(PKG_CONFIG) --libs alsa 2>/dev/null || echo -lasound)
 ifeq ($(strip $(ALSA_LIBS)),)
@@ -79,7 +98,7 @@ LDLIBS    += $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lm
 # One directory per layer; see DESIGN.md. src/gui is built separately, against
 # raylib, and is the only part that may be absent.
 SRC_DIRS  := src src/cli src/cmd src/backend src/audio src/take src/media \
-             src/term src/util
+             src/edit src/term src/util
 
 SRCS      := $(sort $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c)))
 ifeq ($(HAVE_PIPEWIRE),)
@@ -126,6 +145,9 @@ GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
                  src/audio/format.c src/audio/fft.c src/audio/spectrum.c \
                  src/audio/tuner.c \
                  src/take/take.c src/take/meta.c src/take/preroll.c \
+                 src/edit/samples.c src/edit/track.c src/edit/doc.c \
+                 src/edit/edit.c src/edit/load.c src/edit/mix.c \
+                 src/edit/export.c \
                  src/media/wav.c src/media/ffmpeg_posix.c \
                  src/util/log.c src/util/jsonout.c src/util/ringbuf.c \
                  src/util/parse.c src/util/path.c src/util/config.c

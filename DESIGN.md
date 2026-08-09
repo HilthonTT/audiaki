@@ -13,6 +13,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 - [Pitch detection](#pitch-detection)
 - [Pre-roll](#pre-roll)
 - [Where takes go](#where-takes-go)
+- [The editor](#the-editor)
 - [Measuring a take](#measuring-a-take)
 - [What a take carries](#what-a-take-carries)
 - [Playing one back](#playing-one-back)
@@ -51,6 +52,14 @@ src/
     spectrum.c/.h streaming analyser: samples in, bar heights out
     tuner.c/.h    pitch detection: samples in, a note and its offset out
     click.c/.h    the metronome: a beat grid, mixed into what you hear
+  edit/         the project the window edits: tracks, clips, undo
+    samples.c/.h  refcounted blocks of audio, shared and never changed
+    track.c/.h    one lane: a sorted list of clips over those blocks
+    doc.c/.h      the tracks, the selection, and the undo stack
+    edit.c/.h     cut, copy, paste, delete, silence, trim, split
+    mix.c/.h      what the project sounds like; playback and export share it
+    load.c/.h     a WAV becomes a track
+    export.c/.h   the mix, back out as a WAV
   take/         what a recording is, and what surrounds it
     take.c/.h     numbered take filenames for --take
     meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
@@ -78,8 +87,11 @@ src/
     main.c        the run loop, the engine's lifecycle, the transport actions
     args.c        argv and the help text
     devices.c     the dropdown's list, kept level with the hardware
-    save.c        where a finished take goes, and the dialog that asks
-    screen.c      every pixel
+    save.c        where a take goes, and the browser that asks - also import
+                  and export, which are the same question turned round
+    timeline.c/.h the tracks: ruler, panels, waveforms, selection, zoom
+    player.c/.h   hearing the timeline, fed from the drawing loop
+    screen.c      every pixel of the chrome
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
     ui.c/.h       immediate-mode buttons, slider and meter
@@ -324,6 +336,62 @@ doubt — someone is looking at it — so its dialog opens unless it was turned 
 One consequence worth naming: with **Video** on, the render waits for the dialog
 rather than starting beside it. The MP4 is made from the take, and it should be
 made from wherever the take ended up.
+
+## The editor
+
+One decision holds the whole thing up: **audio arrives once and is never written
+to again**. A take is a block of float samples; a clip is a window onto part of
+one, placed at some frame of the timeline; a track is a sorted, non-overlapping
+list of clips. Every edit is clip surgery over shared blocks and copies no
+samples at all.
+
+Splitting makes two clips over one block. Deleting a range moves the windows in
+and shifts what follows. Pasting inserts clips that point at somebody else's
+audio. Cutting an hour-long take costs the same as cutting a bar of one.
+
+What that buys is undo. A snapshot of the whole project is a copy of its clip
+lists with the reference counts bumped — a few kilobytes for a session holding
+hundreds of megabytes — so the undo stack is sixty-four whole-project states and
+nobody has to think about it. Undo that copied audio would be unaffordable at
+these sizes, and an editor without undo is not an editor.
+
+The one exception is the block being recorded into, which has exactly one owner
+for as long as the take lasts and so can grow without moving anything anybody
+else is holding. That is what lets the waveform appear while it is being played
+rather than when it stops.
+
+### Drawing it fast
+
+A waveform is one column of pixels per span of frames, and at a zoom that fits
+an hour on screen a column covers a hundred thousand samples. Reading them all,
+sixty times a second, is not on.
+
+So each block carries a two-level peak index: the minimum, maximum and RMS of
+every 256 frames, and of every 256 of those. A column reads whichever level
+covers its span in a sensible number of steps, and the loose samples at either
+end directly, so the answer is exact rather than rounded out to a bucket
+boundary. While a take is being recorded the index only covers the buckets that
+have filled; the tail is scanned, which is at most 256 frames of it.
+
+Both readings are drawn - the peak envelope, and the RMS as a solid core inside
+it - because either alone misleads. Peaks make a quiet take with occasional
+transients look as loud as a compressed one; RMS hides the transient that
+clipped.
+
+### Playing it
+
+No thread. The output says how much it will take, so the drawing loop hands it
+exactly that much each frame and the output's own consumption is the clock —
+the same trick `cmd/play.c` uses to play a file at the right speed without one.
+
+That is not laziness, it is what keeps the project single-threaded. An edit made
+while playback runs cannot race the mix, because the mix happens between two
+edits rather than beside them. A playhead a buffer behind what has been handed
+over is a much smaller problem than a data race in a cut.
+
+Playback and export mix through the same function, deliberately: a project that
+played back differently from how it exported would be a project you could not
+trust, and one piece of code is the only way to be sure of that.
 
 ## Measuring a take
 

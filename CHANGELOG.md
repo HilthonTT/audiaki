@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `audiaki-gui` is a multi-track recorder and editor. It records onto a
+  timeline, draws the waveform while you are playing rather than when you have
+  stopped, plays the result back, cuts it about, and writes a mix out again.
+  What was a window over one take is now a window over a session of them.
+
+  Recording lands at the cursor: on the selected track if it is free from there
+  on, and on a new one otherwise. So clicking further along a take and pressing
+  record again adds to that take, and clicking over audio that is already there
+  gives the new one a lane of its own rather than refusing or overwriting.
+
+  The take goes onto the timeline as it arrives, frame for frame with the WAV
+  being written - not a preview of it - and it is editable the moment it stops,
+  with nothing in between. The visualiser that used to be the whole window is a
+  panel you can shut.
+
+- Editing: select by dragging across a track, `ctrl`+click to take in another,
+  then cut, copy, paste, delete, silence, trim, split or copy the selection onto
+  a track of its own. 64 steps of undo, and pasting over a selection replaces
+  it the way typing over selected text does.
+
+  None of it copies audio. A clip is a window onto a block of samples that is
+  never written to, so an edit moves a handful of structs however long the take
+  is - which is also what makes whole-project undo affordable. DESIGN.md has
+  the reasoning.
+
+- Playback: `space` plays the selection, or from the cursor to the end, with a
+  playhead the view follows. Mute, solo, gain and pan are what they say, and
+  what you hear is exactly what Export writes, because both go through one
+  mixer.
+
+- Import and Export. `I` opens a WAV as a track; `ctrl+E` mixes down to one -
+  the selection if there is one, the whole project if not, 24-bit at the
+  project's own rate. Files named on the command line are opened as tracks, so
+  `audiaki-gui take-*.wav` opens a session.
+
+- A two-level peak index behind each block of audio - minimum, maximum and RMS
+  per 256 frames, and per 256 of those - so a waveform zoomed out to a whole
+  session reads a few thousand buckets rather than a hundred million samples,
+  and one being recorded is indexed as it arrives.
+
+### Changed
+
+- In the window, `space` now plays and `R` or `ctrl+space` records. Playing back
+  is the commoner of the two once there is a timeline to play, so it gets the
+  bare key; `F` fits the project to the window, the way it does in every editor
+  of this kind, and fullscreen has moved to `F11`.
+
+- The window does not ask where to keep a take unless it is told to. The take is
+  on the timeline the moment it stops, and a dialog between playing something
+  and editing it is a dialog in the way. `prompt = yes` in the config file
+  brings it back; the terminal recorder is unchanged, because there a take is a
+  file and where it goes is the whole question.
+
 - A take gets asked where it should live. The recorder offers a folder and a
   name once the file is closed - Enter twice keeps it exactly where it is - and
   the window opens a dialog with the same two questions, the folder it was

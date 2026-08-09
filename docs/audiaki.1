@@ -724,9 +724,28 @@ Rendering can be interrupted with
 ffmpeg is stopped and the partial video is removed.
 .SH DESKTOP APPLICATION
 .B audiaki\-gui
-is a window with the same recorder behind it: a record, pause, resume and stop
-transport, a live level meter with peak hold, and a real\-time spectrum drawn as
-glowing bars.
+is a multi\-track recorder and editor with the same capture core behind it: a
+transport, a timeline, a live level meter with peak hold, and a real\-time
+spectrum drawn as glowing bars in a panel that can be shut.
+.PP
+Recording goes onto the timeline at the cursor, on the selected track when it is
+free from there on and on a new one otherwise, and the waveform is drawn as the
+audio arrives rather than when the take stops. The take is a numbered WAV on
+disk throughout, so an interrupted session is not a lost one.
+.PP
+The selection is a time range across one or more tracks, made by dragging.
+.BR Cut ", " Copy ", " Paste ", " Delete ", " Silence ", " Trim " and " Split
+work on it, with sixty\-four steps of undo. None of them copies audio: a clip is
+a window onto a block of samples that is never written to, so an edit costs the
+same however long the take is.
+.PP
+.B Play
+plays the selection, or from the cursor to the end, through the same mixer
+.B Export
+writes with \(em so what is heard and what is written cannot disagree. Mute,
+solo, gain and pan apply to both.
+.PP
+Files named on the command line are opened as tracks.
 .PP
 The capture stream opens with the window and stays open whether or not a take is
 being written, so the meter and the spectrum are live before recording starts \-
@@ -821,9 +840,21 @@ Start with playback monitoring already on.
 .PP
 Keys:
 .B space
-records, or pauses and resumes a running take;
+plays, or pauses and resumes a running take;
+.BR R " or " ctrl+space
+records from the cursor;
 .B S
-stops, or cancels a video render;
+stops the take or playback, or cancels a video render;
+.BR I " and " ctrl+E
+import a WAV and export a mix;
+.BR ctrl+X ", " ctrl+C " and " ctrl+V
+cut, copy and paste,
+.B del
+deletes and
+.B ctrl+Z
+undoes;
+.B B
+shows and hides the visualiser panel;
 .B M
 toggles monitoring;
 .B V
@@ -831,6 +862,8 @@ steps through the visualiser styles and
 .BR 1 \- 6
 pick one outright;
 .B F
+fits the selection or the project to the window,
+.B F11
 toggles fullscreen;
 .B ?
 puts the whole list over the window, and

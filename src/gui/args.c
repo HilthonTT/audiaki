@@ -24,7 +24,7 @@
 void app_usage(FILE *out, const app *a)
 {
   fprintf(out,
-          "usage: " AUDIAKI_NAME "-gui [options]\n"
+          "usage: " AUDIAKI_NAME "-gui [options] [take.wav ...]\n"
           "\n"
           "  -D, --device NAME    capture device (default: %s)\n"
           "  -b, --backend NAME   auto, pipewire or alsa (default: auto)\n"
@@ -54,8 +54,12 @@ void app_usage(FILE *out, const app *a)
           "Video is rendered from the finished take when recording stops, so it\n"
           "needs ffmpeg on PATH. The audio WAV is written either way.\n"
           "\n"
-          "keys: space record or pause, S stop, M monitor, V style, 1-6 a style\n"
-          "      outright, F fullscreen, ? the list of them in the window\n",
+          "Files named on the command line are opened as tracks, in order.\n"
+          "\n"
+          "keys: space record or pause, S stop, I import, M monitor, B the\n"
+          "      visualiser panel, V style, 1-6 a style outright, F fit,\n"
+          "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
+          "      ctrl+wheel zoom, ? the list of them in the window\n",
           a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
           aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
           a->video_height, a->video_fps);
@@ -97,6 +101,24 @@ int app_parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "--no-dialog") == 0)
     {
       a->want_dialog = 0;
+      continue;
+    }
+
+    /*
+     * Anything that is not an option is a file to open. Collected rather than
+     * loaded here: there is no window yet, and no project to put it in until
+     * the device has said what rate it negotiated.
+     */
+    if (arg[0] != '-')
+    {
+      if (a->open_count < APP_MAX_OPEN)
+      {
+        a->open_paths[a->open_count++] = arg;
+      }
+      else
+      {
+        aud_warn("only the first %d files given will be opened", APP_MAX_OPEN);
+      }
       continue;
     }
 

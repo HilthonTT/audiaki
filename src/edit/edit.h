@@ -1,0 +1,83 @@
+/* SPDX-License-Identifier: MIT */
+/*
+ * edit.h - what the edit keys and buttons actually do.
+ *
+ * Every operation here works on the same thing: the selected time range, across
+ * the selected tracks. Each takes a checkpoint before it changes anything, so
+ * undo is not something a caller has to remember, and each leaves the selection
+ * somewhere sensible for whatever is pressed next.
+ *
+ * None of them copies audio. They are all clip surgery over shared blocks - see
+ * samples.h - which is what makes cutting a forty minute take instant and undo
+ * affordable. Anything added here should be able to say the same.
+ */
+#ifndef AUDIAKI_EDIT_EDIT_H
+#define AUDIAKI_EDIT_EDIT_H
+
+#include "edit/doc.h"
+
+#include <stdint.h>
+
+/*
+ * What was cut or copied: a slice of the project, tracks and all, with each
+ * track's audio shared with wherever it came from. It survives the project it
+ * came out of, which is why it holds tracks of its own rather than indices.
+ */
+typedef struct
+{
+  aud_track *tracks;
+  size_t count;
+  unsigned rate;   /* what it was cut from, so a paste can refuse a mismatch */
+  uint64_t frames; /* its length, which is what a paste opens room for */
+} aud_clipboard;
+
+void aud_clipboard_init(aud_clipboard *c);
+void aud_clipboard_clear(aud_clipboard *c);
+int aud_clipboard_empty(const aud_clipboard *c);
+
+/*
+ * Every operation returns 0 when it did something, and -1 when it could not -
+ * nothing selected, nothing on the clipboard, or out of memory. A -1 leaves the
+ * project exactly as it was, checkpoint included.
+ */
+
+/* Remove the selection and close the gap, so the tracks get shorter. */
+int aud_edit_delete(aud_doc *d);
+
+/*
+ * Remove the selection and leave a hole of the same length, so everything after
+ * it stays where it was. What you want when the timing either side matters and
+ * one bar of it does not.
+ */
+int aud_edit_silence(aud_doc *d);
+
+/* Copy the selection to `c`, leaving the project alone. */
+int aud_edit_copy(aud_doc *d, aud_clipboard *c);
+
+/* Copy it and then delete it, closing the gap. */
+int aud_edit_cut(aud_doc *d, aud_clipboard *c);
+
+/*
+ * Insert the clipboard at the cursor. A selection is replaced by it, the way
+ * typing over selected text is. The clipboard's tracks go into the selected
+ * tracks in order, and any it has spare become new tracks at the bottom.
+ */
+int aud_edit_paste(aud_doc *d, const aud_clipboard *c);
+
+/* Throw away everything outside the selection, on the selected tracks. */
+int aud_edit_trim(aud_doc *d);
+
+/*
+ * Cut the clips at the edges of the selection without removing anything, so
+ * the piece can be dragged or deleted on its own later. With no range, cuts at
+ * the cursor.
+ */
+int aud_edit_split(aud_doc *d);
+
+/* Copy the selection into new tracks at the bottom, at the same position. */
+int aud_edit_duplicate(aud_doc *d);
+
+/* Remove track `index` outright. */
+int aud_edit_remove_track(aud_doc *d, size_t index);
+
+#endif /* AUDIAKI_EDIT_EDIT_H */

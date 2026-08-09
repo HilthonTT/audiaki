@@ -1,7 +1,8 @@
 # The desktop app
 
-`audiaki-gui` is a window over the same capture and analysis core as the command
-line recorder: a transport, playback monitoring and a live glowing spectrum. The
+`audiaki-gui` is a multi-track recorder and editor over the same capture and
+analysis core as the command line recorder: a transport, a timeline you can cut
+about, playback monitoring and a live glowing spectrum. The
 [README](../README.md) is the short version, [USAGE.md](USAGE.md) covers the CLI,
 and [DESIGN.md](../DESIGN.md) covers why it is built this way.
 
@@ -11,6 +12,11 @@ and [DESIGN.md](../DESIGN.md) covers why it is built this way.
 
 - [Building it](#building-it)
 - [Options](#options)
+- [The layout](#the-layout)
+- [Recording onto the timeline](#recording-onto-the-timeline)
+- [Playing it back](#playing-it-back)
+- [Editing](#editing)
+- [Exporting](#exporting)
 - [Controls](#controls)
 - [Keeping a take](#keeping-a-take)
 - [Recording video](#recording-video)
@@ -56,6 +62,7 @@ audiaki-gui -V --video-size 1080p    # ...at a particular size
 audiaki-gui -V --video-silent        # ...with no audio track in it
 audiaki-gui -M                       # come up already monitoring
 audiaki-gui --preroll 10             # start each take 10 s before Record
+audiaki-gui take01.wav take02.wav    # open takes as tracks straight away
 ```
 
 `--video-size` takes `WxH` or `720p`/`1080p`/`1440p`/`2160p`, and `--video-fps`
@@ -67,13 +74,88 @@ not mean starting a take you are going to throw away. With `--preroll` those
 seconds are kept rather than discarded, and Record starts the take that far
 back.
 
+## The layout
+
+Top to bottom: the title and the capture device, a transport bar, an edit bar,
+the visualiser panel, the time ruler, the tracks, and a status bar.
+
+The visualiser is a drawer rather than the window. `B`, or the arrow beside its
+name, shuts it and gives the room to the tracks; it keeps running either way, so
+opening it shows what is happening now rather than an empty panel filling up.
+
+Each track has a control column of its own — its name, **Mute**, **Solo**, a
+gain slider and a pan slider, with `x` to close it and `^` to fold it down to a
+strip. Dragging the line under a track makes it taller. Beside it is a strip of
+amplitude labels, and then the waveform: the peak envelope in deep blue with the
+RMS as a lighter core inside it, so how loud it got and how loud it is are both
+legible at a glance.
+
+## Recording onto the timeline
+
+Click where you want the take to start and press **Record**. The waveform grows
+along the timeline as you play, the way it does in Audacity — what you are
+seeing is the same audio going into the WAV, frame for frame, not a preview of
+it.
+
+Where it lands: at the cursor, on the selected track if that track is free from
+there on, and on a new track otherwise. So clicking further along a take and
+pressing record again adds to that take; clicking over audio that is already
+there gives the new one a lane of its own rather than refusing or overwriting.
+
+The take is a real WAV on disk the whole time — numbered from the prefix, in
+`take_dir` — so an interrupted session is not a lost one. It is also on the
+timeline the moment it stops, ready to cut about, without a dialog in between.
+
+## Playing it back
+
+`space` plays: the selection if there is one, otherwise from the cursor to the
+end. `space` again, or **Stop**, or `S`, stops it. The playhead runs along the
+tracks and the view follows it.
+
+What you hear is the mix — every track that is not muted, at its gain and pan,
+with solo taking over the moment any track has it. It is the same mix **Export**
+writes, which is the point of it being one piece of code.
+
+## Editing
+
+Drag across a track to select time; `ctrl`+click another track to take it into
+the selection as well; `ctrl+A` selects everything. Then:
+
+| | |
+| --- | --- |
+| **Cut** / **Copy** / **Paste** | `ctrl+X` / `ctrl+C` / `ctrl+V` |
+| **Delete** | `del` — removes the selection and closes the gap |
+| **Silence** | empties it and leaves the timing alone |
+| **Trim** | throws away everything outside the selection |
+| **Split** | cuts the clips at the selection's edges without removing anything |
+| **Copy to** | the selection onto a new track of its own, at the same position |
+| **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
+
+Pasting over a selection replaces it, the way typing over selected text does.
+None of this copies audio about — see [DESIGN.md](../DESIGN.md#the-editor) — so
+cutting an hour-long take is as quick as cutting a bar of one, and so is undoing
+it.
+
+`ctrl`+wheel zooms about the pointer, `shift`+wheel scrolls, the wheel alone
+walks up and down the tracks, and `F` fits the selection or the whole project to
+the window.
+
+## Exporting
+
+**Export**, or `ctrl+E`, mixes down to a WAV: the selection if there is one,
+the whole project if not. 24-bit by default, at the project's own sample rate,
+and stereo unless every track in it is mono.
+
 ## Controls
 
 | Control | Does |
 | --- | --- |
-| **Record** | Starts the next numbered take |
+| **Play** | Plays the selection, or from the cursor |
+| **Record** | Records onto the timeline at the cursor |
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
-| **Stop** | Patches the WAV header and closes the take |
+| **Stop** | Closes the take; it is already on the timeline |
+| **Import** | Opens a WAV as a new track |
+| **Export** | Mixes down to a WAV |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
 | **Monitor** | Plays the input back through the default output |
@@ -82,12 +164,16 @@ back.
 
 | Key | Does |
 | --- | --- |
-| `space` | Record, or pause and resume once a take is running |
-| `S` | Stop, or cancel a video render |
+| `space` | Play, or pause and resume once a take is running |
+| `R`, `ctrl+space` | Record from the cursor |
+| `S` | Stop the take or playback, or cancel a video render |
+| `I` / `ctrl+E` | Import a WAV / export a mix |
+| `home` | Cursor to the start |
 | `M` | Toggle monitoring |
-| `V` | Next visualiser style |
-| `1`–`6` | A visualiser style outright |
-| `F` | Fullscreen |
+| `B` | Show or hide the visualiser panel |
+| `V` / `1`–`6` | The next visualiser style / one outright |
+| `F` | Fit the selection, or the whole project |
+| `F11` | Fullscreen |
 | `?` | The list of keys, over the window; `Esc` closes it |
 
 While the save dialog is up it has the keyboard and the rest of the window is
@@ -114,8 +200,15 @@ are recording a microphone in the same room. It starts off for that reason.
 
 ## Keeping a take
 
-Stopping opens a small dialog over the window: the name the take was given, the
-folder it was written in, and the sub-folders of that folder to click through.
+Off by default in the window, and deliberately the other way round from the
+terminal recorder: there a take is a file and the question is where to keep it,
+here it lands on the timeline the moment it stops and a dialog between playing
+something and editing it would be a dialog in the way. Where the WAV goes is
+`--dir`'s job, and **Export** is how a finished mix leaves.
+
+Turn it on with `prompt = yes` in the config file, and stopping opens a small
+dialog over the window: the name the take was given, the folder it was written
+in, and the sub-folders of that folder to click through.
 
 Nothing has happened to the file when it opens. It is a complete, closed WAV
 sitting exactly where it was recorded, and it stays there unless **Save** is
@@ -130,8 +223,11 @@ pasted into the folder field, and the list follows it.
 
 Where the take was written in the first place is `--dir`, or `take_dir` in the
 config file — the same file the CLI reads, described in
-[USAGE.md](USAGE.md#the-config-file). `--no-dialog`, or `prompt = no` in that
-file, turns the question off and leaves every take where it was recorded.
+[USAGE.md](USAGE.md#the-config-file). `--no-dialog` turns the question off again
+for one run.
+
+The same browser is what **Import** and **Export** open, asking their own
+question: it lists the WAVs in a folder as well as its sub-folders.
 
 With **Video** on, the render starts once the dialog is answered rather than
 beside it: the MP4 is made from the take, and it should be made from wherever

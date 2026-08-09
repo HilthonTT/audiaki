@@ -11,7 +11,8 @@
  *   args.c     argv and the help text
  *   devices.c  the dropdown's list, and keeping it level with the hardware
  *   save.c     where a finished take goes, and the dialog that asks
- *   screen.c   every pixel
+ *   screen.c   every pixel of the chrome
+ *   timeline.c every pixel of the tracks, and what a pointer does to them
  *
  * screen.c calls the transport actions and main.c calls the drawing, which is
  * the one cycle here and the usual one for a window: what is on screen is a
@@ -22,11 +23,15 @@
 #define AUDIAKI_GUI_APP_H
 
 #include "gui/engine.h"
+#include "gui/player.h"
 #include "gui/render.h"
+#include "gui/timeline.h"
 #include "gui/viz.h"
 
 #include "backend/backend.h"
 #include "backend/device.h"
+#include "edit/edit.h"
+#include "util/log.h"
 #include "util/path.h"
 
 #include <stdio.h>
@@ -37,10 +42,33 @@
 #define APP_MIN_WIDTH 960
 #define APP_MIN_HEIGHT 460
 
-#define APP_PAD 18.0f
-#define APP_HEADER_H 44.0f
-#define APP_TRANSPORT_H 56.0f
+#define APP_PAD 14.0f
+#define APP_HEADER_H 40.0f
+#define APP_TOOLBAR_H 34.0f
+#define APP_RULER_H 26.0f
 #define APP_STATUS_H 34.0f
+
+/* The collapsed visualiser: a strip with its name and the arrow that opens it. */
+#define APP_VIZ_BAR_H 24.0f
+#define APP_VIZ_OPEN_H 190.0f
+#define APP_VIZ_MIN_H 90.0f
+
+/* What the bottom line says after something happened, until something else does. */
+#define APP_STATUS_MAX 200
+
+/*
+ * Files that may be named on the command line. More than this is a glob that
+ * got away from someone rather than a session, and the project has a ceiling of
+ * its own a little above it.
+ */
+#define APP_MAX_OPEN 32
+
+/*
+ * Channels the take drain buffer is sized for. Wider than any interface anyone
+ * records a band through, and the engine's own channel count is what is
+ * actually used - this is only how much room to leave.
+ */
+#define AUD_TAKE_BUF_CHANNELS 16u
 
 /* Samples pulled from the engine per drawn frame. */
 #define APP_DRAIN 4096u
@@ -105,23 +133,44 @@ typedef enum
  * WAV sitting exactly where it was recorded, and it stays there until either
  * button is pressed. Closing the window, or the dialog, keeps it.
  */
+/* Which question the browser is asking. */
+typedef enum
+{
+  APP_SAVE_MODE_KEEP = 0, /* where should this finished take go? */
+  APP_SAVE_MODE_OPEN,     /* which file should come in as a track? */
+  APP_SAVE_MODE_EXPORT,   /* where should the mixed-down project be written? */
+} app_save_mode;
+
 typedef struct
 {
   int open;
+  app_save_mode mode;
   char take[AUD_ENGINE_PATH_MAX]; /* the file as it was written */
   char folder[AUD_PATH_MAX];      /* the folder being offered, as typed */
   char name[APP_NAME_MAX];
   double seconds; /* how long the take was, kept so the engine is not re-asked */
   int focus;      /* an app_save_field */
 
-  /* the sub-folders of `folder`, and the strings the list widget reads */
+  /*
+   * What the list offers, and the strings the widget reads. Sub-folders always;
+   * opening adds the WAVs in them, because a browser that would not show you
+   * the file you came for is not one.
+   */
   char rows[APP_MAX_FOLDERS][APP_NAME_MAX];
+  char row_is_dir[APP_MAX_FOLDERS];
   const char *labels[APP_MAX_FOLDERS];
   int count;
   int scroll;
   char listed[AUD_PATH_MAX]; /* the folder `rows` was built from */
 
   char note[AUD_ENGINE_ERROR_MAX]; /* why the last attempt to save did not */
+  /*
+   * An export that was told the name is taken and asked again anyway. Only
+   * exporting has this: a take being filed must never land on another take,
+   * but a mix is something you write repeatedly to the same name while you get
+   * it right, and refusing outright would make that impossible.
+   */
+  int confirmed;
 } app_save;
 
 typedef struct
@@ -129,6 +178,46 @@ typedef struct
   aud_engine *engine;
   aud_viz *viz;
   aud_engine_config cfg;
+
+  /*
+   * The project: what has been recorded or imported, and every edit made to it.
+   * The window is a view of this and nothing else - see edit/doc.h.
+   */
+  aud_doc doc;
+  aud_clipboard clipboard;
+  aud_timeline timeline;
+  aud_player player;
+
+  /*
+   * The take being recorded, as it lands on the timeline. The engine is still
+   * writing the WAV; this is the same frames arriving on the track at the same
+   * time, so the waveform grows while it is being played rather than appearing
+   * when it is over.
+   *
+   * `record_track` is the lane it is going onto and `record_at` where it
+   * started, both fixed when Record was pressed - the cursor may well have
+   * moved since, and the take belongs where it began.
+   */
+  long record_track;
+  uint64_t record_at;
+  float *take_buf; /* one drain's worth, interleaved */
+  size_t take_buf_frames;
+
+  /*
+   * The visualiser, which was the whole window and is now a panel of it. It
+   * still runs while it is shut: the analysis is cheap, and a strip that has
+   * to warm up when you open it is worse than one that is simply there.
+   */
+  int viz_open;
+  float viz_height;
+
+  /* the bottom line: what the last thing to happen was */
+  char status[APP_STATUS_MAX];
+
+  /* WAVs named on the command line, opened once there is a project to open
+   * them into. These point into argv, which outlives everything here. */
+  const char *open_paths[APP_MAX_OPEN];
+  int open_count;
 
   char prefix[512];
   /*
@@ -238,16 +327,54 @@ void app_toggle_record(app *a, const aud_engine_status *st);
 void app_cancel_render(app *a);
 
 /*
- * Done with the take at `path`: start its video, if one was asked for. Called
- * when the take stops, or - with the dialog on - once it has been answered,
- * because ffmpeg reads the WAV and it should read it where it ended up.
+ * Done with the take at `path`: put it on the timeline, and start its video if
+ * one was asked for. Called when the take stops, or - with the dialog on - once
+ * it has been answered, because both the track and ffmpeg should read the WAV
+ * where it ended up rather than where it happened to be written.
  */
 void app_finish_take(app *a, const char *path);
+
+/* Read a WAV into the project as a new track. Says how it went on the status. */
+void app_load_track(app *a, const char *path);
+
+/* What the edit toolbar and the edit keys both stand for. */
+typedef enum
+{
+  APP_EDIT_UNDO = 0,
+  APP_EDIT_REDO,
+  APP_EDIT_CUT,
+  APP_EDIT_COPY,
+  APP_EDIT_PASTE,
+  APP_EDIT_DELETE,
+  APP_EDIT_SILENCE,
+  APP_EDIT_TRIM,
+  APP_EDIT_SPLIT,
+  APP_EDIT_DUPLICATE,
+  APP_EDIT_SELECT_ALL,
+} app_edit_action;
+
+/* Carry one out, and say on the status line what happened. */
+void app_edit(app *a, app_edit_action action);
+
+/* Play from the cursor, or from the start of the selection. Stops if playing. */
+void app_toggle_play(app *a);
+
+/* Mix the project - or the selection - down to a WAV. */
+void app_export(app *a, const char *path);
+
+/* Set the bottom line. Printf-style, because most callers have a value in it. */
+void app_set_status(app *a, const char *fmt, ...) AUD_PRINTF(2, 3);
 
 /* -- save.c ---------------------------------------------------------------- */
 
 /* Ask where the take at `path`, `seconds` long, should be kept. */
 void app_save_open(app *a, const char *path, double seconds);
+
+/* The same browser, asking which WAV to bring in rather than where to put one. */
+void app_open_dialog(app *a);
+
+/* ...and asking where the mixed-down project should be written. */
+void app_export_dialog(app *a);
 
 /*
  * Draw the dialog and carry out what was clicked. Called from the drawing, over

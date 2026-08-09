@@ -1,14 +1,22 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * screen.c - every pixel audiaki-gui draws.
+ * screen.c - the chrome around the tracks.
  *
  * Apart from main.c because it is the half that changes when the window is
  * redesigned rather than when the recorder is: it reads `app` and the engine's
- * status, and the only writing it does is through the transport actions the
- * buttons stand for. See app.h.
+ * status, and the only writing it does is through the transport and edit
+ * actions the buttons stand for. The tracks themselves are timeline.c, which is
+ * the same arrangement one level down. See app.h.
+ *
+ * The layout, top to bottom: the title and the device picker, a transport bar,
+ * an edit bar, the visualiser panel (shut by default to nothing but its own
+ * name), the time ruler, the tracks, and a status bar. It is the arrangement
+ * every editor of this kind has, for the reason they all have it - the controls
+ * are where the hand already is, and the tracks get everything left over.
  */
 #include "gui/app.h"
 
+#include "gui/timeline.h"
 #include "gui/ui.h"
 #include "gui/viz.h"
 
@@ -18,6 +26,11 @@
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
+
+/* Buttons in a toolbar row: wide enough to read, narrow enough to all fit. */
+#define SCREEN_BUTTON_MIN 46.0f
+#define SCREEN_BUTTON_MAX 96.0f
+#define SCREEN_BUTTON_GAP 5.0f
 
 /* The device dropdown's slot, which the header leaves clear for it. */
 static Rectangle header_picker(Rectangle r)
@@ -29,7 +42,7 @@ static Rectangle header_picker(Rectangle r)
   {
     picker.width = r.width * 0.4f;
   }
-  picker.height = 32.0f;
+  picker.height = 30.0f;
   picker.x = r.x + r.width - picker.width;
   picker.y = r.y + (r.height - picker.height) / 2.0f;
   return picker;
@@ -41,20 +54,26 @@ static Rectangle header_help(Rectangle r)
   Rectangle picker = header_picker(r);
   Rectangle help;
 
-  help.width = 30.0f;
-  help.height = 30.0f;
+  help.width = 28.0f;
+  help.height = 28.0f;
   help.x = picker.x - 10.0f - help.width;
   help.y = picker.y + (picker.height - help.height) / 2.0f;
   return help;
 }
 
+/* Non-zero when something is over the window and nothing beneath may be used. */
+static int covered(const app *a)
+{
+  return a->device_menu_open || a->help_open || a->save.open;
+}
+
 /*
- * Hover help, suppressed while the menu or the shortcut list is over the top:
- * a tooltip for a control the user cannot currently reach is noise.
+ * Hover help, suppressed while something is over the top: a tooltip for a
+ * control the user cannot currently reach is noise.
  */
 static void tip(const app *a, Rectangle bounds, const char *text)
 {
-  if (a->device_menu_open || a->help_open || a->save.open)
+  if (covered(a))
   {
     return;
   }
@@ -67,7 +86,7 @@ static void draw_header(app *a, Rectangle r)
   Rectangle help = header_help(r);
   char detail[128];
 
-  aud_ui_text(r.x, r.y + 6.0f, 28, AUD_UI_TEXT, AUDIAKI_NAME);
+  aud_ui_text(r.x, r.y + 6.0f, 26, AUD_UI_TEXT, AUDIAKI_NAME);
 
   /*
    * The keys are the fast way to drive this and they are invisible, so there is
@@ -81,9 +100,13 @@ static void draw_header(app *a, Rectangle r)
   tip(a, help, "keyboard shortcuts   ?");
 
   /* what the device negotiated, immediately left of the picker that chose it */
-  snprintf(detail, sizeof(detail), "%u Hz   %u ch   %s", aud_engine_rate(a->engine),
-           aud_engine_channels(a->engine), aud_format_name(aud_engine_format(a->engine)));
-  aud_ui_text_right(help.x - 16.0f, r.y + 14.0f, 18, AUD_UI_MUTED, detail);
+  if (a->engine != NULL)
+  {
+    snprintf(detail, sizeof(detail), "%u Hz   %u ch   %s", aud_engine_rate(a->engine),
+             aud_engine_channels(a->engine),
+             aud_format_name(aud_engine_format(a->engine)));
+    aud_ui_text_right(help.x - 16.0f, r.y + 12.0f, 16, AUD_UI_MUTED, detail);
+  }
 }
 
 /*
@@ -137,20 +160,75 @@ static void format_monitor_gain(char *dst, size_t size, float gain)
   snprintf(dst, size, "%+.1f dB", 20.0 * log10((double)gain));
 }
 
+/*
+ * Hand out `count` equal slots across `row`, left to right, and return the
+ * width of one. A toolbar that overflowed at the minimum window width would be
+ * a toolbar with a button nobody can reach, so they shrink rather than spill.
+ */
+static float slot_width(Rectangle row, int count)
+{
+  float w;
+
+  if (count <= 0)
+  {
+    return 0.0f;
+  }
+
+  w = (row.width - SCREEN_BUTTON_GAP * (float)(count - 1)) / (float)count;
+  if (w > SCREEN_BUTTON_MAX)
+  {
+    w = SCREEN_BUTTON_MAX;
+  }
+  if (w < SCREEN_BUTTON_MIN)
+  {
+    w = SCREEN_BUTTON_MIN;
+  }
+  return w;
+}
+
+static Rectangle slot_at(Rectangle row, float w, int index)
+{
+  Rectangle r = row;
+
+  r.x = row.x + (w + SCREEN_BUTTON_GAP) * (float)index;
+  r.width = w;
+  return r;
+}
+
+/* -- the transport bar ------------------------------------------------------ */
+
 static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
 {
-  float bw = 120.0f;
-  float gap = 10.0f;
-  Rectangle rec = {r.x, r.y, bw, r.height};
-  Rectangle pause = {r.x + bw + gap, r.y, bw, r.height};
-  Rectangle stop = {r.x + 2.0f * (bw + gap), r.y, bw, r.height};
   int recording = st->state == AUD_ENGINE_RECORDING;
   int paused = st->state == AUD_ENGINE_PAUSED;
   int rendering = a->render != NULL;
-  /* an open menu, dialog or shortcut list covers these, so none takes a click */
-  int covered = a->device_menu_open || a->help_open || a->save.open;
-  int live = (recording || paused) && !covered;
-  int usable = st->state != AUD_ENGINE_FAILED && !covered;
+  int live = (recording || paused) && !covered(a);
+  int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
+  int playing = aud_player_playing(&a->player);
+  float w = slot_width(r, 11);
+  Rectangle play = slot_at(r, w, 0);
+  Rectangle rec = slot_at(r, w, 1);
+  Rectangle pause = slot_at(r, w, 2);
+  Rectangle stop = slot_at(r, w, 3);
+  Rectangle import = slot_at(r, w, 4);
+  Rectangle export_to = slot_at(r, w, 5);
+
+  /*
+   * Play first, because it is the one pressed most and the one the eye goes to
+   * first. Recording is what the window was for; playing back is what it is for
+   * once there is something on the timeline.
+   */
+  if (aud_ui_button(play, playing ? "Playing" : "Play", AUD_UI_OK,
+                    !covered(a) && !live && a->doc.count > 0))
+  {
+    app_toggle_play(a);
+  }
+  tip(a, play,
+      a->doc.count == 0
+          ? "nothing on the timeline to play"
+          : (live ? "stop the take first"
+                  : (playing ? "stop playing   space"
+                             : "play the selection, or from the cursor   space")));
 
   /* a render holds the drawing thread, so no new take can start under it */
   if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD,
@@ -167,13 +245,13 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   {
     tip(a, rec, "a take is already open - stop it first");
   }
-  else if (st->state == AUD_ENGINE_FAILED)
+  else if (!usable)
   {
     tip(a, rec, "no capture device");
   }
   else
   {
-    tip(a, rec, "start the next numbered take   space");
+    tip(a, rec, "record from the cursor onto the timeline   R");
   }
 
   if (aud_ui_button(pause, paused ? "Resume" : "Pause", AUD_UI_WARN, live))
@@ -187,19 +265,10 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
       aud_engine_pause(a->engine);
     }
   }
-
-  if (paused)
-  {
-    tip(a, pause, "carry on writing to the same file   space");
-  }
-  else if (recording)
-  {
-    tip(a, pause, "stop writing without closing the file   space");
-  }
-  else
-  {
-    tip(a, pause, "nothing to pause - no take is open");
-  }
+  tip(a, pause,
+      paused ? "carry on writing to the same file   space"
+             : (recording ? "stop writing without closing the file   space"
+                          : "nothing to pause - no take is open"));
 
   /*
    * The same slot stops the take and, once the take is stopped and its video
@@ -207,7 +276,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
    */
   if (rendering)
   {
-    if (aud_ui_button(stop, "Cancel", AUD_UI_WARN, !covered))
+    if (aud_ui_button(stop, "Cancel", AUD_UI_WARN, !covered(a)))
     {
       app_cancel_render(a);
     }
@@ -220,22 +289,35 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
       app_stop_take(a, st);
     }
     tip(a, stop,
-        (recording || paused) ? "close the take and patch its header   S"
+        (recording || paused) ? "close the take and put it on the timeline   S"
                               : "nothing to stop - no take is open");
   }
 
+  if (aud_ui_button(import, "Import", AUD_UI_ACCENT, !covered(a) && !live))
+  {
+    app_open_dialog(a);
+  }
+  tip(a, import, live ? "stop the take first" : "open a WAV as a new track   I");
+
+  if (aud_ui_button(export_to, "Export", AUD_UI_ACCENT,
+                    !covered(a) && !live && a->doc.count > 0))
+  {
+    app_export_dialog(a);
+  }
+  tip(a, export_to,
+      a->doc.count == 0 ? "nothing to export yet"
+                        : "mix the project down to a WAV   ctrl+E");
+
   /* the capture options sit at the right hand end, away from the transport */
   {
-    float slider_w = 140.0f;
-    float monitor_w = 120.0f;
-    float video_w = 100.0f;
-    float audio_w = 100.0f;
-    Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 26.0f) / 2.0f,
-                        slider_w, 26.0f};
-    Rectangle monitor = {slider.x - gap - monitor_w, r.y, monitor_w, r.height};
-    Rectangle audio = {monitor.x - gap - audio_w, r.y, audio_w, r.height};
-    Rectangle video = {audio.x - gap - video_w, r.y, video_w, r.height};
-    int wanted = aud_engine_monitor_wanted(a->engine);
+    float slider_w = 120.0f;
+    float ctl_w = 92.0f;
+    Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f,
+                        slider_w, 22.0f};
+    Rectangle monitor = {slider.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
+    Rectangle audio = {monitor.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
+    Rectangle video = {audio.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
+    int wanted = a->engine != NULL && aud_engine_monitor_wanted(a->engine);
     /*
      * Only settable between takes: the video is rendered from the finished
      * WAV, so changing your mind halfway through would be answered either by
@@ -243,6 +325,11 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
      * meant.
      */
     int settable = usable && !live && !rendering;
+
+    if (video.x < import.x + import.width + SCREEN_BUTTON_GAP)
+    {
+      return; /* too narrow a window for these; the transport comes first */
+    }
 
     if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT, settable))
     {
@@ -252,28 +339,15 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
         settable ? "also render an MP4 of the visualiser when the take stops"
                  : "only settable between takes");
 
-    /*
-     * What goes in that video, so it sits next to the control that turns it on
-     * and greys out with it. The label says which way it is set rather than
-     * leaving that to the lit state alone: "no audio" is the answer people
-     * come looking for, and it should be readable without clicking anything.
-     */
     if (aud_ui_toggle(audio, a->want_video_audio ? "Audio" : "No audio",
                       a->want_video_audio, AUD_UI_ACCENT, settable && a->want_video))
     {
       a->want_video_audio = !a->want_video_audio;
     }
-
-    if (!a->want_video)
-    {
-      tip(a, audio, "turn Video on first");
-    }
-    else
-    {
-      tip(a, audio,
-          settable ? "whether that video carries the take's own audio"
-                   : "only settable between takes");
-    }
+    tip(a, audio,
+        !a->want_video ? "turn Video on first"
+                       : (settable ? "whether that video carries the take's own audio"
+                                   : "only settable between takes"));
 
     if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted,
                       AUD_UI_OK, usable))
@@ -287,139 +361,312 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
       aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
     }
     tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
+  }
+}
+
+/* -- the edit bar ----------------------------------------------------------- */
+
+/* Every button on it, in order, with what each is for. */
+static const struct
+{
+  const char *label;
+  app_edit_action action;
+  const char *tip;
+} screen_edits[] = {
+    {"Undo", APP_EDIT_UNDO, "take back the last edit   ctrl+Z"},
+    {"Redo", APP_EDIT_REDO, "put it back   ctrl+shift+Z"},
+    {"Cut", APP_EDIT_CUT, "remove the selection and keep it   ctrl+X"},
+    {"Copy", APP_EDIT_COPY, "keep the selection   ctrl+C"},
+    {"Paste", APP_EDIT_PASTE, "drop the clipboard in at the cursor   ctrl+V"},
+    {"Delete", APP_EDIT_DELETE, "remove the selection and close the gap   del"},
+    {"Silence", APP_EDIT_SILENCE, "empty the selection, leaving the timing alone"},
+    {"Trim", APP_EDIT_TRIM, "throw away everything outside the selection"},
+    {"Split", APP_EDIT_SPLIT, "cut the clips at the edges of the selection"},
+    {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
+};
+
+#define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
+
+static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
+{
+  int usable = !covered(a);
+  int total = SCREEN_EDIT_COUNT + 3; /* the three zoom buttons at the far end */
+  float w = slot_width(r, total);
+  float zoom_w = 34.0f;
+  Rectangle zoom_out = {r.x + r.width - zoom_w * 3.0f - SCREEN_BUTTON_GAP * 2.0f, r.y,
+                        zoom_w, r.height};
+  Rectangle zoom_in = {zoom_out.x + zoom_w + SCREEN_BUTTON_GAP, r.y, zoom_w, r.height};
+  Rectangle fit = {zoom_in.x + zoom_w + SCREEN_BUTTON_GAP, r.y, zoom_w, r.height};
+
+  for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
+  {
+    Rectangle slot = slot_at(r, w, i);
+    int enabled = usable;
+
+    if (slot.x + slot.width > zoom_out.x - SCREEN_BUTTON_GAP)
+    {
+      break; /* the window is too narrow for the rest; zoom stays reachable */
+    }
 
     /*
-     * The level as a number, read after the slider so a drag shows where it is
-     * now rather than where it was a frame ago. The knob alone says "somewhere
-     * near the middle", which is not a level you can set deliberately or come
-     * back to tomorrow.
+     * Greyed out when they would refuse, so the toolbar answers "why is
+     * nothing happening?" before it is asked. Undo and redo know their own
+     * answer; the rest need a selection to work on.
      */
+    if (screen_edits[i].action == APP_EDIT_UNDO)
     {
-      char level[32];
+      enabled = usable && aud_doc_undo_label(&a->doc) != NULL;
+    }
+    else if (screen_edits[i].action == APP_EDIT_REDO)
+    {
+      enabled = usable && aud_doc_redo_label(&a->doc) != NULL;
+    }
+    else if (screen_edits[i].action == APP_EDIT_PASTE)
+    {
+      enabled = usable && !aud_clipboard_empty(&a->clipboard);
+    }
+    else
+    {
+      enabled =
+          usable && aud_doc_has_range(&a->doc) && aud_doc_any_track_selected(&a->doc);
+    }
 
-      format_monitor_gain(level, sizeof(level), a->monitor_gain);
-      aud_ui_text_right(slider.x + slider.width, r.y + 1.0f, 14,
-                        usable ? AUD_UI_MUTED : AUD_UI_EDGE, level);
+    if (aud_ui_button(slot, screen_edits[i].label, AUD_UI_ACCENT, enabled))
+    {
+      app_edit(a, screen_edits[i].action);
+    }
+    tip(a, slot, enabled ? screen_edits[i].tip : "select some audio on a track first");
+  }
+
+  if (aud_ui_button(zoom_out, "-", AUD_UI_ACCENT, usable))
+  {
+    aud_timeline_zoom_at(&a->timeline, 1.0 / AUD_TIMELINE_ZOOM_STEP, a->timeline.scroll,
+                         wave_area.width);
+  }
+  tip(a, zoom_out, "zoom out   ctrl+wheel over the tracks");
+
+  if (aud_ui_button(zoom_in, "+", AUD_UI_ACCENT, usable))
+  {
+    aud_timeline_zoom_at(&a->timeline, AUD_TIMELINE_ZOOM_STEP, a->timeline.scroll,
+                         wave_area.width);
+  }
+  tip(a, zoom_in, "zoom in   ctrl+wheel over the tracks");
+
+  if (aud_ui_button(fit, "[ ]", AUD_UI_ACCENT, usable))
+  {
+    if (aud_doc_has_range(&a->doc))
+    {
+      aud_timeline_fit_selection(&a->timeline, &a->doc, wave_area.width);
+    }
+    else
+    {
+      aud_timeline_fit(&a->timeline, &a->doc, wave_area.width);
     }
   }
+  tip(a, fit, "fit the selection, or the whole project   F");
+}
+
+/* -- the visualiser panel --------------------------------------------------- */
+
+/*
+ * The visualiser, which used to be the window and is now a drawer in it.
+ *
+ * Shut it and the tracks get the room; open it and the meters are back. It
+ * keeps running either way - see app.h - so opening it shows what is happening
+ * now rather than an empty panel filling up.
+ */
+static void draw_viz_panel(app *a, Rectangle r)
+{
+  Rectangle bar = r;
+  Rectangle toggle;
+
+  bar.height = APP_VIZ_BAR_H;
+
+  DrawRectangleRec(bar, AUD_UI_PANEL);
+
+  toggle.x = bar.x;
+  toggle.y = bar.y;
+  toggle.width = 130.0f;
+  toggle.height = bar.height;
+
+  if (aud_ui_toggle(toggle, a->viz_open ? "v  Visualiser" : ">  Visualiser", a->viz_open,
+                    AUD_UI_ACCENT, !covered(a)))
+  {
+    a->viz_open = !a->viz_open;
+  }
+  tip(a, toggle, "show or hide the live visualiser   B");
+
+  if (!a->viz_open || a->viz == NULL)
+  {
+    return;
+  }
+
+  {
+    Rectangle stage = {r.x, bar.y + bar.height, r.width, r.height - bar.height};
+    Rectangle inner = {stage.x + 8.0f, stage.y + 6.0f, stage.width - 16.0f,
+                       stage.height - 12.0f};
+
+    if (inner.width < 40.0f || inner.height < 30.0f)
+    {
+      return;
+    }
+
+    /* nearly black so the additive glow has somewhere to go */
+    DrawRectangleRec(stage, BLACK);
+    DrawRectangleLinesEx(stage, 1.0f, AUD_UI_EDGE);
+    aud_viz_draw(a->viz, inner);
+
+    if (stage.width > 380.0f && stage.height > 60.0f)
+    {
+      float tabs_w = 88.0f * (float)AUD_VIZ_MODE_COUNT;
+      Rectangle tabs;
+
+      if (tabs_w > stage.width - 20.0f)
+      {
+        tabs_w = stage.width - 20.0f;
+      }
+
+      tabs.x = stage.x + stage.width - 10.0f - tabs_w;
+      tabs.y = stage.y + 8.0f;
+      tabs.width = tabs_w;
+      tabs.height = 22.0f;
+
+      if (aud_ui_tabs(tabs, a->style_labels, AUD_VIZ_MODE_COUNT, &a->style_selected,
+                      !covered(a), 1))
+      {
+        aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
+      }
+      tip(a, tabs, "visualiser style   V, or 1 - 6");
+    }
+  }
+}
+
+/* -- the status bar --------------------------------------------------------- */
+
+/* A position on the timeline, in the units the ruler is labelled in. */
+static void format_position(char *dst, size_t size, uint64_t frame, unsigned rate)
+{
+  double seconds = rate > 0 ? (double)frame / rate : 0.0;
+  unsigned m = (unsigned)(seconds / 60.0);
+
+  snprintf(dst, size, "%u:%06.3f", m, seconds - (double)m * 60.0);
 }
 
 static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
 {
   char clock[16];
-  char right[320];
-  float meter_w = 260.0f;
+  char text[320];
+  float meter_w = 190.0f;
   Rectangle meter;
   float x = r.x;
+  float top = r.y + 2.0f;
 
-  draw_record_light(r, st->state, GetTime());
-  x += 26.0f;
+  DrawLine(0, (int)r.y, GetScreenWidth(), (int)r.y, AUD_UI_EDGE);
+
+  draw_record_light((Rectangle){r.x, top, 16.0f, 20.0f}, st->state, GetTime());
+  x += 24.0f;
 
   aud_ui_format_clock(clock, sizeof(clock), st->elapsed);
-  aud_ui_text(x, r.y + 6.0f, 24, AUD_UI_TEXT, clock);
-  x += (float)MeasureText(clock, 24) + 20.0f;
+  aud_ui_text(x, top, 22, AUD_UI_TEXT, clock);
+  x += (float)MeasureText(clock, 22) + 16.0f;
 
-  aud_ui_text(x, r.y + 10.0f, 18, AUD_UI_MUTED, state_label(st->state));
-  x += 110.0f;
+  aud_ui_text(x, top + 4.0f, 16, AUD_UI_MUTED, state_label(st->state));
+  x += 92.0f;
 
   meter.x = x;
-  meter.y = r.y + 9.0f;
+  meter.y = top + 4.0f;
   meter.width = meter_w;
-  meter.height = 16.0f;
-  aud_ui_meter(meter, (float)st->peak, a->peak_hold);
-  x += meter_w + 14.0f;
-
+  meter.height = 14.0f;
+  if (meter.x + meter.width < r.x + r.width - 260.0f)
   {
-    char db[32];
+    aud_ui_meter(meter, (float)st->peak, a->peak_hold);
+    x += meter_w + 10.0f;
 
-    snprintf(db, sizeof(db), "%.1f dBFS", aud_format_dbfs(st->peak));
-    aud_ui_text(x, r.y + 10.0f, 18, st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, db);
+    snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
+    aud_ui_text(x, top + 4.0f, 15, st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
   }
 
   /*
-   * One line on the right for whatever most needs saying: the video being
-   * rendered while that is happening, then a failure, then clipping, then the
-   * file being written.
+   * The selection, spelled out. A highlighted band says roughly how much; the
+   * numbers are what you need to line one take up against another, and Audacity
+   * puts them here for the same reason.
    */
-  if (a->render != NULL)
   {
-    const char *path = aud_render_output(a->render);
-    const char *slash = strrchr(path, '/');
-    float pct = (float)aud_render_progress(a->render) * 100.0f;
-    Rectangle bar;
+    char from[24];
+    char to[24];
 
-    snprintf(right, sizeof(right), "rendering %.120s   %.0f%%",
-             slash != NULL ? slash + 1 : path, pct);
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_ACCENT, right);
+    format_position(from, sizeof(from), a->doc.sel_start, a->doc.rate);
+    format_position(to, sizeof(to), a->doc.sel_end, a->doc.rate);
 
-    bar.width = 160.0f;
-    bar.height = 4.0f;
-    bar.x = r.x + r.width - bar.width;
-    bar.y = r.y + 30.0f;
-    DrawRectangleRec(bar, AUD_UI_EDGE);
-    DrawRectangleRec((Rectangle){bar.x, bar.y, bar.width * (pct / 100.0f), bar.height},
-                     AUD_UI_ACCENT);
-    return;
-  }
-
-  if (st->error[0] != '\0')
-  {
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_RECORD, st->error);
-    return;
-  }
-
-  /* how the last render went, until the next take replaces it */
-  if (a->render_note[0] != '\0')
-  {
-    int good = strncmp(a->render_note, "wrote", 5) == 0;
-
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, good ? AUD_UI_OK : AUD_UI_WARN,
-                      a->render_note);
-    return;
-  }
-
-  if (st->clipped)
-  {
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_RECORD,
-                      "input clipped - lower the level on the device");
-    return;
-  }
-
-  if (st->path[0] != '\0')
-  {
-    const char *slash = strrchr(st->path, '/');
-    const char *name = slash != NULL ? slash + 1 : st->path;
-
-    /*
-     * The precision bounds both the buffer and the layout: a take living at
-     * the end of a very long path should not push the size off the window.
-     */
-    if (st->xruns > 0)
+    if (aud_doc_has_range(&a->doc))
     {
-      snprintf(right, sizeof(right), "%.200s   %.1f MiB   %u xrun(s)", name,
-               (double)st->bytes / (1024.0 * 1024.0), st->xruns);
+      snprintf(text, sizeof(text), "selection  %s - %s   (%.3f s)", from, to,
+               (double)(a->doc.sel_end - a->doc.sel_start) / a->doc.rate);
     }
     else
     {
-      snprintf(right, sizeof(right), "%.200s   %.1f MiB", name,
-               (double)st->bytes / (1024.0 * 1024.0));
+      snprintf(text, sizeof(text), "cursor  %s", from);
+    }
+    aud_ui_text_right(r.x + r.width, top + 4.0f, 15, AUD_UI_MUTED, text);
+  }
+
+  /* the second line: what just happened, and what the project is costing */
+  {
+    const char *say = a->status;
+    Color colour = AUD_UI_MUTED;
+
+    if (a->render != NULL)
+    {
+      snprintf(text, sizeof(text), "rendering %.0f%%",
+               aud_render_progress(a->render) * 100.0);
+      say = text;
+      colour = AUD_UI_ACCENT;
+    }
+    else if (st->error[0] != '\0')
+    {
+      say = st->error;
+      colour = AUD_UI_RECORD;
+    }
+    else if (a->render_note[0] != '\0')
+    {
+      say = a->render_note;
+      colour = strncmp(a->render_note, "wrote", 5) == 0 ? AUD_UI_OK : AUD_UI_WARN;
+    }
+    else if (a->timeline.hint[0] != '\0' && a->status[0] == '\0')
+    {
+      say = a->timeline.hint;
     }
 
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
+    aud_ui_text(r.x, r.y + 24.0f, 14, colour, say);
   }
-  /* what pressing record would give you, which with a pre-roll starts earlier */
-  else if (st->preroll_size > 0.0)
+
+  /*
+   * The monitoring level in the units it is thought about in. Down here rather
+   * than beside its own slider: the toolbar has no room for it at the minimum
+   * window width, and a number about how loud something is belongs next to the
+   * meter anyway.
+   */
   {
-    snprintf(right, sizeof(right), "next take: %.180s-...   pre-roll %.1f s", a->prefix,
-             st->preroll_held);
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
+    char level[32];
+
+    format_monitor_gain(level, sizeof(level), a->monitor_gain);
+    snprintf(text, sizeof(text), "monitor %s", level);
+    aud_ui_text(x + 96.0f, top + 4.0f, 15, AUD_UI_EDGE, text);
   }
-  else
+
   {
-    snprintf(right, sizeof(right), "next take: %.200s-...", a->prefix);
-    aud_ui_text_right(r.x + r.width, r.y + 10.0f, 18, AUD_UI_MUTED, right);
+    size_t bytes = aud_doc_bytes(&a->doc);
+
+    if (bytes > 0)
+    {
+      snprintf(text, sizeof(text), "%zu track(s)   %.1f MiB", a->doc.count,
+               (double)bytes / (1024.0 * 1024.0));
+      aud_ui_text_right(r.x + r.width, r.y + 24.0f, 14, AUD_UI_EDGE, text);
+    }
   }
 }
+
+/* -- the shortcut list ------------------------------------------------------ */
 
 /*
  * Every key the window answers to. Kept next to the keys themselves rather
@@ -428,10 +675,18 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
 static const char *const help_keys[][2] = {
     {"space", "record, or pause and resume a take"},
     {"S", "stop the take, or cancel a video render"},
+    {"I", "import a WAV as a new track"},
     {"M", "playback monitoring on and off"},
+    {"B", "show or hide the visualiser panel"},
     {"V", "the next visualiser style"},
     {"1 - 6", "a visualiser style outright"},
-    {"F", "fullscreen"},
+    {"drag", "select audio; ctrl+click adds a track to the selection"},
+    {"ctrl+A", "select everything"},
+    {"ctrl+X / C / V", "cut, copy, paste"},
+    {"del", "delete the selection and close the gap"},
+    {"ctrl+Z", "undo; ctrl+shift+Z redoes"},
+    {"ctrl+wheel", "zoom; shift+wheel scrolls, wheel walks the tracks"},
+    {"F", "fit the selection, or the whole project"},
     {"?", "this list; Esc closes it"},
 };
 
@@ -447,26 +702,30 @@ static void draw_help(app *a, Rectangle header)
    * place you have gone to, and the meter behind it is still worth seeing */
   DrawRectangleRec(screen, Fade(BLACK, 0.7f));
 
-  panel.width = 520.0f;
+  panel.width = 560.0f;
   if (panel.width > screen.width - 2.0f * APP_PAD)
   {
     panel.width = screen.width - 2.0f * APP_PAD;
   }
-  panel.height = 78.0f + (float)HELP_ROWS * 30.0f;
+  panel.height = 70.0f + (float)HELP_ROWS * 26.0f;
+  if (panel.height > screen.height - 2.0f * APP_PAD)
+  {
+    panel.height = screen.height - 2.0f * APP_PAD;
+  }
   panel.x = (screen.width - panel.width) / 2.0f;
   panel.y = (screen.height - panel.height) / 2.0f;
 
   DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
   DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, AUD_UI_ACCENT);
 
-  aud_ui_text(panel.x + 26.0f, panel.y + 22.0f, 22, AUD_UI_TEXT, "Keyboard");
+  aud_ui_text(panel.x + 24.0f, panel.y + 18.0f, 20, AUD_UI_TEXT, "Keyboard");
 
-  y = panel.y + 62.0f;
+  y = panel.y + 52.0f;
   for (int i = 0; i < HELP_ROWS; i++)
   {
-    aud_ui_text(panel.x + 26.0f, y, 18, AUD_UI_ACCENT, help_keys[i][0]);
-    aud_ui_text(panel.x + 130.0f, y, 18, AUD_UI_MUTED, help_keys[i][1]);
-    y += 30.0f;
+    aud_ui_text(panel.x + 24.0f, y, 15, AUD_UI_ACCENT, help_keys[i][0]);
+    aud_ui_text(panel.x + 150.0f, y, 15, AUD_UI_MUTED, help_keys[i][1]);
+    y += 26.0f;
   }
 
   /*
@@ -482,10 +741,13 @@ static void draw_help(app *a, Rectangle header)
   }
 }
 
+/* -- the two whole screens -------------------------------------------------- */
+
 /*
  * The window when there is no device to draw from. It keeps the picker, so a
  * machine with a second interface is one click away from working rather than a
- * restart away.
+ * restart away - and it keeps the tracks, because audio already recorded is
+ * still worth editing with the interface unplugged.
  */
 void app_draw_fatal(app *a)
 {
@@ -496,19 +758,19 @@ void app_draw_fatal(app *a)
 
   ClearBackground(AUD_UI_BG);
 
-  aud_ui_text(header.x, header.y + 6.0f, 28, AUD_UI_TEXT, AUDIAKI_NAME);
+  aud_ui_text(header.x, header.y + 6.0f, 26, AUD_UI_TEXT, AUDIAKI_NAME);
 
-  line.height = 40.0f;
-  line.y = screen.height / 2.0f - 70.0f;
-  aud_ui_text_centred(line, 28, AUD_UI_RECORD, a->fatal);
+  line.height = 34.0f;
+  line.y = screen.height / 2.0f - 60.0f;
+  aud_ui_text_centred(line, 24, AUD_UI_RECORD, a->fatal);
 
-  line.y += 46.0f;
-  aud_ui_text_centred(line, 18, AUD_UI_MUTED,
+  line.y += 40.0f;
+  aud_ui_text_centred(line, 16, AUD_UI_MUTED,
                       "plug an interface in and it opens by itself - the window is "
                       "watching for one");
 
-  line.y += 30.0f;
-  aud_ui_text_centred(line, 18, AUD_UI_MUTED,
+  line.y += 26.0f;
+  aud_ui_text_centred(line, 16, AUD_UI_MUTED,
                       "the device may also be held by another program");
 
   /* last, so an open menu covers the message rather than the other way round */
@@ -534,77 +796,82 @@ void app_draw_frame(app *a, const aud_engine_status *st)
   float w = (float)GetScreenWidth();
   float h = (float)GetScreenHeight();
   Rectangle header = {APP_PAD, APP_PAD, w - 2.0f * APP_PAD, APP_HEADER_H};
-  Rectangle stage;
   Rectangle transport;
+  Rectangle edits;
+  Rectangle viz;
+  Rectangle ruler;
+  Rectangle tracks;
   Rectangle status;
   int live = st->state == AUD_ENGINE_RECORDING || st->state == AUD_ENGINE_PAUSED;
   int previous = a->device_selected;
+  float y;
 
   ClearBackground(AUD_UI_BG);
 
   status.x = APP_PAD;
   status.width = w - 2.0f * APP_PAD;
-  status.height = APP_STATUS_H;
-  status.y = h - APP_PAD - APP_STATUS_H;
+  status.height = APP_STATUS_H + 16.0f;
+  status.y = h - status.height;
+
+  y = header.y + header.height + 4.0f;
 
   transport.x = APP_PAD;
-  transport.width = status.width;
-  transport.height = APP_TRANSPORT_H;
-  transport.y = status.y - 10.0f - APP_TRANSPORT_H;
+  transport.width = w - 2.0f * APP_PAD;
+  transport.height = APP_TOOLBAR_H;
+  transport.y = y;
+  y += APP_TOOLBAR_H + 4.0f;
 
-  stage.x = APP_PAD;
-  stage.width = status.width;
-  stage.y = header.y + header.height + 8.0f;
-  stage.height = transport.y - 16.0f - stage.y;
+  edits = transport;
+  edits.y = y;
+  y += APP_TOOLBAR_H + 6.0f;
 
-  draw_header(a, header);
-
-  if (stage.height > 40.0f)
+  viz.x = 0.0f;
+  viz.width = w;
+  viz.y = y;
+  viz.height = a->viz_open ? a->viz_height : APP_VIZ_BAR_H;
+  /* the tracks come first when the window is short: the visualiser is a
+   * readout, and a readout should not push the work off the screen */
+  if (viz.y + viz.height > status.y - APP_RULER_H - 80.0f)
   {
-    Rectangle inner = {stage.x + 12.0f, stage.y + 12.0f, stage.width - 24.0f,
-                       stage.height - 24.0f};
-
-    /* the stage is drawn nearly black so the additive glow has somewhere to go */
-    DrawRectangleRounded(stage, 10.0f / stage.height, 8, BLACK);
-    DrawRectangleRoundedLines(stage, 10.0f / stage.height, 8, AUD_UI_EDGE);
-    aud_viz_draw(a->viz, inner);
-
-    /*
-     * The style selector rides on the stage rather than in the chrome. There
-     * is no room for five more labels in the header at the minimum window
-     * width, and a control that sits on what it changes is easy to find.
-     */
-    if (stage.width > 360.0f && stage.height > 90.0f)
+    viz.height = status.y - APP_RULER_H - 80.0f - viz.y;
+    if (viz.height < APP_VIZ_BAR_H)
     {
-      float tabs_w = 92.0f * (float)AUD_VIZ_MODE_COUNT;
-      Rectangle tabs;
-
-      if (tabs_w > stage.width - 24.0f)
-      {
-        tabs_w = stage.width - 24.0f;
-      }
-
-      tabs.x = stage.x + stage.width - 12.0f - tabs_w;
-      tabs.y = stage.y + 12.0f;
-      tabs.width = tabs_w;
-      tabs.height = 26.0f;
-
-      if (aud_ui_tabs(tabs, a->style_labels, AUD_VIZ_MODE_COUNT, &a->style_selected,
-                      !a->device_menu_open && !a->help_open && !a->save.open, 1))
-      {
-        aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
-      }
-      tip(a, tabs, "visualiser style   V, or 1 - 6");
+      viz.height = APP_VIZ_BAR_H;
     }
   }
+  y += viz.height + 4.0f;
 
+  ruler.x = 0.0f;
+  ruler.width = w;
+  ruler.y = y;
+  ruler.height = APP_RULER_H;
+
+  tracks.x = 0.0f;
+  tracks.width = w;
+  tracks.y = ruler.y + ruler.height;
+  tracks.height = status.y - tracks.y - 2.0f;
+  if (tracks.height < 40.0f)
+  {
+    tracks.height = 40.0f;
+  }
+
+  draw_header(a, header);
   draw_transport(a, transport, st);
+  draw_edit_bar(a, edits,
+                (Rectangle){tracks.x + AUD_TIMELINE_PANEL_W + AUD_TIMELINE_SCALE_W,
+                            tracks.y,
+                            tracks.width - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W,
+                            tracks.height});
+  draw_viz_panel(a, viz);
+
+  aud_timeline_draw(&a->timeline, &a->doc, ruler, tracks, a->doc.cursor, 0, !covered(a));
+
   draw_status(a, status, st);
 
   /*
-   * Last, because an open menu has to cover the stage and the transport. It is
-   * disabled while a take is open: swapping the device means closing the
-   * capture stream, and doing that mid-take would truncate the recording.
+   * Last, because an open menu has to cover everything under it. It is disabled
+   * while a take is open: swapping the device means closing the capture stream,
+   * and doing that mid-take would truncate the recording.
    */
   if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
                       &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,

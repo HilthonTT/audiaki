@@ -19,6 +19,14 @@
 /* Seconds of audio the visualiser ring holds before the oldest is dropped. */
 #define ENGINE_VISUAL_SECONDS 1.0
 
+/*
+ * Seconds of the take held for the timeline. Generous: it only has to cover a
+ * drawing thread that stalled - a window being dragged, a video render taking
+ * its slice - and running out means the track on screen falls behind the file,
+ * which costs a reload to put right.
+ */
+#define ENGINE_TAKE_SECONDS 4.0
+
 /* Monitoring gain is carried between threads as an integer in thousandths. */
 #define ENGINE_GAIN_SCALE 1000
 #define ENGINE_GAIN_MAX 2000 /* +6 dB */
@@ -68,6 +76,15 @@ struct aud_engine
 
   /* written by the capture thread, drained by whoever draws */
   aud_ringbuf visual;
+  /*
+   * The take, as floats, for the timeline to grow a track from while it is
+   * being recorded. Separate from `visual` because that one is mono and
+   * overwrites; this has to be every channel and must not lose anything
+   * quietly. See aud_engine_read_take().
+   */
+  aud_ringbuf take;
+  float *take_buf; /* one period, interleaved */
+  _Atomic unsigned long take_dropped;
 };
 
 void aud_engine_config_defaults(aud_engine_config *cfg)
@@ -192,6 +209,32 @@ static void feed_monitor(aud_engine *e, size_t frames)
 }
 
 /*
+ * Hand the frames that just went into the file to the timeline as well.
+ *
+ * Fed from the same place the file is, and with the same frames, so the track
+ * that appears on screen is the take rather than something adjacent to it -
+ * including the pre-roll, which arrives through here like everything else.
+ */
+static void publish_take(aud_engine *e, const unsigned char *hw, size_t frames)
+{
+  size_t took;
+
+  if (e->take_buf == NULL)
+  {
+    return;
+  }
+
+  aud_format_to_float(e->take_buf, hw, frames, e->dev.channels, e->dev.format);
+  took = aud_ringbuf_write(&e->take, e->take_buf, frames * e->dev.channels);
+  if (took < frames * e->dev.channels)
+  {
+    atomic_fetch_add_explicit(&e->take_dropped,
+                              (unsigned long)(frames - took / e->dev.channels),
+                              memory_order_relaxed);
+  }
+}
+
+/*
  * Write what the pre-roll holds to the front of the take, oldest first, in
  * period sized pieces so the repack has somewhere to land. Call with the lock
  * held; returns non-zero when the take had to be abandoned.
@@ -239,6 +282,7 @@ static int write_preroll(aud_engine *e)
       }
 
       e->frames += frames;
+      publish_take(e, seg[s].data + done * frame_bytes, frames);
       done += frames;
     }
   }
@@ -278,6 +322,7 @@ static int write_period(aud_engine *e, size_t frames)
   }
 
   e->frames += frames;
+  publish_take(e, e->hw_buf, frames);
   return 0;
 }
 
@@ -429,6 +474,20 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   {
     visual_slots = period * 4;
   }
+  e->take_buf = malloc(period * e->dev.channels * sizeof(float));
+  if (e->take_buf == NULL)
+  {
+    aud_error("cannot allocate the take buffer");
+    goto fail_buffers;
+  }
+
+  if (aud_ringbuf_init(&e->take, (size_t)(ENGINE_TAKE_SECONDS * e->dev.rate) *
+                                     e->dev.channels) != 0)
+  {
+    aud_error("cannot allocate the take ring");
+    goto fail_buffers;
+  }
+
   if (aud_ringbuf_init(&e->visual, visual_slots) != 0)
   {
     aud_error("cannot allocate the display buffer");
@@ -468,6 +527,8 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
 
 fail_rings:
   aud_ringbuf_free(&e->visual);
+  aud_ringbuf_free(&e->take);
+  free(e->take_buf);
   aud_preroll_free(&e->preroll);
 fail_buffers:
   if (e->repack)
@@ -505,6 +566,8 @@ void aud_engine_destroy(aud_engine *e)
 
   aud_monitor_close(e->monitor);
   aud_ringbuf_free(&e->visual);
+  aud_ringbuf_free(&e->take);
+  free(e->take_buf);
   aud_preroll_free(&e->preroll);
   aud_device_close(&e->dev);
 
@@ -590,6 +653,8 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
   }
 
   e->take_open = 1;
+  aud_ringbuf_reset(&e->take);
+  atomic_store_explicit(&e->take_dropped, 0, memory_order_relaxed);
   e->frames = 0;
   e->clipped = 0;
   e->xruns = 0;
@@ -759,4 +824,27 @@ size_t aud_engine_read_visual(aud_engine *e, float *mono, size_t max)
   }
 
   return aud_ringbuf_read(&e->visual, mono, max);
+}
+
+size_t aud_engine_read_take(aud_engine *e, float *interleaved, size_t max)
+{
+  unsigned channels;
+
+  if (e == NULL || interleaved == NULL || max == 0)
+  {
+    return 0;
+  }
+
+  /* in whole frames, so a caller never gets half of one and has to hold it */
+  channels = e->dev.channels;
+  return aud_ringbuf_read(&e->take, interleaved, max * channels) / channels;
+}
+
+unsigned long aud_engine_take_dropped(const aud_engine *e)
+{
+  if (e == NULL)
+  {
+    return 0;
+  }
+  return atomic_load_explicit(&e->take_dropped, memory_order_relaxed);
 }

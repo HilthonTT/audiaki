@@ -157,4 +157,23 @@ int aud_engine_monitor_wanted(const aud_engine *e);
  */
 size_t aud_engine_read_visual(aud_engine *e, float *mono, size_t max);
 
+/*
+ * Drain up to `max` frames of the take itself: interleaved float, at
+ * aud_engine_channels(), exactly what is going into the file and in the same
+ * order. Only filled while a take is being written.
+ *
+ * This is how a track grows on the timeline while it is being played rather
+ * than when it is over. Single consumer, like the one above.
+ *
+ * Unlike the visual ring, this one does not overwrite. Dropping the oldest
+ * frames would leave the timeline quietly out of step with the file it is
+ * supposed to be showing; instead the frames that do not fit are counted, and
+ * aud_engine_take_dropped() says so, so the caller can put it right from the
+ * finished file.
+ */
+size_t aud_engine_read_take(aud_engine *e, float *interleaved, size_t max);
+
+/* Frames of the current take the ring above had no room for. Zero is normal. */
+unsigned long aud_engine_take_dropped(const aud_engine *e);
+
 #endif /* AUDIAKI_GUI_ENGINE_H */

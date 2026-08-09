@@ -22,6 +22,9 @@
 #include "audio/format.h"
 #include "backend/backend.h"
 #include "backend/device.h"
+#include "edit/edit.h"
+#include "edit/export.h"
+#include "edit/load.h"
 #include "take/take.h"
 #include "util/config.h"
 #include "util/log.h"
@@ -29,9 +32,50 @@
 #include "version.h"
 
 #include <math.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+void app_set_status(app *a, const char *fmt, ...)
+{
+  va_list args;
+
+  va_start(args, fmt);
+  vsnprintf(a->status, sizeof(a->status), fmt, args);
+  va_end(args);
+}
+
+/*
+ * Bring a finished WAV in as a track.
+ *
+ * Read on the drawing thread, which for a take of the length anyone plays in
+ * one go is a hitch rather than a freeze - a minute of stereo is about ten
+ * megabytes and arrives in well under a frame's worth of patience. A session
+ * long enough for that to matter is one this editor is already the wrong tool
+ * for, and the ceiling in edit/load.c is where that is said.
+ */
+void app_load_track(app *a, const char *path)
+{
+  const char *why = NULL;
+  int index;
+
+  index = aud_edit_load_wav(&a->doc, path, &why);
+  if (index < 0)
+  {
+    app_set_status(a, "cannot open %.80s: %s", aud_path_basename(path),
+                   why != NULL ? why : "unknown");
+    return;
+  }
+
+  /* the new lane is the selected one, so an edit typed straight after landing
+   * a take applies to the take rather than to nothing */
+  aud_doc_select_tracks(&a->doc, 0);
+  a->doc.tracks[index].selected = 1;
+
+  app_set_status(a, "%.80s: %.1f s on track %d", aud_path_basename(path),
+                 (double)aud_track_end(&a->doc.tracks[index]) / a->doc.rate, index + 1);
+}
 
 /* Open the device and build the display for whatever it negotiated. */
 static int app_open_engine(app *a)
@@ -206,21 +250,118 @@ static void app_track_peak(app *a, float peak, float dt)
 }
 
 /*
+ * Where the take about to be recorded should land.
+ *
+ * At the cursor, on the selected track if there is room for it there, and on a
+ * new one otherwise. That is what "click somewhere and press record again"
+ * means: the second take goes where you pointed, next to the first rather than
+ * over it, and a lane that is already busy at that moment gets a lane of its
+ * own rather than a refusal.
+ */
+static long app_record_target(app *a, uint64_t at)
+{
+  aud_track *fresh;
+  char name[AUD_TRACK_NAME_MAX];
+  unsigned channels = aud_engine_channels(a->engine);
+
+  for (size_t i = 0; i < a->doc.count; i++)
+  {
+    aud_track *t = &a->doc.tracks[i];
+
+    if (t->selected && t->channels == channels && aud_track_end(t) <= at)
+    {
+      return (long)i;
+    }
+  }
+
+  snprintf(name, sizeof(name), "Take %zu", a->doc.count + 1u);
+  fresh = aud_doc_add_track(&a->doc, name, channels);
+  if (fresh == NULL)
+  {
+    return -1;
+  }
+
+  aud_doc_select_tracks(&a->doc, 0);
+  fresh->selected = 1;
+  return (long)(a->doc.count - 1u);
+}
+
+/*
  * Pick the next free take name and start writing to it. Numbering rather than
  * prompting: pressing record should never be the moment you find out you are
  * about to overwrite yesterday's take.
+ *
+ * The file and the timeline start together. What goes into one goes into the
+ * other, frame for frame, so what is on screen while you play is what is on
+ * disk when you stop.
  */
 void app_begin_take(app *a)
 {
   char path[AUD_ENGINE_PATH_MAX];
+  uint64_t at;
+  long target;
 
-  if (aud_take_next(path, sizeof(path), a->prefix) != 0)
+  if (a->engine == NULL || aud_take_next(path, sizeof(path), a->prefix) != 0)
   {
     return;
   }
 
+  /* playback and recording at once is overdubbing, which needs the two clocks
+   * lined up; until then, one at a time */
+  aud_player_stop(&a->player);
+
+  at = a->doc.cursor;
+  target = app_record_target(a, at);
+  if (target < 0)
+  {
+    app_set_status(a, "no room for another track");
+    return;
+  }
+
+  if (aud_track_record_begin(&a->doc.tracks[target], at,
+                             (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+  {
+    app_set_status(a, "there is already audio there - move the cursor");
+    return;
+  }
+
   a->render_note[0] = '\0';
-  aud_engine_start(a->engine, path, 0);
+  a->record_track = target;
+  a->record_at = at;
+
+  if (aud_engine_start(a->engine, path, 0) != 0)
+  {
+    aud_track_record_end(&a->doc.tracks[target]);
+    a->record_track = -1;
+    return;
+  }
+
+  app_set_status(a, "recording %.60s", aud_path_basename(path));
+}
+
+/*
+ * Move whatever the engine has captured onto the track being recorded into.
+ * Called every drawn frame, which is what makes the waveform grow as it is
+ * played rather than appear when it stops.
+ */
+static void app_pump_take(app *a)
+{
+  size_t got;
+
+  if (a->record_track < 0 || (size_t)a->record_track >= a->doc.count)
+  {
+    return;
+  }
+
+  while ((got = aud_engine_read_take(a->engine, a->take_buf, a->take_buf_frames)) > 0)
+  {
+    aud_track_record_push(&a->doc.tracks[a->record_track], a->take_buf, got);
+    a->doc.dirty = 1;
+    if (got < a->take_buf_frames)
+    {
+      break;
+    }
+  }
 }
 
 /*
@@ -232,14 +373,46 @@ void app_stop_take(app *a, const aud_engine_status *st)
 {
   char take[AUD_ENGINE_PATH_MAX];
   double seconds = st->elapsed;
+  unsigned long dropped;
 
   snprintf(take, sizeof(take), "%s", st->path);
+  dropped = aud_engine_take_dropped(a->engine);
 
   if (aud_engine_stop(a->engine) != 0)
   {
     return;
   } /* the failure is already in the status line */
 
+  /* whatever was still in flight when the take closed belongs on the track */
+  app_pump_take(a);
+
+  if (a->record_track >= 0 && (size_t)a->record_track < a->doc.count)
+  {
+    aud_track *t = &a->doc.tracks[a->record_track];
+
+    aud_track_record_end(t);
+
+    /*
+     * The file is what the take is; the track was a view of it arriving. They
+     * agree unless the drawing thread fell so far behind that the ring
+     * overflowed, and in that one case the track is rebuilt from the file
+     * rather than left quietly wrong.
+     */
+    if (dropped > 0)
+    {
+      aud_doc_remove_track(&a->doc, (size_t)a->record_track);
+      a->record_track = -1;
+      app_load_track(a, take);
+      app_set_status(a, "the display fell behind; the take was reloaded from disk");
+      a->record_track = -1;
+    }
+    else
+    {
+      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+      app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
+    }
+  }
+  a->record_track = -1;
   a->render_note[0] = '\0';
 
   /*
@@ -258,7 +431,7 @@ void app_stop_take(app *a, const aud_engine_status *st)
 
 /*
  * The take is where it is going to stay. Render its video, if one was asked
- * for; otherwise there is nothing left to do with it.
+ * for; it is already on the timeline, having grown there while it was played.
  */
 void app_finish_take(app *a, const char *path)
 {
@@ -345,6 +518,161 @@ void app_cancel_render(app *a)
   aud_render_finish(a->render, 1);
   a->render = NULL;
   snprintf(a->render_note, sizeof(a->render_note), "video render cancelled");
+}
+
+/*
+ * Every edit, in one place, so the toolbar and the keyboard cannot drift apart
+ * about what any of them means or what it says afterwards.
+ *
+ * The operations themselves refuse when there is nothing selected, and saying
+ * so is most of what this adds: a button that appears to do nothing is a bug
+ * report, and "select some audio first" is the answer to it.
+ */
+void app_edit(app *a, app_edit_action action)
+{
+  aud_doc *d = &a->doc;
+  int ok = -1;
+
+  switch (action)
+  {
+  case APP_EDIT_UNDO:
+    ok = aud_doc_undo(d);
+    app_set_status(a, ok == 0 ? "undone" : "nothing to undo");
+    return;
+  case APP_EDIT_REDO:
+    ok = aud_doc_redo(d);
+    app_set_status(a, ok == 0 ? "redone" : "nothing to redo");
+    return;
+  case APP_EDIT_SELECT_ALL:
+    aud_doc_select_all(d);
+    app_set_status(a, "everything selected");
+    return;
+  case APP_EDIT_CUT:
+    ok = aud_edit_cut(d, &a->clipboard);
+    break;
+  case APP_EDIT_COPY:
+    ok = aud_edit_copy(d, &a->clipboard);
+    break;
+  case APP_EDIT_PASTE:
+    ok = aud_edit_paste(d, &a->clipboard);
+    break;
+  case APP_EDIT_DELETE:
+    ok = aud_edit_delete(d);
+    break;
+  case APP_EDIT_SILENCE:
+    ok = aud_edit_silence(d);
+    break;
+  case APP_EDIT_TRIM:
+    ok = aud_edit_trim(d);
+    break;
+  case APP_EDIT_SPLIT:
+    ok = aud_edit_split(d);
+    break;
+  case APP_EDIT_DUPLICATE:
+    ok = aud_edit_duplicate(d);
+    break;
+  default:
+    return;
+  }
+
+  if (ok == 0)
+  {
+    static const char *const done[] = {"",       "",          "cut",      "copied",
+                                       "pasted", "deleted",   "silenced", "trimmed",
+                                       "split",  "duplicated"};
+
+    app_set_status(a, "%s %.2f s", done[action],
+                   d->rate > 0 ? (double)(d->sel_end - d->sel_start) / d->rate : 0.0);
+    return;
+  }
+
+  /* why it refused, which is nearly always one of these two */
+  if (action == APP_EDIT_PASTE && aud_clipboard_empty(&a->clipboard))
+  {
+    app_set_status(a, "nothing on the clipboard");
+  }
+  else if (!aud_doc_any_track_selected(d))
+  {
+    app_set_status(a, "click a track first");
+  }
+  else
+  {
+    app_set_status(a, "select some audio first - click and drag across a track");
+  }
+}
+
+/*
+ * Play, or stop playing.
+ *
+ * From the start of the selection to its end when there is one, and from the
+ * cursor to the end of the project when there is not - which between them are
+ * the two things anyone means by pressing play in an editor: "let me hear that
+ * bit" and "let me hear the rest".
+ */
+void app_toggle_play(app *a)
+{
+  uint64_t from;
+  uint64_t to;
+
+  if (aud_player_playing(&a->player))
+  {
+    aud_player_stop(&a->player);
+    app_set_status(a, "stopped");
+    return;
+  }
+
+  if (a->doc.count == 0)
+  {
+    app_set_status(a, "nothing to play yet");
+    return;
+  }
+
+  from = aud_doc_has_range(&a->doc) ? a->doc.sel_start : a->doc.cursor;
+  to = aud_doc_has_range(&a->doc) ? a->doc.sel_end : aud_doc_end(&a->doc);
+
+  if (to <= from)
+  {
+    /* past the end: start again rather than do nothing and look broken */
+    from = 0;
+    to = aud_doc_end(&a->doc);
+  }
+
+  if (aud_player_start(&a->player, &a->doc, from, to, a->cfg.monitor_device) != 0)
+  {
+    app_set_status(a, "cannot open an output to play through");
+    return;
+  }
+
+  app_set_status(a, "playing %.2f s", (double)(to - from) / a->doc.rate);
+}
+
+void app_export(app *a, const char *path)
+{
+  aud_export_options opts;
+  const char *why = NULL;
+
+  aud_export_defaults(&opts);
+  opts.path = path;
+  opts.overwrite = 1; /* the browser already asked, and said so if it existed */
+
+  /*
+   * The selection when there is one. Exporting a chorus you have just cut down
+   * to should not mean exporting the whole session and cutting it again in
+   * something else.
+   */
+  if (aud_doc_has_range(&a->doc))
+  {
+    opts.from = a->doc.sel_start;
+    opts.to = a->doc.sel_end;
+  }
+
+  if (aud_export_wav(&a->doc, &opts, &why) != 0)
+  {
+    app_set_status(a, "cannot export: %s", why != NULL ? why : "unknown");
+    return;
+  }
+
+  app_set_status(a, "wrote %.80s", aud_path_basename(path));
 }
 
 void app_toggle_record(app *a, const aud_engine_status *st)
@@ -449,9 +777,105 @@ static void handle_keys(app *a, const aud_engine_status *st)
     return;
   }
 
+  /*
+   * The edits first, and behind Ctrl, so the single letters the window has
+   * always answered to keep meaning what they meant. Ctrl+V is paste and V is
+   * the next visualiser style, which is only a collision if the modifier is
+   * not looked at.
+   */
+  if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL))
+  {
+    int shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+
+    if (IsKeyPressed(KEY_Z))
+    {
+      app_edit(a, shift ? APP_EDIT_REDO : APP_EDIT_UNDO);
+    }
+    if (IsKeyPressed(KEY_Y))
+    {
+      app_edit(a, APP_EDIT_REDO);
+    }
+    if (IsKeyPressed(KEY_X))
+    {
+      app_edit(a, APP_EDIT_CUT);
+    }
+    if (IsKeyPressed(KEY_C))
+    {
+      app_edit(a, APP_EDIT_COPY);
+    }
+    if (IsKeyPressed(KEY_V))
+    {
+      app_edit(a, APP_EDIT_PASTE);
+    }
+    if (IsKeyPressed(KEY_A))
+    {
+      app_edit(a, APP_EDIT_SELECT_ALL);
+    }
+    if (IsKeyPressed(KEY_D))
+    {
+      app_edit(a, APP_EDIT_DUPLICATE);
+    }
+    if (IsKeyPressed(KEY_T))
+    {
+      app_edit(a, APP_EDIT_TRIM);
+    }
+    if (IsKeyPressed(KEY_K))
+    {
+      app_edit(a, APP_EDIT_SPLIT);
+    }
+    if (IsKeyPressed(KEY_E))
+    {
+      app_export_dialog(a);
+    }
+    /* the transport, where the editor's own space bar has displaced it */
+    if (IsKeyPressed(KEY_SPACE))
+    {
+      app_toggle_record(a, st);
+    }
+    return;
+  }
+
+  if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))
+  {
+    app_edit(a, APP_EDIT_DELETE);
+  }
+
+  /*
+   * Space plays, the way it does in every editor, and ctrl+space records. The
+   * window used to record on space, when there was nothing to play; now that
+   * there is, the commoner of the two gets the bare key.
+   */
   if (IsKeyPressed(KEY_SPACE))
   {
+    if (st->state == AUD_ENGINE_RECORDING || st->state == AUD_ENGINE_PAUSED)
+    {
+      app_toggle_record(a, st);
+    }
+    else
+    {
+      app_toggle_play(a);
+    }
+  }
+
+  if (IsKeyPressed(KEY_R))
+  {
     app_toggle_record(a, st);
+  }
+
+  if (IsKeyPressed(KEY_HOME))
+  {
+    aud_player_stop(&a->player);
+    aud_doc_set_cursor(&a->doc, 0);
+  }
+
+  if (IsKeyPressed(KEY_I))
+  {
+    app_open_dialog(a);
+  }
+
+  if (IsKeyPressed(KEY_B))
+  {
+    a->viz_open = !a->viz_open;
   }
 
   if (IsKeyPressed(KEY_S))
@@ -463,6 +887,10 @@ static void handle_keys(app *a, const aud_engine_status *st)
     else if (st->state != AUD_ENGINE_IDLE)
     {
       app_stop_take(a, st);
+    }
+    else if (aud_player_playing(&a->player))
+    {
+      aud_player_stop(&a->player);
     }
   }
 
@@ -476,7 +904,26 @@ static void handle_keys(app *a, const aud_engine_status *st)
     a->style_selected = (int)aud_viz_cycle_mode(a->viz);
   }
 
+  /*
+   * F fits the project to the window, which is what it does in every editor of
+   * this kind and what anyone looking at a waveform reaches for. Fullscreen has
+   * moved to F11, where a window manager would have put it anyway.
+   */
   if (IsKeyPressed(KEY_F))
+  {
+    float wave = (float)GetScreenWidth() - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W;
+
+    if (aud_doc_has_range(&a->doc))
+    {
+      aud_timeline_fit_selection(&a->timeline, &a->doc, wave);
+    }
+    else
+    {
+      aud_timeline_fit(&a->timeline, &a->doc, wave);
+    }
+  }
+
+  if (IsKeyPressed(KEY_F11))
   {
     ToggleFullscreen();
   }
@@ -532,6 +979,25 @@ int main(int argc, char *argv[])
   aud_engine_config_defaults(&a.cfg);
   snprintf(a.prefix, sizeof(a.prefix), "%s", APP_DEFAULT_PREFIX);
   a.monitor_gain = 1.0f;
+  a.viz_open = 1; /* what the window has always come up showing */
+  a.viz_height = APP_VIZ_OPEN_H;
+  aud_timeline_init(&a.timeline);
+  aud_clipboard_init(&a.clipboard);
+  aud_player_init(&a.player);
+  a.record_track = -1;
+
+  /*
+   * A quarter of a second of drain per pass. The ring holds four seconds, so
+   * this empties it comfortably faster than it fills even on a frame that took
+   * far longer than a frame should.
+   */
+  a.take_buf_frames = 16384u;
+  a.take_buf = malloc(a.take_buf_frames * AUD_TAKE_BUF_CHANNELS * sizeof(float));
+  if (a.take_buf == NULL)
+  {
+    aud_error("cannot allocate the take buffer");
+    return EXIT_FAILURE;
+  }
 
   /*
    * The same file the CLI reads, and for the same reason: where takes are kept
@@ -540,7 +1006,15 @@ int main(int argc, char *argv[])
    */
   aud_config_load(&cfg);
   snprintf(a.take_dir, sizeof(a.take_dir), "%s", cfg.take_dir);
-  a.want_dialog = cfg.prompt != AUD_PROMPT_NEVER;
+  /*
+   * Off unless the config says otherwise, and deliberately the other way round
+   * from the terminal recorder. There, a take is a file and the question is
+   * where to keep it. Here it lands on the timeline the moment it stops and is
+   * ready to be cut about; a dialog between playing something and editing it
+   * would be a dialog in the way. Where the WAV itself goes is take_dir's job,
+   * and Export is how a finished mix leaves.
+   */
+  a.want_dialog = cfg.prompt == AUD_PROMPT_ALWAYS;
   a.want_video_audio = 1; /* before parse_args, which only ever clears it */
   a.video_width = AUD_RENDER_DEFAULT_WIDTH;
   a.video_height = AUD_RENDER_DEFAULT_HEIGHT;
@@ -587,6 +1061,13 @@ int main(int argc, char *argv[])
   SetTargetFPS(60);
   SetExitKey(KEY_NULL); /* Escape closing an open take would be unforgivable */
 
+  /*
+   * The project takes its rate from whatever the device negotiated, so a take
+   * lands on the timeline at the rate it was recorded at rather than being
+   * declared to be at some other one.
+   */
+  aud_doc_init(&a.doc, a.cfg.rate);
+
   /* the device -D named, or "default", so the list comes up on the right row */
   snprintf(a.active_device, sizeof(a.active_device), "%s",
            a.cfg.device != NULL ? a.cfg.device : AUD_DEFAULT_DEVICE);
@@ -604,6 +1085,19 @@ int main(int argc, char *argv[])
   {
     /* off unless asked for on the command line: a mic through speakers howls */
     aud_engine_set_monitor(a.engine, a.start_monitor);
+    aud_doc_init(&a.doc, aud_engine_rate(a.engine));
+  }
+
+  /* whatever was named on the command line, now that there is a rate to put
+   * it at and a window to say so in if one of them will not open */
+  for (int i = 0; i < a.open_count; i++)
+  {
+    app_load_track(&a, a.open_paths[i]);
+  }
+  if (a.doc.count > 0)
+  {
+    aud_timeline_fit(&a.timeline, &a.doc,
+                     (float)APP_WIDTH - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W);
   }
 
   while (!WindowShouldClose())
@@ -642,6 +1136,31 @@ int main(int argc, char *argv[])
     SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     handle_keys(&a, &st);
     app_pump_audio(&a);
+    app_pump_take(&a);
+
+    /*
+     * Before the drawing, so the playhead the frame shows is where playback
+     * actually is rather than where it was when the last frame started.
+     */
+    if (aud_player_pump(&a.player, &a.doc))
+    {
+      /* it reached the end by itself; leave the cursor where it started, the
+       * way a transport does, so pressing play again repeats the same passage */
+      app_set_status(&a, "played to the end");
+    }
+    if (aud_player_playing(&a.player))
+    {
+      aud_timeline_reveal(&a.timeline, &a.doc, aud_player_head(&a.player),
+                          (float)GetScreenWidth() - AUD_TIMELINE_PANEL_W -
+                              AUD_TIMELINE_SCALE_W);
+    }
+    /* a take being recorded scrolls into view the same way */
+    else if (a.record_track >= 0)
+    {
+      aud_timeline_reveal(
+          &a.timeline, &a.doc, a.record_at + (uint64_t)(st.elapsed * a.doc.rate),
+          (float)GetScreenWidth() - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W);
+    }
     app_track_peak(&a, (float)st.peak, GetFrameTime());
 
     /*
@@ -661,7 +1180,11 @@ int main(int argc, char *argv[])
    * half-written take is: closing the engine patches the WAV header.
    */
   app_cancel_render(&a);
+  aud_player_stop(&a.player);
   app_close_engine(&a);
+  free(a.take_buf);
+  aud_clipboard_clear(&a.clipboard);
+  aud_doc_free(&a.doc);
   aud_device_watch_destroy(a.watch);
   CloseWindow();
   return EXIT_SUCCESS;
