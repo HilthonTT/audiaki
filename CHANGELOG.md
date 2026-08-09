@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--play` has a transport, and takes more than one file. Space pauses, the
+  cursor keys seek - five seconds sideways, thirty up and down - `home` and
+  `end` jump to either end of the file, `n` and `p` move through the files
+  given, and `q` stops. `audiaki --play session-*.wav` is a playlist; `-t`
+  applies to each file rather than to the run, and a file that will not read is
+  stepped over the way `--info` steps over one.
+
+  None of it is required and nothing changes without a terminal on the other
+  end. Over a pipe, from a script or under a service manager there is nowhere to
+  read keys from, and each file plays from beginning to end exactly as before.
+  Ctrl+C still stops everything - the terminal is switched out of canonical
+  mode, not out of its signals.
+
+  Pausing and seeking act on what is being handed to the output rather than on
+  what is coming out of it, so both land within a buffer - about a tenth of a
+  second - of where they were asked for. Skipping deliberately does not wait for
+  what is queued.
+
+  `wav_read_seek()` is new alongside it, and the reader now keeps the offset its
+  data chunk started at: a take carrying its metadata stamp does not begin at
+  byte 44, and a seek that assumed it did would decode the stamp as audio.
+
+- The window's save dialog can play the take back before you decide where it
+  goes. **Play** reads it straight off the disk at its own rate and channel
+  count, with nothing put on the timeline and no undo step spent, and follows a
+  row once one is clicked - so it hears the take being filed, or the take about
+  to be reported as in the way. **Import** and **Export** get the same button.
+
+- That dialog now lists the files already in a folder as well as its
+  sub-folders, with the row the name field points at drawn as the current one.
+  A folder that looked empty was a folder anybody would file `take01.wav` into
+  twice and be refused afterwards over a file that had never been on screen.
+  **Hidden** lists dot files and dot folders, off by default, for the folders
+  that were previously reachable only by typing the path.
+
+- A take the capture device is pulled out of carries on when it comes back.
+  What was played is safe either way - the WAV is closed and patched the instant
+  the stream dies, and the clip that was growing on the timeline becomes a
+  finished one over it - and if the same device returns within thirty seconds
+  the take continues on the same lane, starting at the frame the first half
+  stopped at, in a take file of its own. A device that comes back at another
+  rate or channel count, or after the thirty seconds, reopens the stream and
+  waits for **Record** as it did before.
+
 - A tempo, and the three things that read it. A session now counts on one -
   120 to the bar of four until told otherwise - and it is saved with the
   session, so two people opening the same project see the same bar lines.

@@ -406,6 +406,96 @@ TEST(reader_reads_in_several_calls)
   wav_read_close(&r);
 }
 
+TEST(reader_seeks_both_ways)
+{
+  wav_reader r;
+  int16_t samples[6] = {100, 200, 300, 400, 500, 600};
+  float mono[6];
+
+  CHECK_EQ_INT(write_take(g_path, 44100, 1, 16, samples, sizeof(samples)), 0);
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+
+  CHECK_EQ_INT(wav_read_seek(&r, 4), 0);
+  CHECK_EQ_INT(r.position, 4);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 1), 1);
+  CHECK_EQ_DBL(mono[0], 500.0 / 32768.0, 1e-6);
+
+  /* backwards, which is what a cursor key mostly asks for */
+  CHECK_EQ_INT(wav_read_seek(&r, 1), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 1), 1);
+  CHECK_EQ_DBL(mono[0], 200.0 / 32768.0, 1e-6);
+
+  CHECK_EQ_INT(wav_read_seek(&r, 0), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 6), 6);
+  CHECK_EQ_DBL(mono[0], 100.0 / 32768.0, 1e-6);
+
+  wav_read_close(&r);
+}
+
+TEST(a_seek_past_the_end_lands_on_it)
+{
+  wav_reader r;
+  int16_t samples[4] = {1, 2, 3, 4};
+  float mono[4];
+
+  CHECK_EQ_INT(write_take(g_path, 44100, 1, 16, samples, sizeof(samples)), 0);
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+
+  /* the End key, and any seek that overshoots: the end, not a failure */
+  CHECK_EQ_INT(wav_read_seek(&r, 9999), 0);
+  CHECK_EQ_INT(r.position, 4);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 4), 0);
+
+  /* and it is still a usable reader afterwards */
+  CHECK_EQ_INT(wav_read_seek(&r, 2), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 4), 2);
+
+  wav_read_close(&r);
+}
+
+TEST(a_seek_counts_from_the_audio_not_the_file)
+{
+  wav_writer w;
+  wav_reader r;
+  const int16_t pcm[4] = {11, 22, 33, 44};
+  aud_meta meta;
+  float mono[2];
+
+  /*
+   * A stamped take has a LIST/INFO and a bext chunk ahead of its audio, so
+   * frame zero is nowhere near byte 44. A seek that assumed the canonical
+   * header would land in the middle of the metadata and decode it as samples.
+   */
+  aud_meta_defaults(&meta);
+  meta.device = "hw:CARD=Box,DEV=0";
+  meta.note = "somewhere to seek past";
+  meta.rate = 44100;
+  meta.channels = 1;
+  meta.bits = 16;
+
+  CHECK_EQ_INT(wav_open_meta(&w, g_path, 44100, 1, 16, 1, &meta), 0);
+  CHECK(w.meta_bytes > 0);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.frames, 4);
+  CHECK_EQ_INT(wav_read_seek(&r, 3), 0);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 2), 1);
+  CHECK_EQ_DBL(mono[0], 44.0 / 32768.0, 1e-6);
+
+  wav_read_close(&r);
+}
+
+TEST(seeking_a_closed_reader_is_refused)
+{
+  wav_reader r;
+
+  memset(&r, 0, sizeof(r));
+  CHECK_EQ_INT(wav_read_seek(&r, 0), -1);
+  CHECK_EQ_INT(wav_read_seek(NULL, 0), -1);
+}
+
 TEST(reader_skips_unknown_chunks)
 {
   /*
@@ -551,6 +641,10 @@ int main(void)
   RUN(reader_downmixes_channels);
   RUN(reader_handles_24_bit);
   RUN(reader_reads_in_several_calls);
+  RUN(reader_seeks_both_ways);
+  RUN(a_seek_past_the_end_lands_on_it);
+  RUN(a_seek_counts_from_the_audio_not_the_file);
+  RUN(seeking_a_closed_reader_is_refused);
   RUN(reader_skips_unknown_chunks);
   RUN(reader_rejects_what_it_cannot_decode);
   RUN(reader_survives_a_lying_header);

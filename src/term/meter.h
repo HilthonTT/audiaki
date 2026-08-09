@@ -22,6 +22,7 @@ typedef struct
   int clipped;      /* a sample has hit full scale */
   int unicode;      /* the terminal can render block drawing characters */
   int armed;        /* capturing into the pre-roll, not into a file */
+  int paused;       /* playback is held; the clock has stopped moving */
   double total;     /* length of what is being played; 0 while recording */
 } aud_meter;
 
@@ -57,6 +58,13 @@ void meter_reset_peaks(aud_meter *m);
  * from. Zero, the default, is the recording form.
  */
 void meter_set_total(aud_meter *m, double seconds);
+
+/*
+ * Say on the line that playback is held. Only meaningful once a total has been
+ * set: a recording is never paused without the clock stopping too, and it says
+ * so by not advancing.
+ */
+void meter_set_paused(aud_meter *m, int paused);
 
 /* Redraw the meter in place. `peak` is normalised to [0.0, 1.0]. */
 void meter_draw(aud_meter *m, double peak, double seconds, unsigned xruns);

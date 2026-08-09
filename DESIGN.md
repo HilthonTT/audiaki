@@ -78,6 +78,7 @@ src/
   term/
     meter.c/.h    the terminal peak and spectrum displays
     prompt.c/.h   the one question the recorder asks back
+    keys.c/.h     single keypresses, for the transport --play runs under
   util/         no domain of its own
     log.c/.h      stderr diagnostics
     parse.c/.h    strict value parsing, shared with the window
@@ -96,6 +97,7 @@ src/
                   and export, which are the same question turned round
     timeline.c/.h the tracks: ruler, panels, waveforms, selection, zoom
     player.c/.h   hearing the timeline, fed from the drawing loop
+    preview.c/.h  hearing a file from the browser, fed the same way
     screen.c      every pixel of the chrome
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
@@ -458,6 +460,57 @@ Playback and export mix through the same function, deliberately: a project that
 played back differently from how it exported would be a project you could not
 trust, and one piece of code is the only way to be sure of that.
 
+### Hearing a file that is not the project
+
+The dialog asking where a finished take should go used to ask it about a file
+nobody had heard, and `gui/preview.c` is the answer: a WAV read straight off
+disk into an output of its own, pumped from the drawing loop exactly the way
+the player above is.
+
+It is a separate thing from `aud_player` on purpose. The player plays the
+document, and knows about mixing, looping and the metronome; what the dialog is
+asking about is a *file*, quite possibly at a rate or a channel count the
+session is not. Loading it into the project to hear it would cost an undo step
+and a track's worth of memory to answer a question that has not been answered
+yet — and answering "no, keep it where it was" would then mean taking both
+back. So the preview opens at the file's own geometry and touches nothing.
+
+One output at a time: starting a preview stops the player. The project and the
+file being asked about are two things to be listening to, and hearing them over
+each other tells you nothing about either.
+
+### When the cable comes out
+
+A capture stream that dies cannot be revived, so the question is not how to keep
+it but what to do with what is already there. The engine answers the first half
+on the capture thread the moment the read fails: close the WAV, patch its
+header, and say `AUD_ENGINE_FAILED`. The file is a complete take from that
+instant on, whatever happens next.
+
+The window answers the second half. `app_check_capture_loss()` runs at the top
+of every frame, ahead of the device watch — deliberately, because the watch is
+what tears the dead engine down and stands a new one up, and the engine that was
+writing the take is the only thing left that can be asked what it wrote. It
+drains the last of the ring onto the track, closes the clip that was growing,
+points the block at the file, and notes the frame it stopped at.
+
+The device coming back is `app_recover_engine()`, which already existed for a
+window that started without one. What is new is that it then calls
+`app_resume_take()`, and what that does is start *a new take* on the same lane
+at that frame. Not a continuation of the old file: that file is closed and safe,
+and reopening it to append would mean rewriting a finished recording to produce
+one whose middle is a moment the interface was not running. Two clips that meet
+exactly is what the track model is for.
+
+Three things have to hold, and each is a way the obvious version would be wrong.
+The lane has to still be there, because the timeline is editable while the
+device is gone. The new device has to deliver the same rate and channel count,
+because a device that comes back is not necessarily the device that went. And it
+has to be within thirty seconds, because "the hardware returned" is a good
+reason to carry on recording only while somebody is still standing there holding
+the cable — a window left open overnight should not start writing to disk
+because of something that happened at lunchtime.
+
 ## Measuring a take
 
 The noise floor `--info` reports is the tenth percentile of the level of 50 ms
@@ -528,7 +581,37 @@ running a few parts per million off nominal would slowly starve or overrun.
 has been handed over cuts off everything still queued — inaudible while
 monitoring, because the input is still arriving, and the last hundred
 milliseconds of the take when playing a file. Ctrl+C skips the drain, since
-stopping now is exactly what was asked for.
+stopping now is exactly what was asked for. So does a skip to the next file: `n`
+means now, and a buffer of the file being left over the top of the one arriving
+is not what was asked for either.
+
+### Taking keys without owning the loop
+
+The transport — pause, seek, next — needed keys, and the loop it runs in cannot
+stop to wait for one: it is the thing keeping the output fed, and a blocking
+read on stdin would starve it into a dropout every time nobody typed. So
+`term/keys.c` puts the terminal into a mode where a key arrives without Enter
+behind it (`~ICANON`) and a read returns immediately whether or not anything did
+(`VMIN` and `VTIME` both zero), and the loop asks once per pass round.
+
+`ISIG` is deliberately left on. Ctrl+C is how everything else in audiaki stops,
+and a player that had quietly taken that over would be the one command that
+behaved differently.
+
+The bytes are kept between calls rather than decoded a read at a time. A cursor
+key is a three byte escape sequence and a fast pair of presses can arrive in one
+read, so `aud_keys_poll()` hands out one key per call from a small buffer;
+decoding a read as a single key would lose most of an arrow held down.
+
+None of it is required. `aud_keys_open()` refuses unless both stdin and stderr
+are a terminal — over a pipe there is somebody else's data on stdin, and no
+terminal to take it back from — and a refusal is not an error: playback then
+does what it always did and runs each file from beginning to end.
+
+Seeking is `wav_read_seek()`, which is why the reader keeps the offset its data
+chunk started at. A take stamped with its metadata has a `LIST`/`INFO` and a
+`bext` chunk ahead of the audio, so frame zero is nowhere near byte 44, and a
+seek that assumed the canonical header would decode the stamp as samples.
 
 ## Reloading the window
 

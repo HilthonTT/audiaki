@@ -185,6 +185,9 @@ void app_switch_device(app *a, int previous)
   a->start_monitor = monitoring;
 }
 
+/* Defined below, next to the rest of what a take does. */
+static void app_resume_take(app *a);
+
 /*
  * Open the selected device again once it is back, after the window came up
  * without it or its stream died with the cable. A dead stream cannot be
@@ -223,6 +226,7 @@ static void app_recover_engine(app *a)
   {
     aud_info("'%s' is back", a->active_device);
     aud_engine_set_monitor(a->engine, a->start_monitor);
+    app_resume_take(a);
   }
 }
 
@@ -578,6 +582,201 @@ void app_stop_take(app *a, const aud_engine_status *st)
   }
 
   app_finish_take(a, take);
+}
+
+/*
+ * How long a device has to come back within for the take to be carried on.
+ *
+ * A cable knocked out and pushed back in is somebody still standing there with
+ * an instrument, and picking the take up where it stopped is what they want. An
+ * interface plugged in again after lunch is not, and a window that started
+ * recording to disk on its own because of something that happened half an hour
+ * ago would be a window nobody could leave running.
+ */
+#define APP_RESUME_SECONDS 30.0
+
+/*
+ * The capture stream died while a take was being written.
+ *
+ * The file is already safe - the engine closes it the moment the stream goes,
+ * which is the whole of what salvaging it means - but the timeline still has a
+ * clip open on it, growing from a source that has stopped. Close that the way
+ * stopping normally would, and note where it got to, so a device that comes
+ * back can be carried on from rather than started over.
+ *
+ * No dialog. The question of where a take should be kept is asked about a take
+ * that is over, and this one may yet have a second half; it stays where it was
+ * recorded, and the status line says so.
+ */
+static void app_take_interrupted(app *a, const aud_engine_status *st)
+{
+  char take[AUD_ENGINE_PATH_MAX];
+  double seconds = st->elapsed;
+  unsigned long dropped = aud_engine_take_dropped(a->engine);
+
+  snprintf(take, sizeof(take), "%s", st->path);
+
+  /* whatever it was being played along to has nothing left to accompany */
+  aud_player_stop(&a->player);
+
+  /* whatever reached the ring before the stream went belongs on the track */
+  app_pump_take(a);
+
+  a->project_dirty = 1;
+  memset(&a->interrupted, 0, sizeof(a->interrupted));
+  a->interrupted.track = -1;
+
+  if (a->record_track >= 0 && (size_t)a->record_track < a->doc.count)
+  {
+    aud_track *t = &a->doc.tracks[a->record_track];
+
+    if (aud_track_recording(t))
+    {
+      aud_samples_set_source(t->clips[t->recording].audio, take);
+    }
+    a->last_take_track = a->record_track;
+    aud_track_record_end(t);
+
+    if (dropped > 0)
+    {
+      /*
+       * The display fell behind as well as the device going, so the track is
+       * not what the file is. Rebuilt from the file, like a take that stopped
+       * normally - and not offered to be carried on, because the frame the
+       * reload lands on is not the frame the take stopped at.
+       */
+      aud_doc_remove_track(&a->doc, (size_t)a->record_track);
+      a->record_track = -1;
+      app_load_track(a, take);
+      a->last_take_track = (long)a->doc.count - 1;
+    }
+    else
+    {
+      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+
+      a->interrupted.waiting = 1;
+      a->interrupted.track = a->record_track;
+      /* one past the last frame that arrived, so a second half butts up
+       * against the first rather than being refused for overlapping it */
+      a->interrupted.at = aud_track_end(t);
+      a->interrupted.lost_at = GetTime();
+      a->interrupted.rate = aud_engine_rate(a->engine);
+      a->interrupted.channels = aud_engine_channels(a->engine);
+    }
+  }
+
+  a->record_track = -1;
+  a->record_skip = 0;
+  a->render_note[0] = '\0';
+
+  app_set_status(a, "the device went during %.40s - %.1f s kept%s",
+                 aud_path_basename(take), seconds,
+                 a->interrupted.waiting ? "; plug it back in to carry on" : "");
+}
+
+/*
+ * Notice that the stream died under a take, once per frame, before anything
+ * else looks at the timeline.
+ *
+ * Ahead of the device watch in particular: the engine that was writing the
+ * take is the only thing that can still be asked what it wrote, and the watch
+ * is what tears it down and stands a new one up in its place.
+ */
+static void app_check_capture_loss(app *a)
+{
+  aud_engine_status st;
+
+  if (a->engine == NULL || a->record_track < 0)
+  {
+    return;
+  }
+
+  aud_engine_status_get(a->engine, &st);
+  if (st.state == AUD_ENGINE_FAILED)
+  {
+    app_take_interrupted(a, &st);
+  }
+}
+
+/*
+ * Carry the interrupted take on, now that there is a device again.
+ *
+ * Everything about it has to still be true: the lane is still there, the new
+ * device delivers what the old one did, and it has not been so long that
+ * nobody is waiting. Declining costs nothing - what was captured is a clip and
+ * a WAV either way, and Record starts the next take wherever the cursor is.
+ *
+ * The second half is a take of its own, in a file of its own, laid on the same
+ * lane where the first one stopped. Splicing them into one file would mean
+ * rewriting a header on a recording that is already safe on disk, to make a
+ * file whose middle is a moment the interface was not running.
+ */
+static void app_resume_take(app *a)
+{
+  char path[AUD_ENGINE_PATH_MAX];
+  aud_track *t;
+
+  if (!a->interrupted.waiting || a->engine == NULL)
+  {
+    return;
+  }
+
+  a->interrupted.waiting = 0;
+
+  if (GetTime() - a->interrupted.lost_at > APP_RESUME_SECONDS)
+  {
+    app_set_status(a, "'%.40s' is back - press Record for the next take",
+                   a->active_device);
+    return;
+  }
+
+  if (a->interrupted.track < 0 || (size_t)a->interrupted.track >= a->doc.count)
+  {
+    return; /* the lane was edited away while the device was gone */
+  }
+
+  /*
+   * A device that comes back is not necessarily the device that went, and one
+   * running at another rate or another width cannot be laid onto the end of a
+   * lane recorded at the old one.
+   */
+  if (aud_engine_rate(a->engine) != a->interrupted.rate ||
+      aud_engine_channels(a->engine) != a->interrupted.channels)
+  {
+    app_set_status(a,
+                   "'%.30s' is back, but at %u Hz / %u ch - press Record to "
+                   "start a take on it",
+                   a->active_device, aud_engine_rate(a->engine),
+                   aud_engine_channels(a->engine));
+    return;
+  }
+
+  if (aud_take_next(path, sizeof(path), a->prefix) != 0)
+  {
+    return;
+  }
+
+  t = &a->doc.tracks[a->interrupted.track];
+  if (aud_track_record_begin(t, a->interrupted.at,
+                             (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+  {
+    return;
+  }
+
+  a->record_track = a->interrupted.track;
+  a->record_at = a->interrupted.at;
+  a->record_skip = 0;
+  a->render_note[0] = '\0';
+
+  if (aud_engine_start(a->engine, path, 0) != 0)
+  {
+    aud_track_record_end(t);
+    a->record_track = -1;
+    return;
+  }
+
+  app_set_status(a, "'%.30s' is back - carrying on into %.40s", a->active_device,
+                 aud_path_basename(path));
 }
 
 /*
@@ -1522,6 +1721,7 @@ int aud_plug_init(int argc, char **argv)
   aud_timeline_init(&a->timeline);
   aud_clipboard_init(&a->clipboard);
   aud_player_init(&a->player);
+  aud_preview_init(&a->preview);
   a->record_track = -1;
   a->last_take_track = -1;
   /*
@@ -1701,6 +1901,13 @@ void aud_plug_frame(void)
   app *a = plug;
   aud_engine_status st;
 
+  /*
+   * Before the watch, which is what replaces a dead engine with a live one:
+   * the take the stream died under has to be closed out on the timeline while
+   * the engine that was writing it is still there to be asked about it.
+   */
+  app_check_capture_loss(a);
+
   if (aud_device_watch_changed(a->watch) && app_refresh_devices(a))
   {
     app_recover_engine(a);
@@ -1745,6 +1952,13 @@ void aud_plug_frame(void)
      * way a transport does, so pressing play again repeats the same passage */
     app_set_status(a, "played to the end");
   }
+
+  /*
+   * The file the save dialog is auditioning, fed the same way and from the
+   * same place. Nothing on the timeline moves for it: it is a file being
+   * heard, not a take being played - see preview.h.
+   */
+  aud_preview_pump(&a->preview);
   if (aud_player_playing(&a->player))
   {
     aud_timeline_reveal(&a->timeline, &a->doc, aud_player_head(&a->player),
@@ -1816,6 +2030,7 @@ void aud_plug_shutdown(void)
    */
   app_cancel_render(a);
   aud_player_stop(&a->player);
+  aud_preview_stop(&a->preview);
   app_close_engine(a);
   aud_clipboard_clear(&a->clipboard);
   aud_doc_free(&a->doc);

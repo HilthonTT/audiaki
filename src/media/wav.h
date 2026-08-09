@@ -91,12 +91,18 @@ typedef struct
   FILE *file;
   uint32_t rate;
   uint16_t channels;
-  uint16_t bits;      /* 8, 16, 24, 32 or 64 */
-  int is_float;       /* payload is IEEE float rather than signed integer */
-  uint64_t frames;    /* total frames in the data chunk */
-  uint64_t position;  /* frames handed out so far */
-  const char *error;  /* static description of the last failure, or NULL */
-  unsigned block;     /* bytes per frame */
+  uint16_t bits;     /* 8, 16, 24, 32 or 64 */
+  int is_float;      /* payload is IEEE float rather than signed integer */
+  uint64_t frames;   /* total frames in the data chunk */
+  uint64_t position; /* frames handed out so far */
+  const char *error; /* static description of the last failure, or NULL */
+  unsigned block;    /* bytes per frame */
+  /*
+   * Where the audio starts, kept so a seek can be worked out from a frame
+   * number rather than from a rewind and a re-parse. The chunks ahead of it
+   * vary - see the metadata stamp - so it is not a constant.
+   */
+  uint64_t data_offset;
   unsigned char *raw; /* staging buffer for undecoded frames */
   size_t raw_frames;  /* capacity of raw, in frames */
   /*
@@ -134,6 +140,17 @@ long wav_read_mono(wav_reader *r, float *mono, size_t frames);
  * frames decoded, 0 at end of data, or -1 on a read error with r->error set.
  */
 long wav_read_frames(wav_reader *r, float *interleaved, size_t frames);
+
+/*
+ * Move the read position to `frame`, counting from the start of the audio, so
+ * the next read comes from there. A frame past the end lands at the end, where
+ * reads return nothing rather than fail.
+ *
+ * Returns 0, or -1 with r->error set when the file would not seek. A caller
+ * that gets -1 has lost nothing but the jump: the position is unchanged and
+ * reading straight on still works.
+ */
+int wav_read_seek(wav_reader *r, uint64_t frame);
 
 /* Seconds of audio in the file. */
 double wav_read_duration(const wav_reader *r);

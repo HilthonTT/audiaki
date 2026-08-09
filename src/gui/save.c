@@ -35,9 +35,12 @@
 #include <unistd.h>
 
 #define SAVE_PANEL_W 560.0f
-#define SAVE_PANEL_H 430.0f
+#define SAVE_PANEL_H 480.0f
 #define SAVE_PAD 24.0f
 #define SAVE_ROW_H 32.0f
+
+/* The strip of controls between the folder field and the list. */
+#define SAVE_TOOLS_H 30.0f
 
 /* The row that goes up a level, which is always offered first. */
 #define SAVE_PARENT ".."
@@ -67,6 +70,14 @@ static int lists_file(const app_save *s, const char *name)
 {
   switch (s->mode)
   {
+  /*
+   * Filing a take shows the takes already there. It used to show none, on the
+   * grounds that they were not something to aim at - but a folder that looks
+   * empty is a folder anybody would file take01.wav into twice, and the second
+   * one is refused with a message about a file that was never on screen.
+   * Better to show what is in the way than to explain it afterwards.
+   */
+  case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_OPEN:
   case APP_SAVE_MODE_EXPORT:
     return is_wav(name);
@@ -74,21 +85,22 @@ static int lists_file(const app_save *s, const char *name)
   case APP_SAVE_MODE_PROJECT_OPEN:
   case APP_SAVE_MODE_PROJECT_SAVE:
     return aud_project_is_project(name);
-  case APP_SAVE_MODE_KEEP:
   default:
     return 0;
   }
 }
 
 /*
- * Fill `s->rows` with what can be clicked in `s->folder`.
+ * Fill `s->rows` with what can be clicked in `s->folder`: the sub-folders, and
+ * the files this question is about - WAVs, or sessions. A browser that would
+ * not show you the file you came for is not one, and one that would not show
+ * you the takes already in a folder is asking you to file another one on top of
+ * them blind.
  *
- * Filing a take lists folders only: the files already there are not something
- * to aim at, and offering them would invite saving one take over another.
- * Everything else lists the files it is about as well - WAVs, or sessions -
- * because a browser that would not show you the file you came for is not one.
- * Hidden entries are left out either way, for the same reason nobody keeps
- * recordings in them.
+ * Dot files and dot folders only when they have been asked for. Hardly anybody
+ * keeps recordings in one, so listing them by default would be noise in every
+ * home directory; refusing to list them at all would put ~/.local/share out of
+ * reach of everything but typing the path.
  */
 static void relist(app_save *s)
 {
@@ -118,7 +130,16 @@ static void relist(app_save *s)
   {
     char full[AUD_PATH_MAX];
 
-    if (entry->d_name[0] == '.')
+    /*
+     * "." and ".." are never rows of their own: the folder you are in is not
+     * somewhere to go, and the one above it is offered as SAVE_PARENT at the
+     * top whether or not hidden entries are being shown.
+     */
+    if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+    {
+      continue;
+    }
+    if (entry->d_name[0] == '.' && !s->show_hidden)
     {
       continue;
     }
@@ -185,6 +206,50 @@ static void relist(app_save *s)
   {
     s->labels[i] = s->rows[i];
   }
+}
+
+/*
+ * The file the dialog's two fields name. Returns 0, or -1 when the two do not
+ * make a usable path.
+ */
+static int save_target(const app_save *s, char *dst, size_t size)
+{
+  char folder[AUD_PATH_MAX];
+
+  if (aud_path_expand(folder, sizeof(folder), s->folder) != 0 ||
+      aud_path_join(dst, size, folder, s->name) != 0)
+  {
+    return -1;
+  }
+  return 0;
+}
+
+/*
+ * What the Play button would play: whatever the fields name, when that is a
+ * readable WAV, and otherwise the take being filed. Returns 0 when there is
+ * something to hear.
+ *
+ * The two are the same file when the dialog opens - a take is offered under
+ * its own name in its own folder - and they part company the moment the name
+ * is edited or a row is clicked. Each is the useful answer where it applies:
+ * hear the take you are about to file, or hear the one you are about to be
+ * told is in the way.
+ */
+static int preview_target(const app_save *s, char *dst, size_t size)
+{
+  if (s->name[0] != '\0' && is_wav(s->name) && strchr(s->name, '/') == NULL &&
+      save_target(s, dst, size) == 0 && !aud_path_is_dir(dst) && access(dst, R_OK) == 0)
+  {
+    return 0;
+  }
+
+  if (s->mode == APP_SAVE_MODE_KEEP && s->take[0] != '\0')
+  {
+    snprintf(dst, size, "%s", s->take);
+    return 0;
+  }
+
+  return -1;
 }
 
 void app_save_open(app *a, const char *path, double seconds)
@@ -633,6 +698,75 @@ static const char *save_hint(app_save_mode mode)
   }
 }
 
+/*
+ * The Play button and what it says it would play, on the right of the tools
+ * row. `tools` is that row; `panel` is the dialog, for the right hand edge.
+ *
+ * Only where there is audio to hear - a session file has none - which is why
+ * the whole control is a function rather than a branch inside the drawing.
+ */
+static void save_draw_preview(app *a, Rectangle panel, Rectangle tools)
+{
+  app_save *s = &a->save;
+  Rectangle play = tools;
+  char target[AUD_PATH_MAX];
+  char label[128];
+  int have = preview_target(s, target, sizeof(target)) == 0;
+  int on = aud_preview_playing(&a->preview);
+
+  play.width = 96.0f;
+  play.x = panel.x + panel.width - SAVE_PAD - play.width;
+
+  if (aud_ui_button(play, on ? "Stop" : "Play", on ? AUD_UI_WARN : AUD_UI_ACCENT,
+                    on || have))
+  {
+    if (on)
+    {
+      aud_preview_stop(&a->preview);
+    }
+    else
+    {
+      /*
+       * One thing at a time. The project and the file the dialog is asking
+       * about are two different things to be listening to, and hearing both
+       * over each other would tell you nothing about either.
+       */
+      aud_player_stop(&a->player);
+
+      if (aud_preview_start(&a->preview, target, a->cfg.monitor_device) != 0)
+      {
+        snprintf(s->note, sizeof(s->note), "cannot play %.100s",
+                 aud_path_basename(target));
+      }
+    }
+  }
+
+  if (!on && !have)
+  {
+    aud_ui_tooltip(play, "there is no take here to hear yet");
+    return;
+  }
+
+  if (on)
+  {
+    char at[32];
+    char len[32];
+
+    aud_ui_format_clock(at, sizeof(at), aud_preview_position(&a->preview));
+    aud_ui_format_clock(len, sizeof(len), aud_preview_length(&a->preview));
+    snprintf(label, sizeof(label), "%.40s  %s / %s",
+             aud_path_basename(aud_preview_path(&a->preview)), at, len);
+  }
+  else
+  {
+    aud_ui_tooltip(play, "hear it before deciding where it goes");
+    snprintf(label, sizeof(label), "%.70s", aud_path_basename(target));
+  }
+
+  aud_ui_text_right(play.x - 14.0f, tools.y + 7.0f, 16, on ? AUD_UI_TEXT : AUD_UI_MUTED,
+                    label);
+}
+
 /* Move the keyboard on, wrapping, the way every other form does. */
 static void cycle_focus(app_save *s, int back)
 {
@@ -653,14 +787,25 @@ void app_save_draw(app *a)
   Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
   Rectangle panel;
   Rectangle row;
+  Rectangle tools;
   Rectangle list;
   Rectangle keep;
   Rectangle save;
   float label_w = 66.0f;
   int clicked;
+  int marked = -1;
 
   if (!s->open)
   {
+    /*
+     * Whatever was being auditioned goes with the dialog that started it.
+     * Here rather than beside each of the half dozen ways out, so a way out
+     * added later cannot leave a take playing to an empty window.
+     */
+    if (aud_preview_playing(&a->preview))
+    {
+      aud_preview_stop(&a->preview);
+    }
     return;
   }
 
@@ -747,12 +892,55 @@ void app_save_draw(app *a)
     relist(s);
   }
 
+  /* what is listed on the left, and what can be heard on the right */
+  tools.x = panel.x + SAVE_PAD;
+  tools.y = row.y + SAVE_ROW_H + 14.0f;
+  tools.width = 108.0f;
+  tools.height = SAVE_TOOLS_H;
+
+  if (aud_ui_toggle(tools, "Hidden", s->show_hidden, AUD_UI_MUTED, 1))
+  {
+    s->show_hidden = !s->show_hidden;
+    relist(s);
+  }
+  aud_ui_tooltip(tools, "list dot files and dot folders too");
+
+  if (!APP_SAVE_IS_PROJECT(s->mode))
+  {
+    save_draw_preview(a, panel, tools);
+  }
+
   list.x = panel.x + SAVE_PAD;
   list.width = panel.width - 2.0f * SAVE_PAD;
-  list.y = row.y + SAVE_ROW_H + 18.0f;
+  list.y = tools.y + SAVE_TOOLS_H + 12.0f;
   list.height = panel.height - (list.y - panel.y) - SAVE_PAD - 46.0f - 22.0f;
 
-  clicked = aud_ui_list(list, s->labels, s->count, -1, &s->scroll, 1);
+  /*
+   * A window short enough to squeeze the list out of the panel gets one row of
+   * it rather than a rectangle of negative height, which draws as nothing at
+   * all and cannot be clicked - a browser that vanishes is harder to recover
+   * from than one that is cramped.
+   */
+  if (list.height < AUD_UI_LIST_ROW)
+  {
+    list.height = AUD_UI_LIST_ROW;
+  }
+
+  /*
+   * The row the name field is pointing at, drawn as the current one. With the
+   * files listed there is now something for it to point at, and a take about
+   * to land on one of them should be able to be seen doing it.
+   */
+  for (int i = 0; i < s->count; i++)
+  {
+    if (!s->row_is_dir[i] && strcmp(s->rows[i], s->name) == 0)
+    {
+      marked = i;
+      break;
+    }
+  }
+
+  clicked = aud_ui_list(list, s->labels, s->count, marked, &s->scroll, 1);
   if (clicked >= 0 && clicked < s->count)
   {
     char next[AUD_PATH_MAX];

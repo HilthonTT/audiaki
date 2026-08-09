@@ -122,6 +122,11 @@ void meter_set_total(aud_meter *m, double seconds)
   m->total = seconds > 0.0 ? seconds : 0.0;
 }
 
+void meter_set_paused(aud_meter *m, int paused)
+{
+  m->paused = paused != 0;
+}
+
 /* Room for both clock forms and both counter forms, with the terminator. */
 #define METER_CLOCK_MAX 32
 #define METER_COUNTERS_MAX 24
@@ -196,7 +201,7 @@ static void format_counters(const aud_meter *m, char *out, size_t size, unsigned
 {
   if (m->total > 0.0)
   {
-    snprintf(out, size, "%s", m->clipped ? "  CLIP" : "");
+    snprintf(out, size, "%s%s", m->paused ? "  PAUSED" : "", m->clipped ? "  CLIP" : "");
     return;
   }
   snprintf(out, size, "  xruns:%-4u%s", xruns, m->clipped ? " CLIP" : "");

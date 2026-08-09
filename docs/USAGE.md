@@ -38,6 +38,7 @@ audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M --click 120 take05.wav    # play to a metronome (headphones!)
 audiaki --info take01.wav            # how did that take come out?
 audiaki --play take01.wav            # ...and what does it sound like?
+audiaki --play session-*.wav         # ...all of them, space to pause
 audiaki -D plughw:CARD=Box,DEV=0 -r 48000 -c 2 take03.wav
 audiaki --visualize take01.wav       # render take01.mp4
 ```
@@ -78,7 +79,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--tune` | Show the pitch of what is being played, until Ctrl+C |
 | `--a4 HZ` | Tuner reference pitch (default 440) |
 | `--info FILE` | Report levels and clipping for a WAV and exit; more files may follow |
-| `--play FILE` | Play a WAV through the output and exit |
+| `--play FILE` | Play a WAV through the output and exit; more files may follow, and a terminal gets transport keys |
 | `--json` | Machine-readable `--list`, `--probe` and `--info` |
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
 | `-l, --list` / `-P, --probe` | Inspect devices and exit |
@@ -514,6 +515,7 @@ audiaki --play take01.wav                  # through the default output
 audiaki --play take01.wav --spectrum       # ...watching the spectrum
 audiaki --play take01.wav -t 30            # ...the first 30 seconds only
 audiaki --play take01.wav -D plughw:CARD=Box,DEV=0   # ...through that output
+audiaki --play session-*.wav               # ...a whole session, in order
 ```
 
 The meter is the recording meter with the clock showing a position rather than
@@ -524,7 +526,39 @@ frames to lose:
  00:12 / 03:45 [##################|          ]  -8.4 dBFS
 ```
 
-Ctrl+C stops immediately. `--play` reads whatever the reader accepts, not only
+Files named after the first are played after it, in the order given, so a shell
+glob is a playlist. `-t` applies to each of them rather than to the run, and a
+file that cannot be read is stepped over the way `--info` steps over one — the
+rest still plays, and the exit status still says something was wrong.
+
+### The keys
+
+At a terminal — both stdin and stderr have to be one — playback takes single
+keys while it runs:
+
+| | |
+| --- | --- |
+| `space` | Pause, or carry on |
+| `←` / `→` | Back or forward five seconds |
+| `↑` / `↓` | Forward or back thirty seconds |
+| `home` | Back to the start of the file |
+| `end` | On to the end of it |
+| `n` / `p` | The next file, or the previous one |
+| `q` | Stop, whatever is left of the playlist |
+
+None of it is required. Over a pipe, from a script or under a service manager
+there is no terminal to take keys from, and each file plays start to finish the
+way it always did.
+
+Two things follow from where the audio is when a key is pressed. A pause is
+heard a buffer's worth of audio late, because what the output already holds is
+played out before it falls silent; and the position the seeks move around in is
+the position of what has been handed to the output, which is that same buffer
+ahead of what is coming out of it — about a tenth of a second on the defaults.
+Skipping with `n`, `p` or `q` deliberately does not wait for the queue, so it
+is heard at once.
+
+Ctrl+C stops immediately, as everywhere else. `--play` reads whatever the reader accepts, not only
 audiaki's own takes: 8/16/24/32-bit PCM and 32/64-bit float, at any rate the
 output will take.
 
@@ -640,9 +674,9 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   business, not audiaki's.
 - The desktop app records to numbered takes in `take_dir`, or the working
   directory, and asks about them afterwards in a dialog of its own. That dialog
-  browses folders rather than being the system's file chooser, and it lists
-  neither hidden folders nor the files already in one. There is still no
-  playback of a finished take.
+  browses folders rather than being the system's file chooser: it has no
+  bookmarks, no recent places and no search, and it does not follow whatever
+  the desktop's own chooser has been configured to do.
 - Video is rendered after the take, so a long take with video on means waiting
   roughly its own length again. Cancelling is always available, and the audio
   is safe on disk regardless.
@@ -661,8 +695,12 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   tempo there too.
 - `--channel` picks one channel of the capture; it does not mix several down
   to one, and monitoring still plays every channel the device delivered.
-- `--play` runs start to finish. There is no seeking, no pausing and no
-  playlist; `-t` is the only way to hear less than all of it.
+- `--play` takes its keys from a terminal, so a pipe or a service manager gets
+  the old behaviour of playing each file start to finish. Seeking and pausing
+  act on what is being handed to the output rather than on what is coming out
+  of it, so both land a buffer's worth of audio — around a tenth of a second —
+  from where they were asked for. The playlist is the order the files were
+  given: there is no shuffle and no repeat.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between
   40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
   piccolo is not.
@@ -671,5 +709,8 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   recorded is not moved onto the grid by turning it on.
 - Rate and channels are fixed for the session in the desktop app; only the
   device can be changed from the window. A device that disappears mid-take ends
-  that take where it stopped — what was written stays on disk, but the app does
-  not resume when the hardware returns.
+  that take where it stopped — what was written stays on disk and on the
+  timeline, and the same device coming back within thirty seconds carries the
+  take on as a second file on the same lane. It is two files, not one; a
+  different rate or channel count is not carried on at all; and after the
+  thirty seconds the stream still reopens but the take does not resume.

@@ -632,32 +632,23 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   }
 
   /*
-   * The one command that takes more than one file. Measuring a session means
-   * measuring every take in it, and a shell glob is how anyone would ask:
+   * The two commands that take more than one file, for the same reason:
+   * measuring a session means measuring every take in it, and playing one back
+   * means hearing them in order. A shell glob is how anyone would ask either -
    * 'audiaki --info session-*.wav' reads the first from --info and the rest
-   * from here.
+   * from here, and --play reads its playlist the same way.
    */
-  if (opts->command == AUD_CMD_INFO)
+  if (opts->command == AUD_CMD_INFO || opts->command == AUD_CMD_PLAY)
   {
+    if (opts->command == AUD_CMD_PLAY && opts->output_path != NULL)
+    {
+      aud_error("--play writes nothing, so there is no output file to write");
+      return CLI_EXIT_USAGE;
+    }
     if (optind < argc)
     {
       opts->extra_inputs = argv + optind;
       opts->extra_input_count = argc - optind;
-    }
-    return 0;
-  }
-
-  if (opts->command == AUD_CMD_PLAY)
-  {
-    if (optind < argc)
-    {
-      aud_error("unexpected argument '%s' (the file comes from --play)", argv[optind]);
-      return CLI_EXIT_USAGE;
-    }
-    if (opts->output_path != NULL)
-    {
-      aud_error("--play writes nothing, so there is no output file to write");
-      return CLI_EXIT_USAGE;
     }
     return 0;
   }

@@ -56,7 +56,7 @@ _audiaki() {
     '--tune[show the pitch of what is being played, then exit]'
     '--a4[tuner reference pitch in Hz]:hz:'
     '--info[report levels and clipping for one or more WAVs and exit]:wav file:_files -g "*.wav(-.)"'
-    '--play[play a WAV through the output and exit]:wav file:_files -g "*.wav(-.)"'
+    '--play[play one or more WAVs through the output and exit]:wav file:_files -g "*.wav(-.)"'
     '--render[mix a saved project down to a WAV and exit]:project:_files -g "*.aki(-.)"'
     '--bits[bit depth --render writes]:depth:(16 24 32)'
     '--json[machine readable --list, --probe and --info]'

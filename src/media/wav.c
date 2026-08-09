@@ -460,6 +460,7 @@ int wav_read_open(wav_reader *r, const char *path)
   r->block = (unsigned)r->channels * (r->bits / 8u);
   r->frames = data_bytes / r->block;
   r->position = 0;
+  r->data_offset = (uint64_t)data_offset;
 
   if (fseeko(r->file, data_offset, SEEK_SET) != 0)
   {
@@ -658,6 +659,34 @@ long wav_read_mono(wav_reader *r, float *mono, size_t frames)
 long wav_read_frames(wav_reader *r, float *interleaved, size_t frames)
 {
   return read_decoded(r, interleaved, frames, 0);
+}
+
+int wav_read_seek(wav_reader *r, uint64_t frame)
+{
+  if (r == NULL || r->file == NULL)
+  {
+    errno = EINVAL;
+    return -1;
+  }
+
+  /*
+   * Past the end lands at it rather than failing. Seeking forward is how a
+   * player skips, and skipping past the last frame means "that is the end of
+   * this one", which the read after this reports by returning nothing.
+   */
+  if (frame > r->frames)
+  {
+    frame = r->frames;
+  }
+
+  if (fseeko(r->file, (off_t)(r->data_offset + frame * r->block), SEEK_SET) != 0)
+  {
+    r->error = "cannot seek within the audio data";
+    return -1;
+  }
+
+  r->position = frame;
+  return 0;
 }
 
 double wav_read_duration(const wav_reader *r)

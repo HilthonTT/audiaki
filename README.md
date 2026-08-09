@@ -88,6 +88,7 @@ audiaki --note "clean tone" take06.wav  # ...and say what it was
 audiaki --info take01.wav            # how did that take come out?
 audiaki --info session-*.wav         # ...and the rest of them, a row each
 audiaki --play take01.wav            # ...and what does it sound like?
+audiaki --play session-*.wav         # ...all of them; space pauses, n skips
 audiaki --visualize take01.wav       # render take01.mp4
 audiaki --render session.aki         # mix a saved session down, no window
 audiaki-gui                          # the multi-track recorder and editor
@@ -96,8 +97,9 @@ audiaki-gui session.aki              # ...or on a saved session
 ```
 
 When a take finishes, audiaki asks where to keep it and what to call it — Enter
-twice keeps it where it is, and the window asks the same in a dialog. Where they
-go by default is one line in `~/.config/audiaki/config`:
+twice keeps it where it is, and the window asks the same in a dialog you can
+play the take back from before answering. Where they go by default is one line
+in `~/.config/audiaki/config`:
 
 ```ini
 take_dir = ~/Takes
@@ -152,8 +154,10 @@ system are in [DESIGN.md](DESIGN.md#layout).
 Linux only, through ALSA or PipeWire, on little-endian hosts. Recordings are
 plain 44-byte PCM WAV, so they stop at the 4 GB RIFF limit — about 3.5 hours of
 24-bit stereo at 48 kHz. The tuner is monophonic, video rendering shells out to
-`ffmpeg`, and the desktop app's save dialog browses folders rather than being
-the system's own file chooser. Overdubs are placed by a latency correction that
+`ffmpeg`, and the desktop app's save dialog browses folders itself rather than
+being the system's own file chooser. A device pulled out mid-take carries that
+take on in a second file when it comes straight back, not in the one it
+interrupted. Overdubs are placed by a latency correction that
 is estimated unless you measure it, and playback and capture start within a
 drawn frame of each other rather than on the same sample, so they land close
 rather than sample locked. The full list is in

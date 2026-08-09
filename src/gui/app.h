@@ -12,6 +12,7 @@
  *   args.c     argv and the help text
  *   devices.c  the dropdown's list, and keeping it level with the hardware
  *   save.c     where a finished take goes, and the dialog that asks
+ *   preview.c  hearing a file from that dialog without loading it
  *   screen.c   every pixel of the chrome
  *   timeline.c every pixel of the tracks, and what a pointer does to them
  *
@@ -30,6 +31,7 @@
 
 #include "gui/engine.h"
 #include "gui/player.h"
+#include "gui/preview.h"
 #include "gui/render.h"
 #include "gui/timeline.h"
 #include "gui/viz.h"
@@ -159,6 +161,32 @@ typedef enum
 #define APP_SAVE_IS_PROJECT(mode) \
   ((mode) == APP_SAVE_MODE_PROJECT_SAVE || (mode) == APP_SAVE_MODE_PROJECT_OPEN)
 
+/*
+ * A take the capture stream died in the middle of, and what it would take to
+ * carry it on.
+ *
+ * Nothing here is at risk: the engine closes the WAV the moment the stream
+ * goes, and the window turns the clip that was growing into a finished one, so
+ * what was played is on disk and on the timeline whether or not the device
+ * ever comes back. This is only the anchor - if it does come back, and soon
+ * enough that somebody is still holding the cable, the next take can start
+ * exactly where the last one stopped instead of wherever the cursor is.
+ *
+ * The geometry is kept because a device that returns is not necessarily the
+ * device that went. One that comes back at another rate or another channel
+ * count cannot be spliced onto the end of a lane recorded at the old one, and
+ * doing it quietly would be worse than not doing it at all.
+ */
+typedef struct
+{
+  int waiting;    /* a take was cut short and has not been carried on yet */
+  long track;     /* the lane it was on */
+  uint64_t at;    /* the frame a take carrying it on should start at */
+  double lost_at; /* GetTime() when the stream went, for the window below */
+  unsigned rate;
+  unsigned channels;
+} app_interrupted;
+
 typedef struct
 {
   int open;
@@ -170,9 +198,11 @@ typedef struct
   int focus;      /* an app_save_field */
 
   /*
-   * What the list offers, and the strings the widget reads. Sub-folders always;
-   * opening adds the WAVs in them, because a browser that would not show you
-   * the file you came for is not one.
+   * What the list offers, and the strings the widget reads. Sub-folders and
+   * the files the question is about - WAVs, or sessions - because a browser
+   * that would not show you the file you came for is not one, and one that
+   * would not show you the takes already in a folder is asking you to file
+   * another one on top of them blind.
    */
   char rows[APP_MAX_FOLDERS][APP_NAME_MAX];
   char row_is_dir[APP_MAX_FOLDERS];
@@ -180,6 +210,18 @@ typedef struct
   int count;
   int scroll;
   char listed[AUD_PATH_MAX]; /* the folder `rows` was built from */
+  /*
+   * Whether dot files and dot folders are among them. Off by default, because
+   * hardly anybody keeps recordings in one - but the folder a take has to go
+   * into is not always the one anybody would have chosen, and a browser that
+   * cannot reach ~/.local/share at all is a browser that has to be given up on
+   * and the path typed instead.
+   *
+   * Part of the dialog rather than of the app: it is answered per question,
+   * and the answer to "where does this take go" is not the answer to "which
+   * session am I opening".
+   */
+  int show_hidden;
 
   char note[AUD_ENGINE_ERROR_MAX]; /* why the last attempt to save did not */
   /*
@@ -216,6 +258,14 @@ typedef struct
   aud_player player;
 
   /*
+   * A file being auditioned from the save dialog, which is the one thing heard
+   * here that is not the project. Kept beside the player rather than inside
+   * the dialog because it outlives no dialog but has to be stopped by
+   * whichever one closes - see preview.h.
+   */
+  aud_preview preview;
+
+  /*
    * The take being recorded, as it lands on the timeline. The engine is still
    * writing the WAV; this is the same frames arriving on the track at the same
    * time, so the waveform grows while it is being played rather than appearing
@@ -241,6 +291,9 @@ typedef struct
    * take/latency.h.
    */
   uint64_t record_skip;
+
+  /* the take the device was lost in the middle of, if there was one */
+  app_interrupted interrupted;
 
   /*
    * Play the project while recording over it, and by how much to correct for

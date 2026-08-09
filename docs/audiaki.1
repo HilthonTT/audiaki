@@ -14,7 +14,7 @@ instrument on it, play a take back, and visualise it
 \fB\-\-info\fR \fIINPUT.WAV\fR
 .br
 .B audiaki
-\fB\-\-play\fR \fIINPUT.WAV\fR [\fB\-D\fR \fIOUTPUT\fR]
+\fB\-\-play\fR \fIINPUT.WAV\fR [\fIMORE.WAV\fR ...] [\fB\-D\fR \fIOUTPUT\fR]
 .br
 .B audiaki
 \fB\-\-render\fR \fIPROJECT.AKI\fR [\fB\-o\fR \fIMIX.WAV\fR]
@@ -377,6 +377,55 @@ stops early, and
 apply as they do when recording. No file is written, and naming one with
 .B \-o
 is an error.
+.IP
+Files named after
+.I FILE
+are played after it, in the order given, so a shell glob is a playlist:
+.B audiaki \-\-play session\-*.wav
+plays a whole session's takes one after another.
+.B \-t
+applies to each of them rather than to the run.
+.IP
+A file that cannot be read does not end the run \- the rest is still worth
+hearing \- but the exit status still reports that something was wrong.
+.TP
+.B Playback keys
+When both standard input and standard error are a terminal, playback takes
+single keys as it runs. Nothing has to be pressed and nothing is required: over
+a pipe, or from a script, the keys are simply never read and each file plays
+from beginning to end.
+.RS
+.TP 12
+.B space
+Pause, or carry on. What the output already holds is heard first, so a pause
+takes a buffer's worth of audio to fall silent.
+.TP
+.BR \(<- " / " \(->
+Back or forward five seconds.
+.TP
+.BR \(ua " / " \(da
+Forward or back thirty seconds.
+.TP
+.B home
+Back to the start of the file.
+.TP
+.B end
+On to the end of it, which finishes the file the way playing it out would.
+.TP
+.BR n " / " p
+The next file, or the previous one. Neither waits for what is queued, so a skip
+is heard at once.
+.B p
+on the first file starts it again.
+.TP
+.B q
+Stop, whatever is left of the playlist.
+.RE
+.IP
+.B Ctrl\-C
+still stops everything, as it does everywhere else in audiaki. The position the
+keys move around in is the position of what has been handed to the output,
+which is a buffer ahead of what is coming out of it.
 .SS Sessions
 .TP
 .BR \-\-render " " \fIFILE\fR

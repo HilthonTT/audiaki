@@ -364,6 +364,27 @@ a window that came up with no device at all opens the first one plugged in.
 Takes are always numbered from the prefix, so pressing record cannot destroy an
 earlier take.
 
+### When the device goes mid-take
+
+A cable pulled out while a take is running ends the capture stream, and nothing
+can revive that stream. What was played up to that moment is not at risk: the
+WAV is closed and patched the instant the stream dies, and the clip that was
+growing on the timeline becomes a finished one over that file. The window says
+which take it was and how much of it it kept.
+
+Plug the interface back in within **thirty seconds** and the take carries on:
+the same lane, starting at the frame the first half stopped at, in a take file
+of its own. Two files rather than one — the first is already closed and safe on
+disk, and splicing them would mean rewriting it to produce a recording whose
+middle is a moment the interface was not running.
+
+It has to be the same device to carry on with. One that comes back at another
+rate or another channel count cannot be laid onto the end of a lane recorded at
+the old one, and the window says so and waits for **Record** instead. After the
+thirty seconds it does the same: the stream reopens either way, so nothing is
+lost — a window left running is simply not going to start recording to disk on
+its own because of something that happened half an hour ago.
+
 **Monitoring feeds your input back to your speakers**, which will howl if you
 are recording a microphone in the same room. It starts off for that reason.
 
@@ -377,7 +398,9 @@ something and editing it would be a dialog in the way. Where the WAV goes is
 
 Turn it on with `prompt = yes` in the config file, and stopping opens a small
 dialog over the window: the name the take was given, the folder it was written
-in, and the sub-folders of that folder to click through.
+in, and what is in that folder — the sub-folders to click through, and the WAVs
+already there. The row the name field is pointing at is drawn as the current
+one, so a take about to land next to yesterday's can be seen doing it.
 
 Nothing has happened to the file when it opens. It is a complete, closed WAV
 sitting exactly where it was recorded, and it stays there unless **Save** is
@@ -385,6 +408,20 @@ pressed — **Keep here**, `Esc` and closing the window all leave it alone. Save
 moves it, creating the folder if it has to, and never lands on a file that is
 already there: a name that is taken comes back as a line under the fields
 rather than as a take you no longer have.
+
+**Play** hears the take before any of that is decided — straight off the disk,
+at its own rate and channel count, with nothing put on the timeline and no undo
+step spent. It plays whatever the fields name when that is a readable WAV, and
+the take being filed otherwise, so it starts out on the take and follows a row
+once one is clicked: hear what you are about to file, or hear what you are
+about to be told is in the way. The button says how far in it has got, and the
+audition stops when the dialog does. **Import** and **Export** get the same
+button.
+
+**Hidden** lists dot files and dot folders. Off by default — hardly anybody
+keeps takes in one, and showing them would be noise in every home directory —
+but a folder like `~/.local/share` is otherwise out of reach of everything
+except typing the path.
 
 `Tab` moves between the two fields, `Enter` saves, `Esc` keeps it where it is.
 Clicking a folder goes into it; `..` goes up. A path can also be typed or
