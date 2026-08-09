@@ -37,9 +37,12 @@
 #define AUD_LATENCY_MAX_MS 500.0
 
 /*
- * Estimate the round trip from the two buffers it is made of, in frames at
- * `rate`. Both are what the program knows: the capture buffer the device
- * negotiated, and the playback buffer the output was opened with.
+ * Estimate the round trip from the two queues it is made of, in frames.
+ *
+ * `capture_frames` is how far behind the capture side hands audio over - one
+ * period, for a reader that drains continuously, rather than the whole ring it
+ * drains from. `playback_frames` is the playback buffer, which a player that
+ * keeps the output fed does hold full.
  *
  * An estimate, and honestly so - the converters, the driver and the interface
  * all add delay that nothing here can see. It is the right starting point and

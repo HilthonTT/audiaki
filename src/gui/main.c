@@ -312,21 +312,25 @@ static long app_record_target(app *a, uint64_t at)
  * disk when you stop.
  */
 /*
- * Frames to shift a take back by, so what was played to the project lands where
- * it was heard rather than a round trip after it. Zero when nothing is being
- * played along to, because then there is nothing to be late against.
+ * Frames to shift a take back by, so what was played along to the project lands
+ * where it was heard rather than a round trip after it.
+ *
+ * Only ever asked once playback has actually started. A correction is a guess
+ * about a delay, and applying one when there is nothing being played to be late
+ * against would move a take away from the line the user put it on for no reason
+ * at all - which is worse than the misalignment it is trying to fix.
  */
 static uint64_t app_latency_frames(const app *a)
 {
   aud_monitor_config out;
 
-  if (!a->overdub || a->engine == NULL || aud_doc_end(&a->doc) == 0)
+  if (a->engine == NULL)
   {
     return 0;
   }
 
-  /* the output the player is about to open, so its buffer is known before it
-   * exists - the defaults are monitor.c's, not a second copy of them */
+  /* the output the player opened, so its buffer is known from the same
+   * defaults monitor.c uses rather than from a second copy of them */
   aud_monitor_config_defaults(&out, aud_engine_rate(a->engine), 2u);
 
   return aud_latency_frames(a->latency_ms, aud_engine_rate(a->engine),
@@ -351,14 +355,30 @@ void app_begin_take(app *a)
   aud_player_stop(&a->player);
 
   at = a->doc.cursor;
-  latency = app_latency_frames(a);
+
+  /*
+   * Playback first, because whether it started is what decides where the take
+   * goes. Overdubbing means there is something to be late against; recording
+   * from past the end of the project, or with the output refusing to open, or
+   * with Overdub off, means there is not - and then the take belongs exactly on
+   * the line, which is where it was asked for.
+   */
+  latency = 0;
+  if (a->overdub && aud_doc_end(&a->doc) > at &&
+      aud_player_start(&a->player, &a->doc, at, aud_doc_end(&a->doc),
+                       a->cfg.monitor_device) == 0)
+  {
+    latency = app_latency_frames(a);
+  }
+
   aud_latency_place(at, latency, &start, &skip);
 
-  /* the lane has to be free from where the clip really begins, which with the
+  /* the lane has to be free from where the clip really begins, which with a
    * correction applied is earlier than the cursor */
   target = app_record_target(a, start);
   if (target < 0)
   {
+    aud_player_stop(&a->player);
     app_set_status(a, "no room for another track");
     return;
   }
@@ -366,6 +386,7 @@ void app_begin_take(app *a)
   if (aud_track_record_begin(&a->doc.tracks[target], start,
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {
+    aud_player_stop(&a->player);
     app_set_status(a, "there is already audio there - move the cursor");
     return;
   }
@@ -377,19 +398,14 @@ void app_begin_take(app *a)
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
+    aud_player_stop(&a->player);
     aud_track_record_end(&a->doc.tracks[target]);
     a->record_track = -1;
     a->record_skip = 0;
     return;
   }
 
-  /*
-   * And the project, from the cursor, so there is something to play along to.
-   * The two are started a drawn frame apart rather than on the same sample -
-   * see take/latency.h - so this is close, not sample locked.
-   */
-  if (latency > 0 && aud_player_start(&a->player, &a->doc, at, aud_doc_end(&a->doc),
-                                      a->cfg.monitor_device) == 0)
+  if (latency > 0)
   {
     app_set_status(a, "overdubbing %.50s (%.0f ms back)", aud_path_basename(path),
                    1000.0 * (double)latency / aud_engine_rate(a->engine));

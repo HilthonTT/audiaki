@@ -133,6 +133,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Panning a track no longer quietly turns it down in a mono mix. `track.h` said
   pan was ignored on a mono output; the mixer applied the left leg of it anyway.
 
+- A take no longer starts before the line it was asked to start on. The overdub
+  latency correction was applied whenever the project had any audio in it at
+  all, rather than when something was actually being played along to - so
+  recording from past the end of the existing material, where playback has
+  nothing to play and never starts, still shifted the take back by the whole
+  estimated round trip. Placement now follows whether playback started.
+
+- That estimate was also about four times too large. It took the capture side's
+  whole ring as the delay, when the capture thread drains it continuously one
+  period at a time and so is a period behind, not a buffer. On the defaults it
+  came to 128 ms where about 58 ms is the honest guess.
+
 - The playhead was never drawn. The timeline takes a playhead position and
   whether anything is running, and the window was handing it the cursor and a
   hard-coded zero - so playback scrolled the view along with nothing on screen

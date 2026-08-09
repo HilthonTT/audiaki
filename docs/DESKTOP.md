@@ -197,12 +197,20 @@ record over it. That is what **Overdub** is, and it is on by default; turn it of
 to record a second take in silence.
 
 Playing along to something means hearing it first, and hearing it costs time —
-the output holds a buffer, then the input holds another. So what you played in
-response to a beat does not arrive labelled with that beat; it arrives a round
-trip late. The window corrects for it by placing the take a round trip earlier
-than you pressed the button, because that is when the sound was actually made.
+the output holds a buffer, then the capture side hands over a period at a time.
+So what you played in response to a beat does not arrive labelled with that
+beat; it arrives a round trip late. The window corrects for it by placing the
+take a round trip earlier than you pressed the button, because that is when the
+sound was actually made.
 
-The correction is estimated from the two buffers, which is a starting point and
+**That only happens when there is something to play along to.** Recording from
+past the end of the project, with Overdub off, or with no output to play
+through, there is nothing to be late against — so the take starts exactly on the
+line you put it on, which is what you asked for. A correction is a guess about a
+delay, and guessing when nothing was played would move the take off the line for
+no reason.
+
+The correction is estimated from the two queues, which is a starting point and
 not a measurement: the converters, the driver and the interface all add delay
 that nothing here can see. If your overdubs land consistently late or early,
 measure it — play a click through the output into the input and see how far off

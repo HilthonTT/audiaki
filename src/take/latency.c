@@ -5,8 +5,8 @@ uint64_t aud_latency_estimate(unsigned long capture_frames, unsigned long playba
 {
   /*
    * The two queues in series. A frame waits in the playback buffer on its way
-   * out and in the capture buffer on its way back, so the round trip is their
-   * sum rather than either one.
+   * out and in the capture side's period on its way back, so the round trip is
+   * their sum rather than either one.
    */
   return (uint64_t)capture_frames + (uint64_t)playback_frames;
 }

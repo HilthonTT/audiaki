@@ -617,7 +617,7 @@ aud_format aud_engine_format(const aud_engine *e)
 
 unsigned long aud_engine_capture_frames(const aud_engine *e)
 {
-  return e != NULL ? e->dev.buffer_frames : 0;
+  return e != NULL ? e->dev.period_frames : 0;
 }
 
 int aud_engine_start(aud_engine *e, const char *path, int overwrite)

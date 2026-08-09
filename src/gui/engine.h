@@ -101,9 +101,15 @@ unsigned aud_engine_channels(const aud_engine *e);
 aud_format aud_engine_format(const aud_engine *e);
 
 /*
- * Frames the capture side holds before they reach the program: half of what an
- * overdub has to be shifted back by. See take/latency.h for the other half and
- * for what is done with the sum.
+ * How far behind the moment a take begins: half of what an overdub has to be
+ * shifted back by. See take/latency.h for the other half and for what is done
+ * with the sum.
+ *
+ * The period, not the buffer. The capture thread drains continuously, one
+ * period at a time, so the ring never fills and the oldest frame it hands over
+ * is one period old rather than a whole buffer old. Taking the buffer would
+ * over-correct by however many periods are in it, which on the defaults is four
+ * times too far.
  */
 unsigned long aud_engine_capture_frames(const aud_engine *e);
 
