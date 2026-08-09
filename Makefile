@@ -7,6 +7,9 @@
 #   make test       build and run the unit tests (no ALSA required)
 #   make check      tests, a clang-format style check and the completions
 #   make install    install into $(PREFIX) (default /usr/local)
+#
+#   make HOTRELOAD=1 gui   build/hot/audiaki-gui, which reloads its own code
+#                          on F5 without losing the session; see CONTRIBUTING.md
 
 PROJECT   := audiaki
 VERSION   := $(shell sed -n 's/^\#define AUDIAKI_VERSION "\(.*\)".*/\1/p' src/version.h)
@@ -28,7 +31,14 @@ BASHCOMPDIR ?= $(PREFIX)/share/bash-completion/completions
 ZSHCOMPDIR  ?= $(PREFIX)/share/zsh/site-functions
 FISHCOMPDIR ?= $(PREFIX)/share/fish/vendor_completions.d
 
-BUILD_DIR ?= build
+# HOTRELOAD=1 builds the window as a shell plus a library it can load again
+# while it is running; see CONTRIBUTING.md and src/hotreload/plug.h. It is a
+# development build - it wants a second file beside the binary, and it is not
+# what `make install` installs - so it gets a build directory of its own rather
+# than sharing objects that were compiled with different flags.
+HOTRELOAD ?= 0
+
+BUILD_DIR ?= $(if $(filter 1,$(HOTRELOAD)),build/hot,build)
 OBJ_DIR   := $(BUILD_DIR)/obj
 TEST_DIR  := $(BUILD_DIR)/tests
 BIN       := $(BUILD_DIR)/$(PROJECT)
@@ -47,6 +57,9 @@ WARNINGS += -Werror
 endif
 
 CPPFLAGS  += -D_POSIX_C_SOURCE=200809L -Isrc
+ifeq ($(HOTRELOAD),1)
+CPPFLAGS  += -DAUDIAKI_HOTRELOAD
+endif
 CFLAGS    ?= $(OPTFLAGS) -g
 CFLAGS    += -std=c11 $(WARNINGS) $(SANITIZE) -MMD -MP
 LDFLAGS   += $(SANITIZE)
@@ -134,6 +147,20 @@ GUI_BIN   := $(BUILD_DIR)/$(PROJECT)-gui
 GUI_SRCS  := $(sort $(wildcard src/gui/*.c))
 GUI_OBJS  := $(GUI_SRCS:src/gui/%.c=$(OBJ_DIR)/gui/%.o)
 
+# The shell, when there is one to be apart from: the window and the run loop,
+# and the capture thread - unloading the code a running thread is executing is
+# not something to find out about at 3 am. Everything else in src/gui goes into
+# the library the shell loads. See src/hotreload/plug.h.
+GUI_SHELL_SRCS := src/gui/main.c src/gui/engine.c src/hotreload/hotreload.c
+GUI_PLUG_SRCS  := $(filter-out $(GUI_SHELL_SRCS),$(GUI_SRCS))
+GUI_SHELL_OBJS := $(GUI_SHELL_SRCS:src/%.c=$(OBJ_DIR)/%.o)
+
+# The library is dlopen()ed, so its objects want -fPIC and therefore a tree of
+# their own; the shell's do not, and are built by the ordinary rules.
+PIC_DIR   := $(OBJ_DIR)/pic
+GUI_PLUG_OBJS := $(GUI_PLUG_SRCS:src/gui/%.c=$(PIC_DIR)/gui/%.o)
+GUI_PLUG_LIB  := $(BUILD_DIR)/lib$(PROJECT)-gui.so
+
 # The core the window shares with the CLI: all of src/backend, and the layers
 # under it that the window actually reaches. Not src/term (the window draws its
 # own meter), src/cli or src/cmd (it parses its own, much smaller, argv and
@@ -155,8 +182,8 @@ GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
 GUI_CORE_OBJS := $(GUI_CORE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 GUI_CPPFLAGS := -I$(RAYLIB_SRC)
-GUI_LDLIBS   := $(RAYLIB_LIB) $(ALSA_LIBS) $(PIPEWIRE_LIBS) \
-                -lGL -lX11 -lm -lpthread -ldl -lrt
+GUI_SYS_LIBS := $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lGL -lX11 -lm -lpthread -ldl -lrt
+GUI_LDLIBS   := $(RAYLIB_LIB) $(GUI_SYS_LIBS)
 
 # An uninitialised submodule is not an error: the CLI still builds, and `make`
 # just quietly stops shipping a window.
@@ -188,7 +215,8 @@ else
 GUI_STATUS := run 'git submodule update --init --depth 1' to enable
 endif
 
-DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(TEST_BINS:=.d)
+DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(GUI_SHELL_OBJS:.o=.d) \
+             $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d)
 
 .PHONY: all gui gui-skipped release debug test check check-completions format \
         format-check install uninstall clean clean-raylib help
@@ -247,8 +275,39 @@ $(RAYLIB_LIB):
 	  exit 1; }
 	$(MAKE) -C $(RAYLIB_SRC) PLATFORM=$(RAYLIB_PLATFORM) RAYLIB_LIBTYPE=STATIC
 
+ifneq ($(HOTRELOAD),1)
+
 $(GUI_BIN): $(GUI_OBJS) $(GUI_CORE_OBJS) $(RAYLIB_LIB) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(GUI_OBJS) $(GUI_CORE_OBJS) $(GUI_LDLIBS)
+
+else
+
+# The reloadable build.
+#
+# raylib and the core come in whole, and -rdynamic exports the lot: the library
+# is linked against nothing and resolves every call it makes - DrawRectangle,
+# aud_engine_read_take, malloc - against this binary when it is loaded. That is
+# what keeps there being exactly one of everything that matters. Two copies of
+# raylib would mean two copies of the window handle, and two copies of the
+# engine would mean two capture threads fighting over one device.
+#
+# --whole-archive because libraylib.a is an archive: without it the linker
+# would take only the parts the shell itself calls, and the library would come
+# up missing the several hundred it draws with.
+$(GUI_BIN): $(GUI_SHELL_OBJS) $(GUI_CORE_OBJS) $(RAYLIB_LIB) $(GUI_PLUG_LIB) \
+            | $(BUILD_DIR)
+	$(CC) $(LDFLAGS) -rdynamic -o $@ $(GUI_SHELL_OBJS) $(GUI_CORE_OBJS) \
+	      -Wl,--whole-archive $(RAYLIB_LIB) -Wl,--no-whole-archive $(GUI_SYS_LIBS)
+
+$(GUI_PLUG_LIB): $(GUI_PLUG_OBJS) | $(BUILD_DIR)
+	$(CC) $(LDFLAGS) -shared -o $@ $(GUI_PLUG_OBJS) -lm
+
+$(PIC_DIR)/gui/%.o: src/gui/%.c
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) -fPIC \
+	      $(filter-out -Wpedantic,$(CFLAGS)) -c -o $@ $<
+
+endif
 
 # raylib.h trips -Wpedantic in strict ISO mode, so the GUI objects are built
 # without it. Everything audiaki itself writes still gets the full set.
@@ -283,7 +342,7 @@ check: all test format-check check-completions
 
 # -- style -------------------------------------------------------------------
 
-STYLE_FILES := $(wildcard $(foreach d,$(SRC_DIRS) src/gui,$(d)/*.c $(d)/*.h) \
+STYLE_FILES := $(wildcard $(foreach d,$(SRC_DIRS) src/gui src/hotreload,$(d)/*.c $(d)/*.h) \
                           tests/*.h tests/*/*.c)
 
 format:
@@ -298,6 +357,11 @@ APPDIR    ?= $(PREFIX)/share/applications
 ICONDIR   ?= $(PREFIX)/share/icons/hicolor/256x256/apps
 
 install: all
+ifeq ($(HOTRELOAD),1)
+	@echo "audiaki: HOTRELOAD=1 builds a window that loads a library from beside"
+	@echo "    itself; install a normal build instead:  make install"
+	@exit 1
+endif
 	$(INSTALL) -d $(DESTDIR)$(BINDIR) $(DESTDIR)$(MANDIR)
 	$(INSTALL) -m 0755 $(BIN) $(DESTDIR)$(BINDIR)/$(PROJECT)
 	$(INSTALL) -m 0644 docs/$(PROJECT).1 $(DESTDIR)$(MANDIR)/$(PROJECT).1
@@ -351,6 +415,7 @@ help:
 	@echo "targets: all gui debug release test check check-completions format"
 	@echo "         format-check install uninstall clean clean-raylib"
 	@echo "vars:    PREFIX=$(PREFIX) CC=$(CC) STRICT=0|1 BUILD_DIR=$(BUILD_DIR)"
+	@echo "         HOTRELOAD=1 builds $(GUI_BIN) with F5 reloading its own code"
 	@echo "gui:     $(GUI_STATUS)"
 	@echo "pipewire: $(BACKEND_STATUS)"
 

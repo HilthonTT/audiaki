@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The window can be rebuilt while it is running. `make HOTRELOAD=1 gui` builds
+  it as a shell plus a library it loads, and F5 loads the library again: the
+  device stays open, the timeline stays as it is, and a take that is recording
+  keeps recording while the code drawing it is replaced underneath. After
+  tsoding's musializer, which is also where the visualiser came from.
+
+  A development build only — `make` and `make install` are unchanged, and ship
+  one binary with no `dlopen` in it. A build that does not compile costs a line
+  on the terminal rather than the session, and a change to the shape of the
+  state itself is refused with a message saying to restart rather than read the
+  session through the wrong map of it. `src/gui/main.c` is now the shell and
+  the app's own lifecycle has moved to `src/gui/plug.c`; see
+  [DESIGN.md](DESIGN.md#reloading-the-window).
+
 - Sessions. What was done to a set of takes - the cuts, the levels, which clip
   sits where - is now something that can be written down and opened again.
   `ctrl+S` in the window saves it to a `.aki` file, `ctrl+O` opens one, and

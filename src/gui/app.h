@@ -7,17 +7,23 @@
  * it to, because `app` is genuinely one object and pretending otherwise would
  * mean threading a dozen pointers through the drawing:
  *
- *   main.c     the run loop, the engine's lifecycle, and the transport actions
+ *   main.c     the shell: the window, the run loop, and the hot reload key
+ *   plug.c     the app's lifecycle, the engine's, and the transport actions
  *   args.c     argv and the help text
  *   devices.c  the dropdown's list, and keeping it level with the hardware
  *   save.c     where a finished take goes, and the dialog that asks
  *   screen.c   every pixel of the chrome
  *   timeline.c every pixel of the tracks, and what a pointer does to them
  *
- * screen.c calls the transport actions and main.c calls the drawing, which is
+ * screen.c calls the transport actions and plug.c calls the drawing, which is
  * the one cycle here and the usual one for a window: what is on screen is a
  * function of the state, and clicking what is on screen changes it. save.c is
  * both at once for the one dialog it owns, which is why it is its own file.
+ *
+ * main.c is apart from all of it: in a development build everything else here
+ * is a library it loads, and can load again while the window is open. That is
+ * also why this struct is allocated rather than static, and why nothing in it
+ * may point at anything in the code - see hotreload/plug.h.
  */
 #ifndef AUDIAKI_GUI_APP_H
 #define AUDIAKI_GUI_APP_H
@@ -187,6 +193,15 @@ typedef struct
 
 typedef struct
 {
+  /*
+   * sizeof(app) as the code that allocated this saw it. First, deliberately:
+   * it is the one field a differently built copy of the window can still find,
+   * everything after it having possibly moved. A hot reload reads it to decide
+   * whether the session it is being handed was laid out by a build that agrees
+   * with it - see hotreload/plug.h.
+   */
+  size_t self_size;
+
   aud_engine *engine;
   aud_viz *viz;
   aud_engine_config cfg;

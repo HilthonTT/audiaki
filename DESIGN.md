@@ -17,6 +17,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 - [Measuring a take](#measuring-a-take)
 - [What a take carries](#what-a-take-carries)
 - [Playing one back](#playing-one-back)
+- [Reloading the window](#reloading-the-window)
 
 ## Layout
 
@@ -86,8 +87,9 @@ src/
     ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
     signals.c/.h  the shared Ctrl+C flag
   gui/          the desktop window; the only code that knows raylib exists
-    app.h         the state its four halves share
-    main.c        the run loop, the engine's lifecycle, the transport actions
+    app.h         the state its halves share
+    main.c        the shell: the window, the run loop, the hot reload key
+    plug.c        the app's lifecycle, the engine's, the transport actions
     args.c        argv and the help text
     devices.c     the dropdown's list, kept level with the hardware
     save.c        where a take goes, and the browser that asks - also import
@@ -98,6 +100,10 @@ src/
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
     ui.c/.h       immediate-mode buttons, slider and meter
+  hotreload/    only in a development build of the window
+    plug.h        the five calls the shell reaches the app through
+    hotreload.h   how it reaches them: directly, or through a library
+    hotreload.c   loading that library, and loading it again
 tests/          mirrors src/, so an untested layer is visible from the tree
 docs/           man page
 vendor/raylib/  submodule, only needed for the desktop app
@@ -523,3 +529,77 @@ has been handed over cuts off everything still queued — inaudible while
 monitoring, because the input is still arriving, and the last hundred
 milliseconds of the take when playing a file. Ctrl+C skips the drain, since
 stopping now is exactly what was asked for.
+
+## Reloading the window
+
+The desktop app can be rebuilt while it is running. `make HOTRELOAD=1 gui`
+produces a shell and a library beside it, and F5 in the window throws the
+library away and loads the one you have just built. Recording keeps recording;
+the timeline, the selection and the undo stack stay exactly as they were. It is
+the same trick, and largely the same shape, as tsoding's musializer, which is
+also where the visualiser came from.
+
+The split is not by subject matter but by what cannot be unmapped:
+
+| In the shell | In the library |
+| --- | --- |
+| `main.c` — the window and the run loop | everything else in `src/gui` |
+| `engine.c` — the capture thread | |
+| all of `backend`, `edit`, `take`, `media`, `util` | |
+| raylib | |
+
+A thread executing code from a library that is about to be `dlclose`d is not a
+bug that reports itself politely, so the capture thread stays in the shell. So
+does raylib, and for a sharper reason: raylib's window handle, its GL context
+and its input state are file-scope variables inside it, and a second copy of
+them would be a second window. The library is therefore linked against nothing
+at all. Every call it makes — `DrawRectangle`, `aud_engine_read_take`, `malloc`
+— is left undefined and resolved against the executable when it is loaded,
+which is what `-rdynamic` and `--whole-archive` in the Makefile are for. There
+is exactly one of everything.
+
+What crosses the line is five calls, listed once in `hotreload/plug.h` and
+expanded three ways: into typedefs, into declarations, and into the `dlsym()`
+names. `AUD_PLUG(frame)()` is a pointer through a library in a development
+build and an ordinary function call in a release one, which is the point — the
+shipped binary has no `dlopen` in it and no second file to find.
+
+### What the session has to survive
+
+The state is one heap allocation. A `static app` would be unmapped along with
+the code, so `plug.c` allocates it, `aud_plug_pre_reload()` hands the pointer
+back, and whichever library comes next takes it as its own.
+
+That leaves two ways for a reload to go wrong, and both are handled where they
+happen rather than left as folklore.
+
+The first is a pointer into the code. The state holds one — `style_labels`,
+which points at the visualiser's own names for its styles, string literals on
+pages that a reload frees. `aud_plug_post_reload()` looks them up again. It is
+the only such pointer in `app`, and the reason there is a rule that there may
+not be another: the device names, the folder listings and the status line are
+all arrays inside the state, not pointers into whoever wrote them.
+
+The second is the layout of the state itself, which is what actually bites. A
+build that lays `app` out differently sees every field of an old session
+somewhere else — silent corruption, the worst possible outcome for a
+convenience feature. So `app.self_size` is the first field of the struct, the
+one place a differently built copy can still find, and `post_reload` refuses a
+session it does not agree with and says which header must have changed. Editing
+`app.h`, `timeline.h`, `player.h` or `viz.h` means restarting; editing what the
+window draws does not.
+
+Anything the library allocated whose shape only it knows is let go in
+`pre_reload`, while the code that made it is still the code doing the letting
+go: the analyser is destroyed there and built again in `post_reload`, and a
+video render in flight is cancelled. That is what makes `viz.c` and `render.c`
+as freely editable as the drawing they serve — including their own structs,
+because nothing of theirs outlives the library that allocated it.
+
+Finally, the reload is attempted before anything is closed. The library is
+copied to a name never used before and loaded from that — `dlopen()` keys on the
+name it was given, and the linker writes a rebuilt library back over the same
+path, so opening that path again is as likely to hand back the code already
+running as the new one — and the old library is only released once the new one
+has bound every symbol it needs. A build that does not compile costs a line on
+the terminal, not the take.

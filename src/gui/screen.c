@@ -734,6 +734,10 @@ static const char *const help_keys[][2] = {
     {"ctrl+S / O", "save the session; ctrl+shift+S saves it as, ctrl+O opens"},
     {"ctrl+wheel", "zoom; shift+wheel scrolls, wheel walks the tracks"},
     {"F", "fit the selection, or the whole project"},
+#ifdef AUDIAKI_HOTRELOAD
+    /* only in a development build, which is the only place it exists */
+    {"F5", "load the window's code again, keeping this session"},
+#endif
     {"?", "this list; Esc closes it"},
 };
 

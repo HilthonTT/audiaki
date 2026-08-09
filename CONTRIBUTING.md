@@ -36,6 +36,43 @@ Useful targets:
 | `make clean` | Remove `build/`, keeping the compiled raylib |
 | `make clean-raylib` | Rebuild raylib from scratch next time; takes about a minute |
 | `make STRICT=1 ...` | Warnings become errors, as in CI |
+| `make HOTRELOAD=1 gui` | The window, rebuildable while it is running — below |
+
+## Hot reloading the window
+
+Working on the drawing means looking at it, and restarting the app to see a
+change costs the session: the device closes, the timeline empties, and whatever
+you had set up to look at has to be recorded again.
+
+`HOTRELOAD=1` splits the window into a shell and a library it loads:
+
+```sh
+make HOTRELOAD=1 gui        # -> build/hot/audiaki-gui and libaudiaki-gui.so
+./build/hot/audiaki-gui     # leave it running
+
+# in another terminal, after every edit
+make HOTRELOAD=1 gui
+```
+
+Then press <kbd>F5</kbd> in the window. It picks up the library you have just
+built without closing anything: the device stays open, the tracks stay where
+they are, and a take that is recording keeps recording while the code drawing
+it is replaced underneath.
+
+A build that does not compile costs a line on the terminal rather than the
+session — the library that is running is only let go once its replacement has
+loaded. What does need a restart is a change to the shape of the state itself:
+edit `app.h`, `timeline.h`, `player.h` or `viz.h` and the next F5 will tell you
+so and stop, rather than read the session you have through the wrong map of it.
+
+Two files are never reloaded, and changing them needs a restart too:
+`src/gui/main.c`, which is the shell, and `src/gui/engine.c`, whose capture
+thread would be executing code that had just been unmapped.
+
+This is a development build. `make` and `make install` are unchanged and
+produce a single binary with no library beside it and no `dlopen` in it; the
+design and its rules are in [DESIGN.md](DESIGN.md#reloading-the-window) and
+`src/hotreload/plug.h`.
 
 ## Before opening a pull request
 

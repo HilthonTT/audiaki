@@ -138,6 +138,8 @@ make debug      # -O0 with AddressSanitizer and UBSan
 make check      # tests plus clang-format check
 make format     # apply clang-format
 make STRICT=1   # warnings become errors, as in CI
+
+make HOTRELOAD=1 gui   # a window that reloads its own code on F5, session and all
 ```
 
 The module layout and the rule that keeps most of the tree free of any audio
