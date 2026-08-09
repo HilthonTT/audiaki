@@ -157,6 +157,57 @@ int aud_path_join(char *dst, size_t size, const char *dir, const char *name)
   return 0;
 }
 
+int aud_path_relative(char *dst, size_t size, const char *dir, const char *path)
+{
+  size_t dir_len;
+  const char *rest;
+  int written;
+
+  if (dst == NULL || size == 0 || path == NULL)
+  {
+    return -1;
+  }
+
+  if (dir == NULL || *dir == '\0')
+  {
+    dir_len = 0;
+  }
+  else
+  {
+    dir_len = strlen(dir);
+    while (dir_len > 1 && dir[dir_len - 1] == '/')
+    {
+      dir_len--;
+    }
+  }
+
+  /*
+   * Inside `dir` means sharing it as a whole path component, so "/takes2/a.wav"
+   * is not inside "/takes" - the same check aud_path_shorten() makes about a
+   * home directory, and for the same reason.
+   */
+  if (dir_len == 0 || strncmp(path, dir, dir_len) != 0 || path[dir_len] != '/' ||
+      path[dir_len + 1u] == '\0')
+  {
+    written = snprintf(NULL, 0, "%s", path);
+    if (written < 0 || (size_t)written >= size)
+    {
+      return -1;
+    }
+    snprintf(dst, size, "%s", path);
+    return 0;
+  }
+
+  rest = path + dir_len + 1u;
+  written = snprintf(NULL, 0, "%s", rest);
+  if (written < 0 || (size_t)written >= size)
+  {
+    return -1;
+  }
+  snprintf(dst, size, "%s", rest);
+  return 0;
+}
+
 int aud_path_place(char *dst, size_t size, const char *dir, const char *name)
 {
   if (name == NULL)

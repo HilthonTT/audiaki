@@ -307,10 +307,46 @@ void aud_samples_release(aud_samples *s)
     return;
   }
 
+  free(s->source);
   free(s->coarse);
   free(s->fine);
   free(s->data);
   free(s);
+}
+
+int aud_samples_set_source(aud_samples *s, const char *path)
+{
+  char *copy = NULL;
+
+  if (s == NULL)
+  {
+    return -1;
+  }
+
+  if (path != NULL && *path != '\0')
+  {
+    size_t len = strlen(path);
+
+    copy = malloc(len + 1u);
+    if (copy == NULL)
+    {
+      return -1;
+    }
+    memcpy(copy, path, len + 1u);
+  }
+
+  free(s->source);
+  s->source = copy;
+  return 0;
+}
+
+const char *aud_samples_source(const aud_samples *s)
+{
+  if (s == NULL || s->source == NULL)
+  {
+    return "";
+  }
+  return s->source;
 }
 
 size_t aud_samples_bytes(const aud_samples *s)

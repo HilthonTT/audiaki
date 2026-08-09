@@ -56,6 +56,21 @@ int aud_path_shorten(char *dst, size_t size, const char *path);
 int aud_path_join(char *dst, size_t size, const char *dir, const char *name);
 
 /*
+ * The inverse of a join: `path` written relative to `dir`, when it is inside
+ * it, and unchanged when it is not.
+ *
+ * What this is for is a project file that can be moved. A session kept in one
+ * folder - the project and the takes it refers to - should survive being copied
+ * to another disk, and it only does if the references inside it are relative.
+ * A take from somewhere else keeps its absolute path, because there is no
+ * relative name for it that would still mean the same file.
+ *
+ * No '..' is ever produced: a path merely near `dir` is left alone. Returns 0
+ * on success, -1 with dst untouched when it would not fit.
+ */
+int aud_path_relative(char *dst, size_t size, const char *dir, const char *path);
+
+/*
  * Put `name` in `dir`, unless `name` has already said where it goes.
  *
  * A name with a slash in it is a place: 'takes/riff.wav' means that folder,

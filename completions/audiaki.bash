@@ -89,6 +89,14 @@ _audiaki()
             _audiaki_files wav
             return
             ;;
+        --render)
+            _audiaki_files aki
+            return
+            ;;
+        --bits)
+            mapfile -t COMPREPLY < <(compgen -W "16 24 32" -- "$cur")
+            return
+            ;;
         # a prefix rather than a file, but it can carry a directory
         -o | --output | --take)
             _audiaki_files
@@ -119,6 +127,7 @@ _audiaki()
               --monitor --monitor-device --monitor-gain
               --click --click-beats --click-gain
               --visualize --style --size --fps --bars --tune --a4 --info --play --json
+              --render --bits
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
         return

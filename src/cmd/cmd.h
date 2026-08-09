@@ -21,6 +21,7 @@ int aud_cmd_play(const aud_options *opts);
 int aud_cmd_tune(const aud_options *opts);
 int aud_cmd_info(const aud_options *opts);
 int aud_cmd_visualize(const aud_options *opts);
+int aud_cmd_render(const aud_options *opts);
 int aud_cmd_list(const aud_options *opts);
 int aud_cmd_probe(const aud_options *opts);
 

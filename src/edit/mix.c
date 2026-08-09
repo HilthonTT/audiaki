@@ -135,6 +135,18 @@ int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t
 
     aud_track_read(t, at, m->scratch, frames);
     pan_gains(t->pan, &left, &right);
+
+    /*
+     * A mono mix has nowhere to pan to, so panning it would only turn the
+     * track down - which is what applying the left leg alone to the one
+     * channel would do. See track.h, which says pan is ignored here.
+     */
+    if (channels == 1u)
+    {
+      left = 1.0f;
+      right = 1.0f;
+    }
+
     left *= t->gain;
     right *= t->gain;
 

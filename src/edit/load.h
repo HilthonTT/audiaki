@@ -14,6 +14,17 @@
 #define AUDIAKI_EDIT_LOAD_H
 
 #include "edit/doc.h"
+#include "edit/samples.h"
+
+/*
+ * Read the whole of `path` into a block, stamped with where it came from so a
+ * project can refer to it later. `*out_rate` is the file's sample rate.
+ *
+ * Returns the block, which the caller owns one reference to, or NULL with
+ * `*why` set. Shared with the project loader, which rebuilds clips over blocks
+ * rather than making a track of each file.
+ */
+aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char **why);
 
 /*
  * Read `path` and append it to `d` as a new track named after the file.

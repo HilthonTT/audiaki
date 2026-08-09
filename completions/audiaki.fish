@@ -56,6 +56,8 @@ complete -c audiaki -l a4 -d 'Tuner reference pitch in Hz' -x
 
 complete -c audiaki -l info -d 'Report levels and clipping for one or more WAVs and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l play -d 'Play a WAV through the output and exit' -r -a '(__fish_complete_suffix .wav)'
+complete -c audiaki -l render -d 'Mix a saved project down to a WAV and exit' -r -a '(__fish_complete_suffix .aki)'
+complete -c audiaki -l bits -d 'Bit depth --render writes' -x -a '16 24 32'
 complete -c audiaki -l json -d 'Machine readable --list, --probe and --info'
 complete -c audiaki -s y -l force -d 'Overwrite the output file if it exists'
 complete -c audiaki -s q -l quiet -d 'Errors only'

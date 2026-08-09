@@ -76,6 +76,8 @@ enum
   OPT_DIR,
   OPT_PROMPT,
   OPT_NO_PROMPT,
+  OPT_RENDER,
+  OPT_BITS,
 };
 
 static const struct option long_options[] = {
@@ -113,6 +115,8 @@ static const struct option long_options[] = {
     {"style", required_argument, NULL, OPT_STYLE},
     {"info", required_argument, NULL, OPT_INFO},
     {"play", required_argument, NULL, OPT_PLAY},
+    {"render", required_argument, NULL, OPT_RENDER},
+    {"bits", required_argument, NULL, OPT_BITS},
     {"take", required_argument, NULL, OPT_TAKE},
     {"preroll", required_argument, NULL, OPT_PREROLL},
     {"pre-roll", required_argument, NULL, OPT_PREROLL},
@@ -431,6 +435,23 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       opts->command = AUD_CMD_PLAY;
       opts->input_path = optarg;
       break;
+    case OPT_RENDER:
+      opts->command = AUD_CMD_RENDER;
+      opts->input_path = optarg;
+      break;
+    case OPT_BITS:
+      /*
+       * The three depths edit/export.c writes. Not a free number: 8 bit WAV is
+       * unsigned and 64 bit float is not what a mix is handed to anyone as.
+       */
+      if (parse_uint(optarg, 16u, 32u, &opts->export_bits) != 0 ||
+          (opts->export_bits != 16u && opts->export_bits != 24u &&
+           opts->export_bits != 32u))
+      {
+        bad_value("--bits", optarg, "16, 24 or 32");
+        return CLI_EXIT_USAGE;
+      }
+      break;
     case OPT_TAKE:
       opts->take_prefix = optarg;
       break;
@@ -639,6 +660,29 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       return CLI_EXIT_USAGE;
     }
     return 0;
+  }
+
+  /*
+   * A mix is written, so -o names it and everything left over is a mistake.
+   * --bits belongs to this one alone: a take is written at whatever the device
+   * gave, and there is nothing to choose.
+   */
+  if (opts->command == AUD_CMD_RENDER)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (the project comes from --render, "
+                "the mix from -o)",
+                argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
+  }
+
+  if (opts->export_bits != 0)
+  {
+    aud_error("--bits only applies to --render");
+    return CLI_EXIT_USAGE;
   }
 
   if (opts->command == AUD_CMD_VISUALIZE)

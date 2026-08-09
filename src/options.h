@@ -26,6 +26,7 @@ typedef enum
   AUD_CMD_INFO,
   AUD_CMD_TUNE,
   AUD_CMD_PLAY,
+  AUD_CMD_RENDER, /* mix a saved project down to a WAV; see edit/project.h */
   AUD_CMD_HELP,
   AUD_CMD_VERSION,
 } aud_command;
@@ -90,6 +91,7 @@ typedef struct
   unsigned viz_bars;
   aud_viz_style viz_style;
   double a4_hz;             /* --tune's reference pitch */
+  unsigned export_bits;     /* bit depth --render writes; 0 takes the default */
   int json;                 /* machine readable output for --list, --probe and --info */
   aud_backend_kind backend; /* which audio system to talk to */
   aud_log_level log_level;

@@ -57,6 +57,8 @@ _audiaki() {
     '--a4[tuner reference pitch in Hz]:hz:'
     '--info[report levels and clipping for one or more WAVs and exit]:wav file:_files -g "*.wav(-.)"'
     '--play[play a WAV through the output and exit]:wav file:_files -g "*.wav(-.)"'
+    '--render[mix a saved project down to a WAV and exit]:project:_files -g "*.aki(-.)"'
+    '--bits[bit depth --render writes]:depth:(16 24 32)'
     '--json[machine readable --list, --probe and --info]'
     '(-y --force)'{-y,--force}'[overwrite the output file if it exists]'
     '(-q --quiet -v --verbose)'{-q,--quiet}'[errors only]'

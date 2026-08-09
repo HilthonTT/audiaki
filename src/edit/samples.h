@@ -91,6 +91,17 @@ typedef struct
    * point, which is at most one bucket of them.
    */
   size_t indexed;
+
+  /*
+   * The file this block was read from, or NULL when it came from nowhere a
+   * reader could go back to.
+   *
+   * A project file is a list of clips, and a clip is a window onto a block -
+   * so saving one is only possible if the block can be found again. Every
+   * block in practice has a home: an import has the file it came from, and a
+   * take has the WAV the recorder wrote beside it. See project.h.
+   */
+  char *source;
 } aud_samples;
 
 /*
@@ -127,6 +138,16 @@ void aud_samples_range(const aud_samples *s, unsigned ch, size_t from, size_t to
 
 /* Bytes this block occupies, its index included. For the memory warning. */
 size_t aud_samples_bytes(const aud_samples *s);
+
+/*
+ * Say where this block came from, so a project can refer to it rather than
+ * copy it. A NULL or empty path clears it. Returns 0, or -1 out of memory, in
+ * which case the block simply goes on having no source.
+ */
+int aud_samples_set_source(aud_samples *s, const char *path);
+
+/* Where it came from, or "" when nothing said. Never NULL, so it prints. */
+const char *aud_samples_source(const aud_samples *s);
 
 /* -- blocks still being recorded into --------------------------------------- */
 

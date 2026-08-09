@@ -70,6 +70,8 @@ int main(int argc, char *argv[])
     return aud_cmd_probe(&opts);
   case AUD_CMD_VISUALIZE:
     return aud_cmd_visualize(&opts);
+  case AUD_CMD_RENDER:
+    return aud_cmd_render(&opts);
   case AUD_CMD_INFO:
     return aud_cmd_info(&opts);
   case AUD_CMD_PLAY:

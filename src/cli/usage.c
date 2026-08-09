@@ -13,6 +13,7 @@
 #include "audio/tuner.h"
 #include "backend/device.h"
 #include "backend/monitor.h"
+#include "edit/project.h"
 #include "media/visualize.h"
 #include "take/meta.h"
 #include "version.h"
@@ -24,6 +25,8 @@ void cli_print_usage(FILE *out)
           "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
           "       " AUDIAKI_NAME " --info <input.wav>\n"
           "       " AUDIAKI_NAME " --play <input.wav> [-D output]\n"
+          "       " AUDIAKI_NAME " --render <project" AUD_PROJECT_EXT
+          "> [-o mix.wav]\n"
           "       " AUDIAKI_NAME " --tune [-D device]\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
@@ -110,6 +113,12 @@ void cli_print_usage(FILE *out)
           "      --info FILE       report levels and clipping for FILE and exit;\n"
           "                        further files may follow, and are reported as\n"
           "                        one row each\n"
+          "      --render FILE     mix a project " AUDIAKI_NAME
+          "-gui saved down to a\n"
+          "                        WAV and exit; -o names it, and defaults to\n"
+          "                        the project's own name with .wav on it\n"
+          "      --bits N          bit depth --render writes: 16, 24 or 32\n"
+          "                        (default: 24)\n"
           "      --json            machine readable --list, --probe and --info\n"
           "  -y, --force           overwrite the output file if it exists\n"
           "  -q, --quiet           errors only\n"
@@ -140,6 +149,8 @@ void cli_print_usage(FILE *out)
           "  " AUDIAKI_NAME " -D plughw:CARD=Box,DEV=0 -r 48000 take03.wav\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --size 1080p\n"
           "  " AUDIAKI_NAME " --visualize take01.wav --style waveform\n"
+          "  " AUDIAKI_NAME " --render session" AUD_PROJECT_EXT
+          "     mix a session down\n"
           "\n"
           "Rendering a video needs ffmpeg(1) on PATH. Recording does not.\n"
           "\n"

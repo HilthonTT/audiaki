@@ -39,6 +39,17 @@
  * `audio` is shared and never written to. `offset` and `frames` say which part
  * of it this clip shows, and `start` says where that part sits. Two clips over
  * the same block, with adjoining windows, are what a split leaves behind.
+ *
+ * The fades are the one thing here that changes what a sample reads as, and
+ * they are still not written into the block: they are lengths, applied on the
+ * way out by aud_track_read(). A cut across a note clicks without them, and a
+ * fade that had to be baked in would cost the block its immutability and undo
+ * its affordability with it.
+ *
+ * Both are clamped to `frames` and may overlap on a short clip, where the two
+ * ramps simply multiply. A split inside a fade truncates it rather than
+ * carrying a half-finished ramp into the second half, which the model has no
+ * way to say.
  */
 typedef struct
 {
@@ -46,6 +57,8 @@ typedef struct
   size_t offset; /* first frame of `audio` shown */
   size_t frames; /* how many, always more than none */
   uint64_t start;
+  size_t fade_in;  /* frames of ramp up from silence at the clip's head */
+  size_t fade_out; /* frames of ramp down to silence at its tail */
 } aud_clip;
 
 typedef struct
@@ -122,6 +135,32 @@ void aud_track_read(const aud_track *t, uint64_t at, float *interleaved, size_t 
  * placement would overlap a clip already there.
  */
 int aud_track_add(aud_track *t, aud_samples *audio, uint64_t start);
+
+/*
+ * The general form of the above: place an arbitrary window of `audio`, with
+ * fades, rather than all of it. Takes a reference. Used by the project loader,
+ * which is rebuilding clips that were saved rather than laying down new ones.
+ *
+ * Returns 0, or -1 when the window is outside the block, the placement would
+ * overlap, or the list could not grow.
+ */
+int aud_track_place(aud_track *t, aud_samples *audio, size_t offset, size_t frames,
+                    uint64_t start, size_t fade_in, size_t fade_out);
+
+/*
+ * Ramp the head or tail of whatever clip meets `frame` over `frames`, so a cut
+ * across a note stops clicking. `frames` of zero takes the fade off again.
+ *
+ * aud_edit_fade_in() and its pair are how the window reaches these; they split
+ * at the selection's edges first, so there is a clip boundary for the ramp to
+ * start or end at. Returns 0 when something was faded, -1 when nothing met the
+ * frame.
+ */
+int aud_track_fade_in_at(aud_track *t, uint64_t frame, size_t frames);
+int aud_track_fade_out_at(aud_track *t, uint64_t frame, size_t frames);
+
+/* The gain a clip's fades put on one of its frames, counting from its head. */
+float aud_clip_fade_gain(const aud_clip *c, size_t frame);
 
 /*
  * Cut any clip that straddles `frame` into two adjoining clips over the same
