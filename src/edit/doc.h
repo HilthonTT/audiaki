@@ -105,6 +105,14 @@ void aud_doc_set_cursor(aud_doc *d, uint64_t frame);
 /* Select [from, to), in either order. A zero-length range is a cursor. */
 void aud_doc_select(aud_doc *d, uint64_t from, uint64_t to);
 
+/*
+ * The same, said as an anchor and the end being moved. The cursor is left on
+ * the anchor rather than on the lower of the two, which is what lets a run of
+ * keystrokes go on growing the selection from the end it started at - and lets
+ * the next one tell which end that was.
+ */
+void aud_doc_select_from(aud_doc *d, uint64_t anchor, uint64_t edge);
+
 /* Non-zero when the selection has any length to it. */
 int aud_doc_has_range(const aud_doc *d);
 

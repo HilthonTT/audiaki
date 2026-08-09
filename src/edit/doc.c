@@ -217,6 +217,19 @@ void aud_doc_select(aud_doc *d, uint64_t from, uint64_t to)
   d->dirty = 1;
 }
 
+void aud_doc_select_from(aud_doc *d, uint64_t anchor, uint64_t edge)
+{
+  if (d == NULL)
+  {
+    return;
+  }
+
+  d->sel_start = anchor < edge ? anchor : edge;
+  d->sel_end = anchor < edge ? edge : anchor;
+  d->cursor = anchor;
+  d->dirty = 1;
+}
+
 int aud_doc_has_range(const aud_doc *d)
 {
   return d != NULL && d->sel_end > d->sel_start;

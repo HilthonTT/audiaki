@@ -144,6 +144,19 @@ it.
 walks up and down the tracks, and `F` fits the selection or the whole project to
 the window.
 
+The arrow keys drive the same thing without the pointer. `←` and `→` move the
+cursor by about eight pixels' worth — so a nudge is the same gesture whatever
+the zoom, coarse when a whole session is on screen and sample-accurate when one
+transient is. `ctrl` steps clip edge to clip edge instead, which is where a trim
+usually wants to land; `home` and `end` go to either end of the project. Holding
+`shift` moves the far end of the selection rather than the cursor, growing it
+from wherever it started rather than from the left, and `↑`/`↓` walk the track
+selection up and down the stack, scrolling it into view.
+
+The cursor is where the next edit goes. The playhead — where the audio has
+actually got to — is drawn separately while something is playing or recording,
+so moving the cursor during playback moves one and not the other.
+
 A fade is a length on the clip rather than something written into the audio, so
 it costs nothing, undoes like everything else, and can be taken off again by
 fading a zero-length selection. The waveform follows it, so what you see is what
@@ -244,7 +257,10 @@ and stereo unless every track in it is mono.
 | `I` / `ctrl+E` | Import a WAV / export a mix |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
-| `home` | Cursor to the start |
+| `←` / `→` | Move the cursor; `ctrl` steps clip edge to clip edge |
+| `shift+←` / `→` | Extend the selection instead of moving the cursor |
+| `↑` / `↓` | Select the track above or below; `shift` adds it |
+| `home` / `end` | Cursor to the start or the end of the project |
 | `M` | Toggle monitoring |
 | `B` | Show or hide the visualiser panel |
 | `V` / `1`–`6` | The next visualiser style / one outright |

@@ -170,6 +170,40 @@ void aud_timeline_reveal(aud_timeline *tl, const aud_doc *d, uint64_t frame, flo
   }
 }
 
+static int track_row_height(const aud_track *t);
+
+void aud_timeline_reveal_track(aud_timeline *tl, const aud_doc *d, size_t index,
+                               float height)
+{
+  float top = 0.0f;
+  float own;
+
+  if (d == NULL || index >= d->count || height <= 1.0f)
+  {
+    return;
+  }
+
+  for (size_t i = 0; i < index; i++)
+  {
+    top += (float)track_row_height(&d->tracks[i]) + 1.0f;
+  }
+  own = (float)track_row_height(&d->tracks[index]) + 1.0f;
+
+  if (top < tl->rows)
+  {
+    tl->rows = top;
+  }
+  else if (top + own > tl->rows + height)
+  {
+    tl->rows = top + own - height;
+  }
+
+  if (tl->rows < 0.0f)
+  {
+    tl->rows = 0.0f;
+  }
+}
+
 /* The tick interval that leaves labels at least `least` pixels apart. */
 static double pick_step(double zoom, double least)
 {
@@ -717,6 +751,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
   {
     rows.height = 1.0f;
   }
+  tl->rows_h = rows.height;
 
   for (size_t i = 0; i < d->count; i++)
   {

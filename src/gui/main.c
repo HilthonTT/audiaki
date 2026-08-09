@@ -876,6 +876,202 @@ static void app_update_title(app *a, const aud_engine_status *st)
   }
 }
 
+/*
+ * How far one press of an arrow moves the cursor: the time a few pixels covers
+ * at the current zoom.
+ *
+ * Not a fixed number of seconds, because there is no one right answer to that.
+ * Zoomed out to a whole session an arrow should cover ground; zoomed in on a
+ * transient it should land on a sample. A distance in pixels is the same
+ * gesture at both, and is the one the eye is judging anyway.
+ */
+#define APP_NUDGE_PIXELS 8.0
+
+static uint64_t app_nudge(const app *a)
+{
+  double frames;
+
+  if (a->doc.rate == 0 || !(a->timeline.zoom > 0.0))
+  {
+    return 1;
+  }
+
+  frames = APP_NUDGE_PIXELS / a->timeline.zoom * (double)a->doc.rate;
+  return frames >= 1.0 ? (uint64_t)(frames + 0.5) : 1u;
+}
+
+/* Frames from `at`, without running off the front of the timeline. */
+static uint64_t app_step(uint64_t at, uint64_t by, int back)
+{
+  if (!back)
+  {
+    return at + by;
+  }
+  return at > by ? at - by : 0;
+}
+
+/*
+ * The end of the selection an arrow is moving. The cursor sits on the anchor -
+ * see aud_doc_select_from() - so the other end is whichever one it is not, and
+ * with no range the two are the same place.
+ */
+static uint64_t app_moving_edge(const aud_doc *d)
+{
+  if (d->sel_end <= d->sel_start)
+  {
+    return d->cursor;
+  }
+  return d->cursor == d->sel_start ? d->sel_end : d->sel_start;
+}
+
+/* The nearest clip edge either way, across the selected tracks - or all of
+ * them when none is selected, so the keys work before anything is picked. */
+static uint64_t app_clip_edge(const app *a, uint64_t from, int back)
+{
+  int only_selected = aud_doc_any_track_selected(&a->doc);
+  uint64_t best = from;
+
+  for (size_t i = 0; i < a->doc.count; i++)
+  {
+    const aud_track *t = &a->doc.tracks[i];
+    uint64_t edge;
+
+    if (only_selected && !t->selected)
+    {
+      continue;
+    }
+
+    edge = back ? aud_track_edge_before(t, from) : aud_track_edge_after(t, from);
+    if (edge == from)
+    {
+      continue; /* nothing that way on this lane */
+    }
+    if (best == from || (back ? edge > best : edge < best))
+    {
+      best = edge;
+    }
+  }
+  return best;
+}
+
+/* Move the cursor, or the end of the selection when `extend` is set. */
+static void app_move_cursor(app *a, uint64_t to, int extend)
+{
+  if (extend)
+  {
+    aud_doc_select_from(&a->doc, a->doc.cursor, to);
+  }
+  else
+  {
+    aud_doc_set_cursor(&a->doc, to);
+  }
+
+  aud_timeline_reveal(&a->timeline, &a->doc, to,
+                      (float)GetScreenWidth() - AUD_TIMELINE_PANEL_W -
+                          AUD_TIMELINE_SCALE_W);
+}
+
+/*
+ * Walk the track selection up or down the stack, so the lanes an edit reaches
+ * can be chosen without the pointer. Shift adds rather than replaces, which is
+ * what ctrl+click does with the mouse.
+ */
+static void app_step_track(app *a, int down, int add)
+{
+  size_t first = a->doc.count;
+  size_t last = a->doc.count;
+  size_t to;
+
+  if (a->doc.count == 0)
+  {
+    return;
+  }
+
+  for (size_t i = 0; i < a->doc.count; i++)
+  {
+    if (a->doc.tracks[i].selected)
+    {
+      first = first == a->doc.count ? i : first;
+      last = i;
+    }
+  }
+
+  if (first == a->doc.count)
+  {
+    to = down ? 0 : a->doc.count - 1u; /* nothing selected: start at the near end */
+  }
+  else if (down)
+  {
+    to = last + 1u < a->doc.count ? last + 1u : last;
+  }
+  else
+  {
+    to = first > 0 ? first - 1u : first;
+  }
+
+  if (!add)
+  {
+    aud_doc_select_tracks(&a->doc, 0);
+  }
+  a->doc.tracks[to].selected = 1;
+  a->doc.dirty = 1;
+
+  /* the room the lanes actually got at the last draw, which only it knows */
+  aud_timeline_reveal_track(&a->timeline, &a->doc, to, a->timeline.rows_h);
+}
+
+/*
+ * Everything the arrow keys do. Left and right are time - a nudge, a clip edge
+ * with ctrl, the whole project with home and end - and up and down are which
+ * lanes are selected. Shift extends the selection instead of moving the cursor,
+ * as it does in every editor with a keyboard.
+ */
+static void handle_arrows(app *a, int ctrl, int shift)
+{
+  int left = IsKeyPressed(KEY_LEFT) || IsKeyPressedRepeat(KEY_LEFT);
+  int right = IsKeyPressed(KEY_RIGHT) || IsKeyPressedRepeat(KEY_RIGHT);
+
+  if (left || right)
+  {
+    uint64_t from;
+    uint64_t to;
+
+    /*
+     * A bare arrow over a selection puts it down at the end it is heading for,
+     * as it does over selected text, rather than setting off from the far side
+     * of a range the eye is looking at the near side of.
+     */
+    if (!shift && aud_doc_has_range(&a->doc))
+    {
+      app_move_cursor(a, left ? a->doc.sel_start : a->doc.sel_end, 0);
+    }
+    else
+    {
+      from = shift ? app_moving_edge(&a->doc) : a->doc.cursor;
+      to = ctrl ? app_clip_edge(a, from, left) : app_step(from, app_nudge(a), left);
+      app_move_cursor(a, to, shift);
+    }
+  }
+
+  if (IsKeyPressed(KEY_HOME))
+  {
+    app_move_cursor(a, 0, shift);
+  }
+  if (IsKeyPressed(KEY_END))
+  {
+    app_move_cursor(a, aud_doc_end(&a->doc), shift);
+  }
+
+  if (IsKeyPressed(KEY_DOWN) || IsKeyPressedRepeat(KEY_DOWN))
+  {
+    app_step_track(a, 1, shift);
+  }
+  if (IsKeyPressed(KEY_UP) || IsKeyPressedRepeat(KEY_UP))
+  {
+    app_step_track(a, 0, shift);
+  }
+}
+
 static void handle_keys(app *a, const aud_engine_status *st)
 {
   /*
@@ -981,6 +1177,8 @@ static void handle_keys(app *a, const aud_engine_status *st)
     {
       app_open_project_dialog(a);
     }
+    /* ctrl+arrow steps between clip edges rather than by a nudge */
+    handle_arrows(a, 1, shift);
     /* the transport, where the editor's own space bar has displaced it */
     if (IsKeyPressed(KEY_SPACE))
     {
@@ -988,6 +1186,8 @@ static void handle_keys(app *a, const aud_engine_status *st)
     }
     return;
   }
+
+  handle_arrows(a, 0, IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT));
 
   /* the fades, on the bracket keys the selection edges look like */
   if (IsKeyPressed(KEY_LEFT_BRACKET))
@@ -1024,12 +1224,6 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (IsKeyPressed(KEY_R))
   {
     app_toggle_record(a, st);
-  }
-
-  if (IsKeyPressed(KEY_HOME))
-  {
-    aud_player_stop(&a->player);
-    aud_doc_set_cursor(&a->doc, 0);
   }
 
   if (IsKeyPressed(KEY_I))

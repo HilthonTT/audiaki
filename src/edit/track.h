@@ -110,6 +110,18 @@ uint64_t aud_track_end(const aud_track *t);
 int aud_track_covered(const aud_track *t, uint64_t frame);
 
 /*
+ * The nearest clip boundary strictly after or before `frame`, or `frame` itself
+ * when there is none that way.
+ *
+ * Both ends of every clip count, so a take laid down in one piece has two and a
+ * split one has four. These are the places worth landing on: the start of a
+ * take, the cut you made in it, the point where it stops. Jumping between them
+ * is how a trim gets made without the pointer.
+ */
+uint64_t aud_track_edge_after(const aud_track *t, uint64_t frame);
+uint64_t aud_track_edge_before(const aud_track *t, uint64_t frame);
+
+/*
  * Summarise channel `ch` over timeline frames [from, to) into `out`, across
  * every clip that overlaps it. A span that includes a gap takes in the silence
  * there, which is what makes a hole in a take visible rather than invisible.

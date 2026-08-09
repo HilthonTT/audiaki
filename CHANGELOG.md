@@ -86,6 +86,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   project's own rate. Files named on the command line are opened as tracks, so
   `audiaki-gui take-*.wav` opens a session.
 
+- The arrow keys, which the window did not answer to at all. `left` and `right`
+  move the cursor by a few pixels' worth of time, so a nudge is the same gesture
+  whatever the zoom - coarse over a whole session, sample-accurate over one
+  transient. `ctrl` steps clip edge to clip edge instead, which is where a trim
+  wants to land; `home` and `end` go to either end of the project.
+
+  `shift` moves the far end of the selection rather than the cursor, growing it
+  from the end it started at rather than always from the left, and `up`/`down`
+  walk the track selection up and down the stack and scroll it into view. The
+  editor is drivable from the keyboard alone now.
+
 - A two-level peak index behind each block of audio - minimum, maximum and RMS
   per 256 frames, and per 256 of those - so a waveform zoomed out to a whole
   session reads a few thousand buckets rather than a hundred million samples,
@@ -121,6 +132,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Panning a track no longer quietly turns it down in a mono mix. `track.h` said
   pan was ignored on a mono output; the mixer applied the left leg of it anyway.
+
+- The playhead was never drawn. The timeline takes a playhead position and
+  whether anything is running, and the window was handing it the cursor and a
+  hard-coded zero - so playback scrolled the view along with nothing on screen
+  to say where it had got to. It is now told where playback or the take actually
+  is, which is a different place from the cursor.
 
 ### Changed
 

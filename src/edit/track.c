@@ -275,6 +275,57 @@ int aud_track_covered(const aud_track *t, uint64_t frame)
   return i < t->count && t->clips[i].start <= frame;
 }
 
+uint64_t aud_track_edge_after(const aud_track *t, uint64_t frame)
+{
+  if (t == NULL)
+  {
+    return frame;
+  }
+
+  /* sorted and non-overlapping, so the first edge past `frame` is the answer */
+  for (size_t i = clip_at_or_after(t, frame); i < t->count; i++)
+  {
+    if (t->clips[i].start > frame)
+    {
+      return t->clips[i].start;
+    }
+    if (clip_end(&t->clips[i]) > frame)
+    {
+      return clip_end(&t->clips[i]);
+    }
+  }
+  return frame;
+}
+
+uint64_t aud_track_edge_before(const aud_track *t, uint64_t frame)
+{
+  uint64_t best = frame;
+
+  if (t == NULL || frame == 0)
+  {
+    return frame;
+  }
+
+  /* walking forward and keeping the last one under `frame`: the list is short
+   * next to the audio it describes, and this needs no second index */
+  for (size_t i = 0; i < t->count; i++)
+  {
+    uint64_t start = t->clips[i].start;
+    uint64_t end = clip_end(&t->clips[i]);
+
+    if (start >= frame)
+    {
+      break;
+    }
+    best = start;
+    if (end < frame)
+    {
+      best = end;
+    }
+  }
+  return best;
+}
+
 void aud_track_range(const aud_track *t, unsigned ch, uint64_t from, uint64_t to,
                      aud_peak *out)
 {

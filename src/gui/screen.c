@@ -723,6 +723,9 @@ static const char *const help_keys[][2] = {
     {"V", "the next visualiser style"},
     {"1 - 6", "a visualiser style outright"},
     {"drag", "select audio; ctrl+click adds a track to the selection"},
+    {"left / right", "move the cursor; ctrl steps clip to clip, shift selects"},
+    {"up / down", "the track above or below; shift adds it to the selection"},
+    {"home / end", "the start or the end of the project"},
     {"ctrl+A", "select everything"},
     {"ctrl+X / C / V", "cut, copy, paste"},
     {"[ / ]", "fade the selection in, or out"},
@@ -908,7 +911,29 @@ void app_draw_frame(app *a, const aud_engine_status *st)
                             tracks.height});
   draw_viz_panel(a, viz);
 
-  aud_timeline_draw(&a->timeline, &a->doc, ruler, tracks, a->doc.cursor, 0, !covered(a));
+  /*
+   * The cursor is where the next edit goes; the playhead is where the audio
+   * has got to. They are only the same thing when nothing is running, and the
+   * arrow keys move one without moving the other - so the timeline is told
+   * which is which rather than being handed the cursor twice.
+   */
+  {
+    uint64_t head = a->doc.cursor;
+    int running = 0;
+
+    if (a->record_track >= 0)
+    {
+      head = a->record_at + (uint64_t)(st->elapsed * a->doc.rate);
+      running = 1;
+    }
+    else if (aud_player_playing(&a->player))
+    {
+      head = aud_player_head(&a->player);
+      running = 1;
+    }
+
+    aud_timeline_draw(&a->timeline, &a->doc, ruler, tracks, head, running, !covered(a));
+  }
 
   draw_status(a, status, st);
 

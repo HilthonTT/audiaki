@@ -53,6 +53,13 @@ typedef struct
   float resize_from_y;
   int scrubbing; /* the ruler is being dragged */
 
+  /*
+   * Pixels of lane on screen, as of the last draw. Kept because the keyboard
+   * has to scroll a track into view and only the drawing knows how much room
+   * the lanes ended up with.
+   */
+  float rows_h;
+
   /* what the pointer is over, for the status line to explain */
   char hint[96];
 } aud_timeline;
@@ -80,6 +87,14 @@ void aud_timeline_fit_selection(aud_timeline *tl, const aud_doc *d, float width)
 
 /* Scroll so `frame` is visible, nudging as little as possible to get it there. */
 void aud_timeline_reveal(aud_timeline *tl, const aud_doc *d, uint64_t frame, float width);
+
+/*
+ * The same up the stack: scroll so track `index` is on screen, given `height`
+ * pixels of room for the lanes. Selecting a track with the keyboard has to
+ * bring it into view, or the selection moves somewhere you cannot see.
+ */
+void aud_timeline_reveal_track(aud_timeline *tl, const aud_doc *d, size_t index,
+                               float height);
 
 /* Seconds to a x offset within the waveform area, and back. */
 float aud_timeline_x_of(const aud_timeline *tl, double seconds);

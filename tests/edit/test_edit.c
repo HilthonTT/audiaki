@@ -102,6 +102,33 @@ TEST(a_selection_is_a_range_and_the_tracks_it_covers)
   aud_doc_free(&d);
 }
 
+TEST(an_anchored_selection_keeps_the_end_it_grew_from)
+{
+  aud_doc d;
+
+  build(&d, 1, 100);
+
+  /* growing to the right leaves the cursor on the anchor, not on the low end */
+  aud_doc_select_from(&d, 40, 70);
+  CHECK_EQ_INT((int)d.sel_start, 40);
+  CHECK_EQ_INT((int)d.sel_end, 70);
+  CHECK_EQ_INT((int)d.cursor, 40);
+
+  /* and growing to the left of the anchor is the same range the other way up,
+   * with the cursor still on the end that has not moved */
+  aud_doc_select_from(&d, 40, 10);
+  CHECK_EQ_INT((int)d.sel_start, 10);
+  CHECK_EQ_INT((int)d.sel_end, 40);
+  CHECK_EQ_INT((int)d.cursor, 40);
+
+  /* collapsed onto the anchor is a cursor again */
+  aud_doc_select_from(&d, 40, 40);
+  CHECK(!aud_doc_has_range(&d));
+  CHECK_EQ_INT((int)d.cursor, 40);
+
+  aud_doc_free(&d);
+}
+
 TEST(an_operation_with_nothing_selected_does_nothing)
 {
   aud_doc d;
@@ -468,6 +495,7 @@ int main(void)
   RUN(an_empty_project_has_nothing_to_undo);
   RUN(tracks_come_and_go_and_move);
   RUN(a_selection_is_a_range_and_the_tracks_it_covers);
+  RUN(an_anchored_selection_keeps_the_end_it_grew_from);
   RUN(an_operation_with_nothing_selected_does_nothing);
   RUN(delete_takes_the_range_out_of_every_selected_track);
   RUN(silence_leaves_the_timing_alone);

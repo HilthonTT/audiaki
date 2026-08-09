@@ -627,6 +627,70 @@ TEST(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else)
   aud_track_free(&t);
 }
 
+/* -- clip edges -------------------------------------------------------------- */
+
+TEST(the_edges_of_a_track_are_where_its_clips_begin_and_end)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 50);  /* [50, 150) */
+  aud_track_add(&t, s, 300); /* [300, 400) */
+  aud_samples_release(s);
+
+  /* forwards, from before everything and from each edge in turn */
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 0), 50);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 50), 150);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 149), 150);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 150), 300);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 300), 400);
+  /* past the last edge there is nothing, and it says so by not moving */
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 400), 400);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 9999), 9999);
+
+  /* and backwards */
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 9999), 400);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 400), 300);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 300), 150);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 151), 150);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 150), 50);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 50), 50);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 0), 0);
+
+  aud_track_free(&t);
+}
+
+TEST(a_split_adds_an_edge_to_step_to)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 0), 100); /* one clip, two edges */
+  CHECK_EQ_INT(aud_track_split(&t, 40), 0);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 0), 40); /* now three */
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 40), 100);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 100), 40);
+
+  aud_track_free(&t);
+}
+
+TEST(an_empty_track_has_nowhere_to_step_to)
+{
+  aud_track t;
+
+  aud_track_init(&t, "t", 1);
+  CHECK_EQ_INT((int)aud_track_edge_after(&t, 500), 500);
+  CHECK_EQ_INT((int)aud_track_edge_before(&t, 500), 500);
+  CHECK_EQ_INT((int)aud_track_edge_after(NULL, 7), 7);
+  CHECK_EQ_INT((int)aud_track_edge_before(NULL, 7), 7);
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -654,6 +718,9 @@ int main(void)
   RUN(tidy_will_not_join_two_clips_across_a_fade);
   RUN(a_fade_longer_than_its_clip_is_held_to_it);
   RUN(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else);
+  RUN(the_edges_of_a_track_are_where_its_clips_begin_and_end);
+  RUN(a_split_adds_an_edge_to_step_to);
+  RUN(an_empty_track_has_nowhere_to_step_to);
 
   return TEST_RESULT();
 }
