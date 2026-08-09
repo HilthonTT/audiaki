@@ -30,11 +30,12 @@ src/
     cli.c/.h      the option table and the parse loop
     usage.c       the help text and the version line
   cmd/          one file per command: options in, an exit code out
-    cmd.h         the seven entry points, and the shared capture config
+    cmd.h         the eight entry points, and the shared capture config
     record.c      capture loop: device -> repack -> WAV
     playback.c/.h what you hear while recording: the monitor and the metronome
     play.c        the --play loop: WAV -> monitor -> terminal
     tune.c        the --tune loop: device -> tuner -> terminal
+    render.c      mixing a saved session down, with no device opened
     info.c        how --info lays out one take, or a session of them
     visualize.c   naming and guarding the video the renderer writes
     devices.c     the --list table and the --probe hand-off
@@ -56,8 +57,9 @@ src/
     samples.c/.h  refcounted blocks of audio, shared and never changed
     track.c/.h    one lane: a sorted list of clips over those blocks
     doc.c/.h      the tracks, the selection, and the undo stack
-    edit.c/.h     cut, copy, paste, delete, silence, trim, split
+    edit.c/.h     cut, copy, paste, delete, silence, trim, split, fade
     mix.c/.h      what the project sounds like; playback and export share it
+    project.c/.h  a session written down: which parts of which files sit where
     load.c/.h     a WAV becomes a track
     export.c/.h   the mix, back out as a WAV
   take/         what a recording is, and what surrounds it
@@ -65,6 +67,7 @@ src/
     meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
     info.c/.h     measure a finished take: levels, clipping, noise floor
     preroll.c/.h  the seconds held before a take starts, kept bit for bit
+    latency.c/.h  where an overdub belongs, given how late it was heard
   media/        bytes on disk, and pipes to other programs
     wav.c/.h      streaming WAV writer, and a tolerant WAV reader
     canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
@@ -359,6 +362,62 @@ The one exception is the block being recorded into, which has exactly one owner
 for as long as the take lasts and so can grow without moving anything anybody
 else is holding. That is what lets the waveform appear while it is being played
 rather than when it stops.
+
+A fade is the same idea again. It is two lengths on the clip - frames of ramp at
+the head and at the tail - applied on the way out by `aud_track_read()`, not
+written into the block. Baking one in would cost the block its immutability and
+undo its affordability with it. What follows from the model is that there are no
+crossfades: clips on a lane do not overlap, and a crossfade needs two pieces of
+audio sounding at once. A split inside a ramp truncates it, because a clip can
+say "ramp up from silence" and has no way to say "carry on from half way up one
+that started in the clip before".
+
+### Writing it down
+
+A session is a list of clips, so saving one is cheap for exactly the reason
+editing is: the audio is already on disk as the takes and imports it came from,
+and the project file says which parts of which files sit where. Hundreds of
+megabytes of session writes out as a few kilobytes of text.
+
+That only works if a block can be found again, so each one carries the path it
+was read from - set by the importer, and by the window when a take stops and
+again if the dialog moves it. A block with no such path cannot be written by
+reference, and is named rather than silently dropped.
+
+Text, line-based, for the same reasons the config file is: it can be read,
+diffed, fixed by hand and put in version control. Sources under the project's
+own folder are stored relative to it, so a session folder can be copied to
+another disk and still open. A load builds the project up separately and swaps it
+in only once every source has been found, so a failed open leaves whatever was
+already on the timeline alone - and a missing take is named rather than opening
+as a silent lane, because losing audio quietly is the one failure a recorder
+must not have.
+
+Because none of that needs a device, `audiaki --render` mixes a session down
+with no sound server involved at all.
+
+### Overdubbing
+
+Playing along to what is already recorded means hearing it first, and hearing it
+costs time: the output holds a buffer before a sample is audible, and the input
+holds another before a captured sample arrives. So what was played in response to
+timeline frame N does not arrive labelled N - it arrives a round trip late, by
+the same amount every time.
+
+The fix is not to record differently but to place the result differently: the
+clip starts a round trip earlier than the button was pressed, because that is
+when the sound was made. `take/latency.h` is that arithmetic and nothing else -
+no device, no clock - so it is unit tested rather than tuned by ear. Near the
+start of the timeline, where there is not a round trip's worth of room to shift
+into, the remainder comes off the front of the take instead; those frames
+describe a moment before frame zero and there is nowhere to put them.
+
+The systematic part is what this removes. The jitter is not: playback is fed from
+the drawing loop and capture runs on its own thread, so the two start within a
+drawn frame of each other rather than on the same sample. Overdubs land close,
+not sample locked, and that is a property of having no single clock behind both
+rather than something a constant can correct. It is worth saying plainly rather
+than pretending away.
 
 ### Drawing it fast
 

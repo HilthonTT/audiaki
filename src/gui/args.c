@@ -12,6 +12,7 @@
 #include "gui/viz.h"
 
 #include "backend/backend.h"
+#include "take/latency.h"
 #include "take/preroll.h"
 #include "util/log.h"
 #include "util/parse.h"
@@ -42,6 +43,10 @@ void app_usage(FILE *out, const app *a)
           "      --video-fps N    video frame rate (default: %u)\n"
           "      --preroll SECS   keep SECS of audio while idle, so a take\n"
           "                       starts that far before Record was pressed\n"
+          "      --no-overdub     do not play the project while recording over\n"
+          "                       it; the default is to play along to it\n"
+          "      --latency MS     round-trip latency to place an overdub by\n"
+          "                       (default: estimated from the buffers)\n"
           "  -M, --monitor        start with playback monitoring on\n"
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
@@ -101,6 +106,11 @@ int app_parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "--no-dialog") == 0)
     {
       a->want_dialog = 0;
+      continue;
+    }
+    if (strcmp(arg, "--no-overdub") == 0)
+    {
+      a->overdub = 0;
       continue;
     }
 
@@ -195,6 +205,20 @@ int app_parse_args(app *a, int argc, char **argv)
       {
         aud_error("bad pre-roll '%s' (seconds, up to %.0f)", value,
                   AUD_PREROLL_MAX_SECONDS);
+        return 2;
+      }
+    }
+    /*
+     * Measured, not guessed: play a click through the output into the input
+     * and see how late it lands. The estimate from the buffers is a starting
+     * point and no more - see take/latency.h.
+     */
+    else if (strcmp(arg, "--latency") == 0)
+    {
+      if (parse_double(value, 0.0, AUD_LATENCY_MAX_MS, &a->latency_ms) != 0)
+      {
+        aud_error("bad latency '%s' (milliseconds, 0 to %.0f)", value,
+                  AUD_LATENCY_MAX_MS);
         return 2;
       }
     }

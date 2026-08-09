@@ -145,6 +145,7 @@ GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
                  src/audio/format.c src/audio/fft.c src/audio/spectrum.c \
                  src/audio/tuner.c \
                  src/take/take.c src/take/meta.c src/take/preroll.c \
+                 src/take/latency.c \
                  src/edit/samples.c src/edit/track.c src/edit/doc.c \
                  src/edit/edit.c src/edit/load.c src/edit/mix.c \
                  src/edit/export.c src/edit/project.c \

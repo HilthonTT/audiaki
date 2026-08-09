@@ -345,6 +345,63 @@ int aud_edit_duplicate(aud_doc *d)
   return 0;
 }
 
+/*
+ * Ramp the selection up from silence, or down into it.
+ *
+ * The selection says how long the fade is and which end it is at: a fade-in
+ * runs from its start, a fade-out ends at its end. The clip is split at that
+ * edge first, so there is a boundary for the ramp to begin or finish at - which
+ * is also what makes fading the middle of a take mean something.
+ */
+static int fade(aud_doc *d, int out)
+{
+  uint64_t edge;
+  size_t length;
+  int any = 0;
+
+  if (!have_work(d))
+  {
+    return -1;
+  }
+
+  edge = out ? d->sel_end : d->sel_start;
+  length = (size_t)(d->sel_end - d->sel_start);
+  aud_doc_checkpoint(d, out ? "fade out" : "fade in");
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    aud_track *t = &d->tracks[i];
+    int done;
+
+    if (!t->selected)
+    {
+      continue;
+    }
+
+    if (aud_track_split(t, edge) != 0)
+    {
+      return -1;
+    }
+
+    done = out ? aud_track_fade_out_at(t, edge, length) == 0
+               : aud_track_fade_in_at(t, edge, length) == 0;
+    any = any || done;
+  }
+
+  d->dirty = 1;
+  return any ? 0 : -1;
+}
+
+int aud_edit_fade_in(aud_doc *d)
+{
+  return fade(d, 0);
+}
+
+int aud_edit_fade_out(aud_doc *d)
+{
+  return fade(d, 1);
+}
+
 int aud_edit_remove_track(aud_doc *d, size_t index)
 {
   if (d == NULL || index >= d->count)

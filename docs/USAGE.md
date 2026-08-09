@@ -243,6 +243,10 @@ take_dir = ~/Takes
 
 # ask where to keep it afterwards: auto, yes or no
 prompt = auto
+
+# round-trip latency the window places an overdub by, in milliseconds;
+# left out, it is estimated from the buffers. See DESKTOP.md.
+latency_ms = 14
 ```
 
 `auto` is the default described above. Everything in the file is a default that
@@ -548,6 +552,23 @@ audiaki --info session-*.wav --json | jq -r '.[] | select(.clipped_samples > 0).
 `--info` over several files writes an array; over one it writes the single
 object it always did. Every report carries a `metadata` object, whose fields
 are `null` when the file said nothing about itself.
+
+## Mixing a session down
+
+The window saves what was done to a set of takes as a `.aki` session file — see
+[DESKTOP.md](DESKTOP.md#sessions). `--render` mixes one down with no window
+involved, which is what makes a session something a script can use:
+
+```sh
+audiaki --render session.aki                  # -> session.wav, 24-bit
+audiaki --render session.aki -o mix.wav --bits 16
+for s in */*.aki; do audiaki --render "$s" -y; done
+```
+
+It opens no device, so it runs over ssh, in a build, or on a machine with no
+sound server at all. A session refers to its takes rather than containing them,
+so they have to be where it says they are; if one has moved, `--render` names it
+and stops rather than writing a mix with a hole in it.
 
 ## Rendering a video
 

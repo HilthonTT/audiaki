@@ -77,6 +77,18 @@ int aud_edit_split(aud_doc *d);
 /* Copy the selection into new tracks at the bottom, at the same position. */
 int aud_edit_duplicate(aud_doc *d);
 
+/*
+ * Ramp the selection up out of silence, or down into it, on every selected
+ * track. The selection's length is the length of the fade, and which end it
+ * sits at is which of the two this is.
+ *
+ * A cut across a note clicks, and these are the answer to that. The samples are
+ * not touched: the ramp is a length on the clip, applied on the way out - see
+ * track.h. Returns 0 when anything was faded, -1 when nothing met the edge.
+ */
+int aud_edit_fade_in(aud_doc *d);
+int aud_edit_fade_out(aud_doc *d);
+
 /* Remove track `index` outright. */
 int aud_edit_remove_track(aud_doc *d, size_t index);
 

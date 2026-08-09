@@ -26,6 +26,8 @@ complete -c audiaki-gui -l dir -d 'Folder to keep takes in' -x -a '(__fish_compl
 complete -c audiaki-gui -l no-dialog -d 'Do not ask where a take should be kept when it stops'
 complete -c audiaki-gui -s s -l style -d 'Visualiser style to start on' -x -a 'bars mirror radial scope waterfall tuner'
 complete -c audiaki-gui -l preroll -d 'Keep SECS of audio while idle, so takes start earlier' -x
+complete -c audiaki-gui -l no-overdub -d 'Do not play the project while recording over it'
+complete -c audiaki-gui -l latency -d 'Round-trip latency to place an overdub by' -x
 
 complete -c audiaki-gui -s V -l video -d 'Also render an MP4 of each take'
 complete -c audiaki-gui -l video-silent -d 'Render that MP4 without the take\'s audio'

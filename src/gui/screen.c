@@ -212,6 +212,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   Rectangle stop = slot_at(r, w, 3);
   Rectangle import = slot_at(r, w, 4);
   Rectangle export_to = slot_at(r, w, 5);
+  Rectangle open_project = slot_at(r, w, 6);
+  Rectangle save_project = slot_at(r, w, 7);
 
   /*
    * Play first, because it is the one pressed most and the one the eye goes to
@@ -308,6 +310,27 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
       a->doc.count == 0 ? "nothing to export yet"
                         : "mix the project down to a WAV   ctrl+E");
 
+  /*
+   * The session itself, next to Export because both are about what leaves the
+   * window - but these two write the edits rather than the audio, and the
+   * tooltips are where that distinction is made.
+   */
+  if (aud_ui_button(open_project, "Open", AUD_UI_ACCENT, !covered(a) && !live))
+  {
+    app_open_project_dialog(a);
+  }
+  tip(a, open_project, live ? "stop the take first" : "open a saved session   ctrl+O");
+
+  if (aud_ui_button(save_project, a->project_dirty ? "Save *" : "Save", AUD_UI_ACCENT,
+                    !covered(a) && a->doc.count > 0))
+  {
+    app_save_project(a);
+  }
+  tip(a, save_project,
+      a->doc.count == 0
+          ? "nothing to save yet"
+          : "save the session - the tracks and edits, not the audio   ctrl+S");
+
   /* the capture options sit at the right hand end, away from the transport */
   {
     float slider_w = 120.0f;
@@ -317,6 +340,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
     Rectangle monitor = {slider.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
     Rectangle audio = {monitor.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
     Rectangle video = {audio.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
+    Rectangle overdub = {video.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
     int wanted = a->engine != NULL && aud_engine_monitor_wanted(a->engine);
     /*
      * Only settable between takes: the video is rendered from the finished
@@ -326,10 +350,26 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
      */
     int settable = usable && !live && !rendering;
 
-    if (video.x < import.x + import.width + SCREEN_BUTTON_GAP)
+    if (overdub.x < save_project.x + save_project.width + SCREEN_BUTTON_GAP)
     {
       return; /* too narrow a window for these; the transport comes first */
     }
+
+    /*
+     * Playing the project while recording over it. Only settable between
+     * takes, like the video options: it decides what the transport does when
+     * Record is pressed, and changing it mid-take would answer a question that
+     * has already been answered.
+     */
+    if (aud_ui_toggle(overdub, "Overdub", a->overdub, AUD_UI_OK, settable))
+    {
+      a->overdub = !a->overdub;
+    }
+    tip(a, overdub,
+        a->doc.count == 0
+            ? "nothing on the timeline to play along to yet"
+            : (settable ? "play the project while recording over it - use headphones"
+                        : "only settable between takes"));
 
     if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT, settable))
     {
@@ -383,6 +423,8 @@ static const struct
     {"Trim", APP_EDIT_TRIM, "throw away everything outside the selection"},
     {"Split", APP_EDIT_SPLIT, "cut the clips at the edges of the selection"},
     {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
+    {"Fade in", APP_EDIT_FADE_IN, "ramp the selection up out of silence   ["},
+    {"Fade out", APP_EDIT_FADE_OUT, "ramp the selection down into silence   ]"},
 };
 
 #define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
@@ -683,8 +725,10 @@ static const char *const help_keys[][2] = {
     {"drag", "select audio; ctrl+click adds a track to the selection"},
     {"ctrl+A", "select everything"},
     {"ctrl+X / C / V", "cut, copy, paste"},
+    {"[ / ]", "fade the selection in, or out"},
     {"del", "delete the selection and close the gap"},
     {"ctrl+Z", "undo; ctrl+shift+Z redoes"},
+    {"ctrl+S / O", "save the session; ctrl+shift+S saves it as, ctrl+O opens"},
     {"ctrl+wheel", "zoom; shift+wheel scrolls, wheel walks the tracks"},
     {"F", "fit the selection, or the whole project"},
     {"?", "this list; Esc closes it"},

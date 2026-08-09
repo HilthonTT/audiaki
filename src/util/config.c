@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "util/config.h"
 
+#include "take/latency.h"
 #include "util/log.h"
+#include "util/parse.h"
 #include "util/path.h"
 
 #include <stdio.h>
@@ -60,6 +62,7 @@ void aud_config_defaults(aud_config *cfg)
 
   memset(cfg, 0, sizeof(*cfg));
   cfg->prompt = AUD_PROMPT_AUTO;
+  cfg->latency_ms = -1.0; /* nothing said; work it out from the buffers */
 }
 
 const char *aud_config_prompt_name(aud_prompt_mode mode)
@@ -217,6 +220,18 @@ int aud_config_parse(aud_config *cfg, const char *text, const char *source)
       else if (aud_path_expand(cfg->take_dir, sizeof(cfg->take_dir), value) != 0)
       {
         aud_warn("%s:%u: cannot work out where '%s' is", source, line_no, value);
+        bad++;
+      }
+      continue;
+    }
+
+    if (strcmp(key, "latency_ms") == 0 || strcmp(key, "latency-ms") == 0)
+    {
+      if (parse_double(value, 0.0, AUD_LATENCY_MAX_MS, &cfg->latency_ms) != 0)
+      {
+        aud_warn("%s:%u: latency_ms is milliseconds, 0 to %.0f, not '%s'", source,
+                 line_no, AUD_LATENCY_MAX_MS, value);
+        cfg->latency_ms = -1.0;
         bad++;
       }
       continue;

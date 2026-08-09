@@ -483,6 +483,150 @@ TEST(deleting_the_clip_a_take_is_going_into_ends_the_take)
   aud_track_free(&t);
 }
 
+/* -- fades ------------------------------------------------------------------ */
+
+/* A track of one clip of `frames` frames, every sample full scale. */
+static void flat(aud_track *t, size_t frames)
+{
+  aud_samples *s = aud_samples_create(1, frames);
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    s->data[f] = 1.0f;
+  }
+  aud_samples_index(s);
+
+  aud_track_init(t, "t", 1);
+  aud_track_add(t, s, 0);
+  aud_samples_release(s);
+}
+
+TEST(a_fade_in_ramps_from_silence_to_full)
+{
+  aud_track t;
+
+  flat(&t, 200);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 0, 100), 0);
+
+  CHECK(at(&t, 0) == 0.0f); /* the first frame is silent, not nearly silent */
+  CHECK_EQ_DBL(at(&t, 25), 0.25, 1e-6);
+  CHECK_EQ_DBL(at(&t, 50), 0.50, 1e-6);
+  CHECK_EQ_DBL(at(&t, 99), 0.99, 1e-6);
+  CHECK(at(&t, 100) == 1.0f); /* past the ramp, untouched */
+  CHECK(at(&t, 199) == 1.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_fade_out_ramps_to_silence_at_the_last_frame)
+{
+  aud_track t;
+
+  flat(&t, 200);
+  CHECK_EQ_INT(aud_track_fade_out_at(&t, 200, 100), 0);
+
+  CHECK(at(&t, 99) == 1.0f);
+  CHECK_EQ_DBL(at(&t, 150), 0.49, 1e-6);
+  CHECK(at(&t, 199) == 0.0f); /* the last frame is silence */
+
+  aud_track_free(&t);
+}
+
+TEST(a_fade_shows_in_the_waveform_as_well_as_the_audio)
+{
+  aud_track t;
+  aud_peak head;
+  aud_peak body;
+
+  flat(&t, 2000);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 0, 1000), 0);
+
+  /* the summary a waveform column is drawn from follows the ramp down */
+  aud_track_range(&t, 0, 0, 100, &head);
+  aud_track_range(&t, 0, 1500, 1600, &body);
+  CHECK(head.max < 0.2f);
+  CHECK(body.max > 0.99f);
+  CHECK(head.rms < body.rms);
+
+  aud_track_free(&t);
+}
+
+TEST(fades_survive_a_split_at_each_end_they_belong_to)
+{
+  aud_track t;
+
+  flat(&t, 400);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 0, 50), 0);
+  CHECK_EQ_INT(aud_track_fade_out_at(&t, 400, 50), 0);
+
+  /* a cut in the middle, clear of both ramps */
+  CHECK_EQ_INT(aud_track_split(&t, 200), 0);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK_EQ_INT((int)t.clips[0].fade_in, 50);
+  CHECK_EQ_INT((int)t.clips[0].fade_out, 0);
+  CHECK_EQ_INT((int)t.clips[1].fade_in, 0);
+  CHECK_EQ_INT((int)t.clips[1].fade_out, 50);
+
+  /* and the audio still ramps at both outer ends */
+  CHECK(at(&t, 0) == 0.0f);
+  CHECK(at(&t, 399) == 0.0f);
+  CHECK(at(&t, 200) == 1.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(tidy_will_not_join_two_clips_across_a_fade)
+{
+  aud_track t;
+
+  flat(&t, 400);
+  CHECK_EQ_INT(aud_track_split(&t, 200), 0);
+  CHECK_EQ_INT(aud_track_fade_out_at(&t, 200, 40), 0);
+
+  /* without the fade these two would merge back into one; with it they must
+   * not, or the ramp would vanish along with the boundary it sits on */
+  aud_track_tidy(&t);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK(at(&t, 199) == 0.0f);
+
+  /* take the fade off and they join again */
+  CHECK_EQ_INT(aud_track_fade_out_at(&t, 200, 0), 0);
+  aud_track_tidy(&t);
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(at(&t, 199) == 1.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_fade_longer_than_its_clip_is_held_to_it)
+{
+  aud_track t;
+
+  flat(&t, 100);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 0, 100000), 0);
+  CHECK_EQ_INT((int)t.clips[0].fade_in, 100);
+
+  /* deleting into the clip shortens it, and the ramp comes with it */
+  CHECK_EQ_INT(aud_track_delete(&t, 60, 100, 0), 0);
+  CHECK_EQ_INT((int)t.clips[0].frames, 60);
+  CHECK(t.clips[0].fade_in <= t.clips[0].frames);
+
+  aud_track_free(&t);
+}
+
+TEST(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else)
+{
+  aud_track t;
+
+  flat(&t, 200);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 100, 20), -1); /* mid-clip, no boundary */
+  CHECK_EQ_INT(aud_track_fade_out_at(&t, 100, 20), -1);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 500, 20), -1); /* past the end */
+  CHECK(at(&t, 0) == 1.0f);                            /* nothing happened */
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -503,6 +647,13 @@ int main(void)
   RUN(a_mono_block_on_a_stereo_track_does_not_read_past_its_frame);
   RUN(an_edit_ahead_of_a_take_leaves_the_take_where_it_is);
   RUN(deleting_the_clip_a_take_is_going_into_ends_the_take);
+  RUN(a_fade_in_ramps_from_silence_to_full);
+  RUN(a_fade_out_ramps_to_silence_at_the_last_frame);
+  RUN(a_fade_shows_in_the_waveform_as_well_as_the_audio);
+  RUN(fades_survive_a_split_at_each_end_they_belong_to);
+  RUN(tidy_will_not_join_two_clips_across_a_fade);
+  RUN(a_fade_longer_than_its_clip_is_held_to_it);
+  RUN(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else);
 
   return TEST_RESULT();
 }

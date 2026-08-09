@@ -46,6 +46,15 @@ typedef struct
    */
   char take_dir[AUD_PATH_MAX];
   aud_prompt_mode prompt;
+  /*
+   * Round-trip latency in milliseconds, for placing an overdub - see
+   * take/latency.h. Negative means nothing was said, and it is worked out from
+   * the buffers instead.
+   *
+   * Worth keeping in a file rather than typing: it is a property of the
+   * interface and the machine, so it is measured once and true from then on.
+   */
+  double latency_ms;
 } aud_config;
 
 /* The state of a config file that does not exist. */

@@ -142,10 +142,16 @@ typedef enum
 /* Which question the browser is asking. */
 typedef enum
 {
-  APP_SAVE_MODE_KEEP = 0, /* where should this finished take go? */
-  APP_SAVE_MODE_OPEN,     /* which file should come in as a track? */
-  APP_SAVE_MODE_EXPORT,   /* where should the mixed-down project be written? */
+  APP_SAVE_MODE_KEEP = 0,     /* where should this finished take go? */
+  APP_SAVE_MODE_OPEN,         /* which file should come in as a track? */
+  APP_SAVE_MODE_EXPORT,       /* where should the mixed-down project be written? */
+  APP_SAVE_MODE_PROJECT_SAVE, /* where should the session itself be written? */
+  APP_SAVE_MODE_PROJECT_OPEN, /* which session should be opened? */
 } app_save_mode;
+
+/* Whether `mode` is about a project file rather than about audio. */
+#define APP_SAVE_IS_PROJECT(mode) \
+  ((mode) == APP_SAVE_MODE_PROJECT_SAVE || (mode) == APP_SAVE_MODE_PROJECT_OPEN)
 
 typedef struct
 {
@@ -205,7 +211,29 @@ typedef struct
    * moved since, and the take belongs where it began.
    */
   long record_track;
+  /*
+   * The lane the last take landed on, kept after record_track has been let go.
+   * A take that is moved by the dialog has to have its block told where it
+   * ended up, or a project saved afterwards would point at a file that is no
+   * longer there - see edit/project.h.
+   */
+  long last_take_track;
   uint64_t record_at;
+  /*
+   * Frames of the take still to be thrown away before it starts landing on the
+   * timeline. Only ever non-zero when a take begins so near the start of the
+   * project that the latency correction cannot be a shift alone; see
+   * take/latency.h.
+   */
+  uint64_t record_skip;
+
+  /*
+   * Play the project while recording over it, and by how much to correct for
+   * having heard it late. `latency_ms` below zero means "work it out from the
+   * buffers", which is what it is until someone measures theirs.
+   */
+  int overdub;
+  double latency_ms;
   float *take_buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
   /* frames of those the current engine's channel count fits; 0 without one */
   size_t take_buf_frames;
@@ -233,6 +261,16 @@ typedef struct
    * everything after that is holding a path rather than half of one.
    */
   char take_dir[AUD_PATH_MAX];
+  /*
+   * The project file this session is being kept in, or "" when it has never
+   * been saved. `project_dirty` is whether anything has changed since it was,
+   * which is what the title bar's asterisk and the save prompt read.
+   *
+   * Distinct from aud_doc.dirty, which means "the view has not drawn this yet"
+   * and is set and cleared many times a second.
+   */
+  char project_path[AUD_PATH_MAX];
+  int project_dirty;
   /* whether stopping a take opens the dialog that asks where it should go */
   int want_dialog;
   app_save save;
@@ -357,6 +395,8 @@ typedef enum
   APP_EDIT_TRIM,
   APP_EDIT_SPLIT,
   APP_EDIT_DUPLICATE,
+  APP_EDIT_FADE_IN,
+  APP_EDIT_FADE_OUT,
   APP_EDIT_SELECT_ALL,
 } app_edit_action;
 
@@ -382,6 +422,16 @@ void app_open_dialog(app *a);
 
 /* ...and asking where the mixed-down project should be written. */
 void app_export_dialog(app *a);
+
+/*
+ * Write the session out. With a project file already named this writes it
+ * straight back; without one it asks, which is what "Save as" always does.
+ */
+void app_save_project(app *a);
+void app_save_project_as(app *a);
+
+/* Open a session, replacing whatever is on the timeline. */
+void app_open_project_dialog(app *a);
 
 /*
  * Draw the dialog and carry out what was clicked. Called from the drawing, over

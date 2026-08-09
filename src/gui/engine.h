@@ -101,6 +101,13 @@ unsigned aud_engine_channels(const aud_engine *e);
 aud_format aud_engine_format(const aud_engine *e);
 
 /*
+ * Frames the capture side holds before they reach the program: half of what an
+ * overdub has to be shifted back by. See take/latency.h for the other half and
+ * for what is done with the sum.
+ */
+unsigned long aud_engine_capture_frames(const aud_engine *e);
+
+/*
  * Begin writing a take to `path`. Refuses if a take is already open, or if the
  * file exists and `overwrite` is zero. Returns 0 on success, -1 with the reason
  * in the next status snapshot.

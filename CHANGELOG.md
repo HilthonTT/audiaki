@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Sessions. What was done to a set of takes - the cuts, the levels, which clip
+  sits where - is now something that can be written down and opened again.
+  `ctrl+S` in the window saves it to a `.aki` file, `ctrl+O` opens one, and
+  `audiaki-gui session.aki` opens one at startup.
+
+  A session refers to its takes rather than containing them, so it is a few
+  kilobytes of readable text whatever it holds, and it can be opened in an
+  editor and fixed by hand. Takes kept beside it are referred to relatively, so
+  a session folder can be copied to another disk and still open; a take that
+  has moved is named rather than opening as a silent lane. A load that fails
+  leaves the timeline it was going to replace alone.
+
+  Closing the window with unsaved edits writes them out rather than dropping
+  them - back to the session file, or to `recovered.aki` beside the takes.
+
+- `audiaki --render session.aki -o mix.wav` mixes a session down with no window
+  involved, at whatever `--bits` asks for. It opens no device, so it runs over
+  ssh, in a build, or on a machine with no sound server - which is what makes a
+  session something a script can use.
+
+- Fades. `[` and `]`, or the two new buttons, ramp the selection up out of
+  silence or down into it, so a cut across a note stops clicking. A fade is a
+  length on the clip rather than something written into the audio, so it costs
+  nothing, undoes like every other edit, and the waveform is drawn through it.
+
+  No crossfades: clips on a lane do not overlap, which is the invariant the
+  editor is built on, and a crossfade needs two pieces of audio sounding at
+  once.
+
+- Overdubbing. Pressing Record with something already on the timeline plays it
+  while the take is recorded over it. On by default; **Overdub**, or
+  `--no-overdub`, turns it off.
+
+  Playing along to something means hearing it late - the output holds a buffer,
+  then the input holds another - so the take is placed a round trip earlier than
+  Record was pressed, because that is when the sound was made. The correction is
+  estimated from the two buffers, which is a starting point and not a
+  measurement; `--latency MS` and `latency_ms` in the config file are where a
+  measured one goes. Jitter is not corrected for: playback is fed from the
+  drawing loop and capture runs on its own thread, so the two start within a
+  drawn frame of each other rather than on the same sample.
+
 - `audiaki-gui` is a multi-track recorder and editor. It records onto a
   timeline, draws the waveform while you are playing rather than when you have
   stopped, plays the result back, cuts it about, and writes a mix out again.
@@ -48,6 +90,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per 256 frames, and per 256 of those - so a waveform zoomed out to a whole
   session reads a few thousand buckets rather than a hundred million samples,
   and one being recorded is indexed as it arrives.
+
+### Fixed
+
+- A heap use-after-free in **Copy to**: the new track's name was read out of the
+  track list through a pointer the same call had just reallocated. Reachable
+  whenever the number of tracks crossed a capacity boundary.
+
+- A heap use-after-free when a lane was edited while a take was recording onto
+  it. The index of the clip being recorded into did not move with the clip list,
+  so a split or a delete on that lane sent the next captured period through a
+  stale index - and off the end of the list once it had shrunk past.
+
+- A heap buffer overflow in the desktop app on interfaces wider than sixteen
+  channels. The take drain buffer was sized for sixteen but asked for a fixed
+  number of frames, so `-c 32` wrote a megabyte past the end of it. The frame
+  count is now derived from what the device negotiated.
+
+- The take ring could be left holding part of a frame when it filled, which put
+  every frame drawn after that one a channel out of step. It now takes whole
+  frames or none.
+
+- A capture-thread hang: an ALSA playback write that accepted nothing was
+  neither an error nor progress, and the loop went round forever with the take
+  behind it.
+
+- A PipeWire capture stream that renegotiated its format after opening could
+  widen the frame while the buffers above it stayed the size the first agreement
+  set. A changed geometry now ends the stream, the way an unplugged device does.
+
+- Panning a track no longer quietly turns it down in a mono mix. `track.h` said
+  pan was ignored on a mono output; the mixer applied the left leg of it anyway.
 
 ### Changed
 

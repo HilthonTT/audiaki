@@ -22,9 +22,12 @@
 #include "audio/format.h"
 #include "backend/backend.h"
 #include "backend/device.h"
+#include "backend/monitor.h"
 #include "edit/edit.h"
 #include "edit/export.h"
 #include "edit/load.h"
+#include "edit/project.h"
+#include "take/latency.h"
 #include "take/take.h"
 #include "util/config.h"
 #include "util/log.h"
@@ -72,6 +75,7 @@ void app_load_track(app *a, const char *path)
    * a take applies to the take rather than to nothing */
   aud_doc_select_tracks(&a->doc, 0);
   a->doc.tracks[index].selected = 1;
+  a->project_dirty = 1;
 
   app_set_status(a, "%.80s: %.1f s on track %d", aud_path_basename(path),
                  (double)aud_track_end(&a->doc.tracks[index]) / a->doc.rate, index + 1);
@@ -307,10 +311,36 @@ static long app_record_target(app *a, uint64_t at)
  * other, frame for frame, so what is on screen while you play is what is on
  * disk when you stop.
  */
+/*
+ * Frames to shift a take back by, so what was played to the project lands where
+ * it was heard rather than a round trip after it. Zero when nothing is being
+ * played along to, because then there is nothing to be late against.
+ */
+static uint64_t app_latency_frames(const app *a)
+{
+  aud_monitor_config out;
+
+  if (!a->overdub || a->engine == NULL || aud_doc_end(&a->doc) == 0)
+  {
+    return 0;
+  }
+
+  /* the output the player is about to open, so its buffer is known before it
+   * exists - the defaults are monitor.c's, not a second copy of them */
+  aud_monitor_config_defaults(&out, aud_engine_rate(a->engine), 2u);
+
+  return aud_latency_frames(a->latency_ms, aud_engine_rate(a->engine),
+                            aud_engine_capture_frames(a->engine),
+                            (unsigned long)out.period_frames * out.periods);
+}
+
 void app_begin_take(app *a)
 {
   char path[AUD_ENGINE_PATH_MAX];
   uint64_t at;
+  uint64_t start;
+  uint64_t skip;
+  uint64_t latency;
   long target;
 
   if (a->engine == NULL || aud_take_next(path, sizeof(path), a->prefix) != 0)
@@ -318,19 +348,22 @@ void app_begin_take(app *a)
     return;
   }
 
-  /* playback and recording at once is overdubbing, which needs the two clocks
-   * lined up; until then, one at a time */
   aud_player_stop(&a->player);
 
   at = a->doc.cursor;
-  target = app_record_target(a, at);
+  latency = app_latency_frames(a);
+  aud_latency_place(at, latency, &start, &skip);
+
+  /* the lane has to be free from where the clip really begins, which with the
+   * correction applied is earlier than the cursor */
+  target = app_record_target(a, start);
   if (target < 0)
   {
     app_set_status(a, "no room for another track");
     return;
   }
 
-  if (aud_track_record_begin(&a->doc.tracks[target], at,
+  if (aud_track_record_begin(&a->doc.tracks[target], start,
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {
     app_set_status(a, "there is already audio there - move the cursor");
@@ -339,12 +372,27 @@ void app_begin_take(app *a)
 
   a->render_note[0] = '\0';
   a->record_track = target;
-  a->record_at = at;
+  a->record_at = start;
+  a->record_skip = skip;
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
     aud_track_record_end(&a->doc.tracks[target]);
     a->record_track = -1;
+    a->record_skip = 0;
+    return;
+  }
+
+  /*
+   * And the project, from the cursor, so there is something to play along to.
+   * The two are started a drawn frame apart rather than on the same sample -
+   * see take/latency.h - so this is close, not sample locked.
+   */
+  if (latency > 0 && aud_player_start(&a->player, &a->doc, at, aud_doc_end(&a->doc),
+                                      a->cfg.monitor_device) == 0)
+  {
+    app_set_status(a, "overdubbing %.50s (%.0f ms back)", aud_path_basename(path),
+                   1000.0 * (double)latency / aud_engine_rate(a->engine));
     return;
   }
 
@@ -358,6 +406,7 @@ void app_begin_take(app *a)
  */
 static void app_pump_take(app *a)
 {
+  unsigned channels;
   size_t got;
 
   if (a->record_track < 0 || (size_t)a->record_track >= a->doc.count)
@@ -365,10 +414,33 @@ static void app_pump_take(app *a)
     return;
   }
 
+  channels = aud_engine_channels(a->engine);
+
   while ((got = aud_engine_read_take(a->engine, a->take_buf, a->take_buf_frames)) > 0)
   {
-    aud_track_record_push(&a->doc.tracks[a->record_track], a->take_buf, got);
-    a->doc.dirty = 1;
+    const float *frames = a->take_buf;
+    size_t take = got;
+
+    /*
+     * The head of a take that the latency correction could not shift into,
+     * because there was no timeline before frame zero to shift it into. Those
+     * frames describe a moment the project does not have.
+     */
+    if (a->record_skip > 0)
+    {
+      size_t drop = a->record_skip < take ? (size_t)a->record_skip : take;
+
+      frames += drop * channels;
+      take -= drop;
+      a->record_skip -= drop;
+    }
+
+    if (take > 0)
+    {
+      aud_track_record_push(&a->doc.tracks[a->record_track], frames, take);
+      a->doc.dirty = 1;
+    }
+
     if (got < a->take_buf_frames)
     {
       break;
@@ -395,12 +467,29 @@ void app_stop_take(app *a, const aud_engine_status *st)
     return;
   } /* the failure is already in the status line */
 
+  /* stopping stops the transport, overdub and all */
+  aud_player_stop(&a->player);
+
   /* whatever was still in flight when the take closed belongs on the track */
   app_pump_take(a);
+
+  a->project_dirty = 1;
 
   if (a->record_track >= 0 && (size_t)a->record_track < a->doc.count)
   {
     aud_track *t = &a->doc.tracks[a->record_track];
+
+    /*
+     * Tell the block which file it is, while the clip that holds it is still
+     * open. The timeline's copy of a take and the WAV beside it are the same
+     * audio, and a project saved later refers to the file rather than carrying
+     * the samples - see edit/project.h.
+     */
+    if (aud_track_recording(t))
+    {
+      aud_samples_set_source(t->clips[t->recording].audio, take);
+    }
+    a->last_take_track = a->record_track;
 
     aud_track_record_end(t);
 
@@ -415,6 +504,8 @@ void app_stop_take(app *a, const aud_engine_status *st)
       aud_doc_remove_track(&a->doc, (size_t)a->record_track);
       a->record_track = -1;
       app_load_track(a, take);
+      /* the reload appended it, and it brought its own source with it */
+      a->last_take_track = (long)a->doc.count - 1;
       app_set_status(a, "the display fell behind; the take was reloaded from disk");
       a->record_track = -1;
     }
@@ -425,6 +516,7 @@ void app_stop_take(app *a, const aud_engine_status *st)
     }
   }
   a->record_track = -1;
+  a->record_skip = 0;
   a->render_note[0] = '\0';
 
   /*
@@ -452,6 +544,23 @@ void app_finish_take(app *a, const char *path)
   char take[AUD_ENGINE_PATH_MAX];
 
   snprintf(take, sizeof(take), "%s", path);
+
+  /*
+   * Wherever the take ended up is where its block now says it lives. The
+   * dialog may have moved the file since it was stamped, and a project saved
+   * afterwards has to point at the take rather than at the name it was
+   * recorded under.
+   */
+  if (a->last_take_track >= 0 && (size_t)a->last_take_track < a->doc.count &&
+      take[0] != '\0')
+  {
+    const aud_track *t = &a->doc.tracks[a->last_take_track];
+
+    for (size_t c = 0; c < t->count; c++)
+    {
+      aud_samples_set_source(t->clips[c].audio, take);
+    }
+  }
 
   if (!a->want_video || take[0] == '\0' || a->render != NULL)
   {
@@ -549,10 +658,12 @@ void app_edit(app *a, app_edit_action action)
   {
   case APP_EDIT_UNDO:
     ok = aud_doc_undo(d);
+    a->project_dirty = a->project_dirty || ok == 0;
     app_set_status(a, ok == 0 ? "undone" : "nothing to undo");
     return;
   case APP_EDIT_REDO:
     ok = aud_doc_redo(d);
+    a->project_dirty = a->project_dirty || ok == 0;
     app_set_status(a, ok == 0 ? "redone" : "nothing to redo");
     return;
   case APP_EDIT_SELECT_ALL:
@@ -583,16 +694,24 @@ void app_edit(app *a, app_edit_action action)
   case APP_EDIT_DUPLICATE:
     ok = aud_edit_duplicate(d);
     break;
+  case APP_EDIT_FADE_IN:
+    ok = aud_edit_fade_in(d);
+    break;
+  case APP_EDIT_FADE_OUT:
+    ok = aud_edit_fade_out(d);
+    break;
   default:
     return;
   }
 
   if (ok == 0)
   {
-    static const char *const done[] = {"",       "",          "cut",      "copied",
-                                       "pasted", "deleted",   "silenced", "trimmed",
-                                       "split",  "duplicated"};
+    static const char *const done[] = {
+        "",         "",        "cut",   "copied",     "pasted",        "deleted",
+        "silenced", "trimmed", "split", "duplicated", "faded in over", "faded out over"};
 
+    /* the session has moved away from whatever is on disk, if anything is */
+    a->project_dirty = 1;
     app_set_status(a, "%s %.2f s", done[action],
                    d->rate > 0 ? (double)(d->sel_end - d->sel_start) / d->rate : 0.0);
     return;
@@ -738,9 +857,16 @@ static void app_update_title(app *a, const aud_engine_status *st)
              st->state == AUD_ENGINE_PAUSED ? "paused" : "recording", secs / 60u,
              secs % 60u, name);
   }
+  else if (a->project_path[0] != '\0')
+  {
+    /* the session, and whether it has moved on from what is on disk */
+    snprintf(want, sizeof(want), AUDIAKI_NAME " - %.100s%s",
+             aud_path_basename(a->project_path), a->project_dirty ? " *" : "");
+  }
   else
   {
-    snprintf(want, sizeof(want), AUDIAKI_NAME);
+    snprintf(want, sizeof(want), AUDIAKI_NAME "%s",
+             a->project_dirty ? " - unsaved session" : "");
   }
 
   if (strcmp(want, a->title) != 0)
@@ -839,12 +965,38 @@ static void handle_keys(app *a, const aud_engine_status *st)
     {
       app_export_dialog(a);
     }
+    /* the session itself: S writes it, shift+S asks where, O opens one */
+    if (IsKeyPressed(KEY_S))
+    {
+      if (shift)
+      {
+        app_save_project_as(a);
+      }
+      else
+      {
+        app_save_project(a);
+      }
+    }
+    if (IsKeyPressed(KEY_O))
+    {
+      app_open_project_dialog(a);
+    }
     /* the transport, where the editor's own space bar has displaced it */
     if (IsKeyPressed(KEY_SPACE))
     {
       app_toggle_record(a, st);
     }
     return;
+  }
+
+  /* the fades, on the bracket keys the selection edges look like */
+  if (IsKeyPressed(KEY_LEFT_BRACKET))
+  {
+    app_edit(a, APP_EDIT_FADE_IN);
+  }
+  if (IsKeyPressed(KEY_RIGHT_BRACKET))
+  {
+    app_edit(a, APP_EDIT_FADE_OUT);
   }
 
   if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))
@@ -997,6 +1149,16 @@ int main(int argc, char *argv[])
   aud_clipboard_init(&a.clipboard);
   aud_player_init(&a.player);
   a.record_track = -1;
+  a.last_take_track = -1;
+  /*
+   * On by default: playing along to what is already there is what a second take
+   * is for, and a window that needed the feature turning on before it would do
+   * the obvious thing would be hiding it. With an empty project it costs
+   * nothing, there being nothing to play.
+   */
+  a.overdub = 1;
+  /* the sentinel, until the config file or --latency says otherwise below */
+  a.latency_ms = -1.0;
 
   /*
    * A quarter of a second of drain per pass at the usual channel counts. The
@@ -1018,6 +1180,7 @@ int main(int argc, char *argv[])
    */
   aud_config_load(&cfg);
   snprintf(a.take_dir, sizeof(a.take_dir), "%s", cfg.take_dir);
+  a.latency_ms = cfg.latency_ms; /* --latency on the command line still wins */
   /*
    * Off unless the config says otherwise, and deliberately the other way round
    * from the terminal recorder. There, a take is a file and the question is
@@ -1104,6 +1267,33 @@ int main(int argc, char *argv[])
    * it at and a window to say so in if one of them will not open */
   for (int i = 0; i < a.open_count; i++)
   {
+    /*
+     * A session opens as a session and a WAV as a track, so one argument list
+     * covers both and 'audiaki-gui yesterday.aki' does what it looks like.
+     * Only the first project named: opening a second would throw the first away.
+     */
+    if (aud_project_is_project(a.open_paths[i]))
+    {
+      const char *why = NULL;
+
+      if (a.project_path[0] != '\0')
+      {
+        aud_warn("only one project can be open; ignoring %s", a.open_paths[i]);
+      }
+      else if (aud_project_load(&a.doc, a.open_paths[i], &why) != 0)
+      {
+        aud_error("cannot open %s: %s", a.open_paths[i], why != NULL ? why : "unknown");
+        app_set_status(&a, "cannot open %.80s: %s", aud_path_basename(a.open_paths[i]),
+                       why != NULL ? why : "unknown");
+      }
+      else
+      {
+        snprintf(a.project_path, sizeof(a.project_path), "%s", a.open_paths[i]);
+        a.project_dirty = 0;
+      }
+      continue;
+    }
+
     app_load_track(&a, a.open_paths[i]);
   }
   if (a.doc.count > 0)
@@ -1185,6 +1375,40 @@ int main(int argc, char *argv[])
     BeginDrawing();
     app_draw_frame(&a, &st);
     EndDrawing();
+  }
+
+  /*
+   * Edits that were never saved, on the way out.
+   *
+   * The takes themselves are always safe - each is a closed WAV the moment it
+   * stopped - but what was done to them since only exists in memory, and the
+   * window closing is not a decision to throw that away. A session with a file
+   * is written back to it; one that never had a name gets a recovery file
+   * beside the takes, and is said so on the terminal.
+   */
+  if (a.project_dirty && a.doc.count > 0)
+  {
+    char recovery[AUD_PATH_MAX];
+    const char *where = a.project_path;
+    const char *why = NULL;
+
+    if (where[0] == '\0')
+    {
+      if (aud_path_place(recovery, sizeof(recovery), a.take_dir,
+                         "recovered" AUD_PROJECT_EXT) == 0)
+      {
+        where = recovery;
+      }
+    }
+
+    if (where[0] != '\0' && aud_project_save(&a.doc, where, &why) == 0)
+    {
+      aud_info("unsaved edits written to %s", where);
+    }
+    else if (why != NULL)
+    {
+      aud_warn("could not write the unsaved edits: %s", why);
+    }
   }
 
   /*

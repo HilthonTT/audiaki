@@ -457,6 +457,65 @@ static void draw_wave(const aud_track *t, unsigned ch, Rectangle lane, unsigned 
   }
 }
 
+/*
+ * The ramp itself, drawn as the line it is: from silence at one end of the
+ * fade to full at the other, with the space it takes out of the waveform
+ * shaded. The waveform underneath already follows the fade - see
+ * aud_track_range() - so this says where the ramp was asked for rather than
+ * what it did, which is what you need to adjust one.
+ */
+static void draw_fade(Rectangle lane, float from_x, float to_x, int rising)
+{
+  Vector2 left = {from_x, lane.y};
+  Vector2 right = {to_x, lane.y};
+  Vector2 foot;
+  Vector2 head;
+
+  if (to_x <= from_x || to_x < lane.x || from_x > lane.x + lane.width)
+  {
+    return;
+  }
+
+  /* the ramp runs from silence at the floor to full at the ceiling */
+  foot.x = rising ? from_x : to_x;
+  foot.y = lane.y + lane.height;
+  head.x = rising ? to_x : from_x;
+  head.y = lane.y;
+
+  /*
+   * The corner the ramp cuts off, shaded. Wound so the three vertices have a
+   * negative cross product in screen space, which is the order raylib draws
+   * rather than culls - the same rule the dropdown's caret follows in ui.c.
+   */
+  DrawTriangle(left, foot, right, Fade(BLACK, 0.35f));
+  DrawLineEx(foot, head, 1.5f, Fade(AUD_UI_WARN, 0.85f));
+}
+
+static void draw_fades(const aud_track *t, Rectangle lane, unsigned rate,
+                       const aud_timeline *tl)
+{
+  for (size_t i = 0; i < t->count; i++)
+  {
+    const aud_clip *c = &t->clips[i];
+
+    if (c->fade_in > 0)
+    {
+      float a = lane.x + aud_timeline_x_of(tl, (double)c->start / rate);
+      float b = lane.x + aud_timeline_x_of(tl, (double)(c->start + c->fade_in) / rate);
+
+      draw_fade(lane, a, b, 1);
+    }
+    if (c->fade_out > 0)
+    {
+      uint64_t end = c->start + c->frames;
+      float a = lane.x + aud_timeline_x_of(tl, (double)(end - c->fade_out) / rate);
+      float b = lane.x + aud_timeline_x_of(tl, (double)end / rate);
+
+      draw_fade(lane, a, b, 0);
+    }
+  }
+}
+
 /* The boundaries between clips, so a split is visible as one. */
 static void draw_clip_edges(const aud_track *t, Rectangle lane, unsigned rate,
                             const aud_timeline *tl)
@@ -769,6 +828,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
                    Fade(AUD_UI_EDGE, 0.7f));
         }
       }
+      draw_fades(t, lane, d->rate, tl);
       draw_clip_edges(t, lane, d->rate, tl);
     }
 

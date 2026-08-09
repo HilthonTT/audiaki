@@ -25,8 +25,7 @@ void cli_print_usage(FILE *out)
           "       " AUDIAKI_NAME " --visualize <input.wav> [-o output.mp4]\n"
           "       " AUDIAKI_NAME " --info <input.wav>\n"
           "       " AUDIAKI_NAME " --play <input.wav> [-D output]\n"
-          "       " AUDIAKI_NAME " --render <project" AUD_PROJECT_EXT
-          "> [-o mix.wav]\n"
+          "       " AUDIAKI_NAME " --render <project" AUD_PROJECT_EXT "> [-o mix.wav]\n"
           "       " AUDIAKI_NAME " --tune [-D device]\n"
           "       " AUDIAKI_NAME " --probe [-D device]\n"
           "       " AUDIAKI_NAME " --list\n"
@@ -113,8 +112,7 @@ void cli_print_usage(FILE *out)
           "      --info FILE       report levels and clipping for FILE and exit;\n"
           "                        further files may follow, and are reported as\n"
           "                        one row each\n"
-          "      --render FILE     mix a project " AUDIAKI_NAME
-          "-gui saved down to a\n"
+          "      --render FILE     mix a project " AUDIAKI_NAME "-gui saved down to a\n"
           "                        WAV and exit; -o names it, and defaults to\n"
           "                        the project's own name with .wav on it\n"
           "      --bits N          bit depth --render writes: 16, 24 or 32\n"
@@ -158,6 +156,8 @@ void cli_print_usage(FILE *out)
           "the two answers that are the same every session:\n"
           "  take_dir = ~/Takes    where a take named without a folder is written\n"
           "  prompt = auto         ask where to keep it afterwards: auto, yes, no\n"
+          "  latency_ms = 12       round-trip latency the desktop app places an\n"
+          "                        overdub by (default: from the buffers)\n"
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
           AUD_VIZ_DEFAULT_WIDTH, AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS,

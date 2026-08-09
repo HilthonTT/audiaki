@@ -30,6 +30,8 @@ _audiaki_gui() {
     '--no-dialog[do not ask where a take should be kept when it stops]'
     '(-s --style)'{-s,--style}'[visualiser style to start on]:style:(bars mirror radial scope waterfall tuner)'
     '--preroll[keep SECS of audio while idle, so takes start earlier]:seconds:'
+    '--no-overdub[do not play the project while recording over it]'
+    '--latency[round-trip latency to place an overdub by]:milliseconds:'
     '(-V --video)'{-V,--video}'[also render an MP4 of each take]'
     '--video-silent[render that MP4 without the take'"'"'s audio]'
     '--video-size[video size]:size:(480p 720p 1080p 1440p 2160p)'

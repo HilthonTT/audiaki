@@ -615,6 +615,11 @@ aud_format aud_engine_format(const aud_engine *e)
   return e != NULL ? e->dev.format : AUD_FORMAT_UNKNOWN;
 }
 
+unsigned long aud_engine_capture_frames(const aud_engine *e)
+{
+  return e != NULL ? e->dev.buffer_frames : 0;
+}
+
 int aud_engine_start(aud_engine *e, const char *path, int overwrite)
 {
   aud_meta meta;

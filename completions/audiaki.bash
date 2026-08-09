@@ -176,7 +176,7 @@ _audiaki_gui()
             _audiaki_files -d
             return
             ;;
-        --video-fps | --preroll | --pre-roll)
+        --video-fps | --preroll | --pre-roll | --latency)
             return
             ;;
     esac
@@ -184,7 +184,8 @@ _audiaki_gui()
     $split && return
 
     opts="--device --backend --rate --channels --take --dir --no-dialog --style
-          --preroll --video --video-silent --video-size --video-fps --monitor
+          --preroll --no-overdub --latency
+          --video --video-silent --video-size --video-fps --monitor
           --verbose --help"
     mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }

@@ -73,6 +73,31 @@ TEST(prompt_takes_the_spellings_people_reach_for)
   CHECK(strcmp(aud_config_prompt_name(AUD_PROMPT_AUTO), "auto") == 0);
 }
 
+TEST(latency_is_a_number_of_milliseconds_or_nothing_at_all)
+{
+  aud_config cfg;
+
+  aud_config_defaults(&cfg);
+  CHECK(cfg.latency_ms < 0.0); /* nothing said means work it out */
+
+  CHECK_EQ_INT(aud_config_parse(&cfg, "latency_ms = 12.5\n", "t"), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 12.5, 1e-9);
+
+  /* the hyphenated spelling, as take-dir has */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "latency-ms = 3\n", "t"), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 3.0, 1e-9);
+
+  /* nonsense is counted and put back to "work it out", not left half read */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "latency_ms = soon\n", "t"), 1);
+  CHECK(cfg.latency_ms < 0.0);
+
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "latency_ms = 99999\n", "t"), 1);
+  CHECK(cfg.latency_ms < 0.0);
+}
+
 TEST(a_bad_line_is_counted_and_the_rest_is_still_read)
 {
   aud_config cfg;
@@ -144,6 +169,7 @@ int main(void)
   RUN(take_dir_arrives_expanded);
   RUN(an_empty_take_dir_means_here);
   RUN(prompt_takes_the_spellings_people_reach_for);
+  RUN(latency_is_a_number_of_milliseconds_or_nothing_at_all);
   RUN(a_bad_line_is_counted_and_the_rest_is_still_read);
   RUN(a_file_with_no_last_newline_still_has_a_last_line);
   RUN(the_path_follows_the_environment);

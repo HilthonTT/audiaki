@@ -26,8 +26,8 @@ nothing in between.
 
 Two binaries share one capture and analysis core: `audiaki`, the command line
 recorder, and `audiaki-gui`, a multi-track recorder and editor — record onto a
-timeline with the waveform growing as you play, cut and paste it about, play it
-back and export a mix. Written for a Sonicake Smart Box
+timeline with the waveform growing as you play, overdub onto it, cut and paste
+it about, save the session and export a mix. Written for a Sonicake Smart Box
 (QME-20) guitar interface, but it works with any ALSA capture device — USB
 interfaces, built-in codecs, `plughw` plugins.
 
@@ -89,8 +89,10 @@ audiaki --info take01.wav            # how did that take come out?
 audiaki --info session-*.wav         # ...and the rest of them, a row each
 audiaki --play take01.wav            # ...and what does it sound like?
 audiaki --visualize take01.wav       # render take01.mp4
+audiaki --render session.aki         # mix a saved session down, no window
 audiaki-gui                          # the multi-track recorder and editor
 audiaki-gui take01.wav take02.wav    # ...opened on those takes
+audiaki-gui session.aki              # ...or on a saved session
 ```
 
 When a take finishes, audiaki asks where to keep it and what to call it — Enter
@@ -102,9 +104,12 @@ take_dir = ~/Takes
 ```
 
 The window records at the cursor onto whichever track is free, draws the
-waveform as it arrives, plays back the mix, cuts, copies, pastes, splits and
-trims with 64 steps of undo, and exports a WAV. The visualiser is a panel of it
-you can shut. Every option, the meter, the tuner, pre-roll, monitoring, the
+waveform as it arrives, plays the project back while you record over it, cuts,
+copies, pastes, splits, trims and fades with 64 steps of undo, saves the session
+as a `.aki` file and exports a WAV. A session refers to its takes rather than
+containing them, so it is a few kilobytes of readable text that `audiaki
+--render` can mix down without a window. The visualiser is a panel of it you can
+shut. Every option, the meter, the tuner, pre-roll, monitoring, the
 metronome, take metadata, playback, `--json` output and troubleshooting:
 [docs/USAGE.md](docs/USAGE.md), `man audiaki`, or
 `audiaki --help`. The window, its keys and its visualisers:
@@ -144,7 +149,10 @@ Linux only, through ALSA or PipeWire, on little-endian hosts. Recordings are
 plain 44-byte PCM WAV, so they stop at the 4 GB RIFF limit — about 3.5 hours of
 24-bit stereo at 48 kHz. The tuner is monophonic, video rendering shells out to
 `ffmpeg`, and the desktop app's save dialog browses folders rather than being
-the system's own file chooser. The full list is in
+the system's own file chooser. Overdubs are placed by a latency correction that
+is estimated unless you measure it, and playback and capture start within a
+drawn frame of each other rather than on the same sample, so they land close
+rather than sample locked. The full list is in
 [docs/USAGE.md](docs/USAGE.md#limitations).
 
 ## Credits

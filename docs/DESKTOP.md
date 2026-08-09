@@ -62,7 +62,10 @@ audiaki-gui -V --video-size 1080p    # ...at a particular size
 audiaki-gui -V --video-silent        # ...with no audio track in it
 audiaki-gui -M                       # come up already monitoring
 audiaki-gui --preroll 10             # start each take 10 s before Record
+audiaki-gui --no-overdub             # do not play the project while recording
+audiaki-gui --latency 14             # place overdubs by a measured round trip
 audiaki-gui take01.wav take02.wav    # open takes as tracks straight away
+audiaki-gui yesterday.aki            # ...or open a saved session
 ```
 
 `--video-size` takes `WxH` or `720p`/`1080p`/`1440p`/`2160p`, and `--video-fps`
@@ -129,6 +132,7 @@ the selection as well; `ctrl+A` selects everything. Then:
 | **Trim** | throws away everything outside the selection |
 | **Split** | cuts the clips at the selection's edges without removing anything |
 | **Copy to** | the selection onto a new track of its own, at the same position |
+| **Fade in** / **Fade out** | `[` / `]` — ramps the selection out of silence, or into it |
 | **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
 
 Pasting over a selection replaces it, the way typing over selected text does.
@@ -139,6 +143,74 @@ it.
 `ctrl`+wheel zooms about the pointer, `shift`+wheel scrolls, the wheel alone
 walks up and down the tracks, and `F` fits the selection or the whole project to
 the window.
+
+A fade is a length on the clip rather than something written into the audio, so
+it costs nothing, undoes like everything else, and can be taken off again by
+fading a zero-length selection. The waveform follows it, so what you see is what
+you will hear. A cut that lands inside an existing ramp truncates it: a clip can
+say "ramp up from silence", and there is no way for one to say "carry on from
+half way up a fade that began in the clip before".
+
+There are no crossfades. Clips on a lane do not overlap — that is the invariant
+the whole editor is built on — and a crossfade needs two pieces of audio
+sounding at once. Fading one out and the next in gives a dip, not a crossfade,
+and calling it one would be a lie.
+
+## Sessions
+
+The takes are files the moment they stop. What you have *done* to them — the
+cuts, the levels, which clip sits where — is the session, and **Save** or
+`ctrl+S` writes that to a `.aki` file. `ctrl+shift+S` asks where; **Open** or
+`ctrl+O` opens one; `audiaki-gui yesterday.aki` opens one at startup.
+
+A session refers to its takes rather than containing them, so it is a few
+kilobytes of readable text whatever it holds, and it can be opened in an editor
+and fixed by hand. Takes kept beside the session file are referred to relatively,
+so a session folder can be copied to another disk and still open. Move a take
+somewhere else and the session says which one is missing rather than opening
+with a silent lane.
+
+Closing the window with unsaved edits writes them out rather than dropping them:
+back to the session file if there is one, and to `recovered.aki` beside the
+takes if there is not.
+
+`audiaki --render session.aki -o mix.wav` mixes a session down without opening a
+window at all, which is what makes a session something a script can use.
+
+## Overdubbing
+
+Press **Record** with something already on the timeline and it plays while you
+record over it. That is what **Overdub** is, and it is on by default; turn it off
+to record a second take in silence.
+
+Playing along to something means hearing it first, and hearing it costs time —
+the output holds a buffer, then the input holds another. So what you played in
+response to a beat does not arrive labelled with that beat; it arrives a round
+trip late. The window corrects for it by placing the take a round trip earlier
+than you pressed the button, because that is when the sound was actually made.
+
+The correction is estimated from the two buffers, which is a starting point and
+not a measurement: the converters, the driver and the interface all add delay
+that nothing here can see. If your overdubs land consistently late or early,
+measure it — play a click through the output into the input and see how far off
+it is — and say so:
+
+```
+audiaki-gui --latency 14
+```
+
+or put it in the config file, where it belongs, since it is a property of the
+machine rather than of the session:
+
+```
+latency_ms = 14
+```
+
+What none of this fixes is jitter. Playback here is fed from the drawing loop
+and capture runs on its own thread, so the two start within a drawn frame of
+each other rather than on the same sample. Overdubs land close, not sample
+locked. Use headphones: monitoring plus playback through speakers is two ways
+for the room to get into the take.
 
 ## Exporting
 
@@ -156,6 +228,8 @@ and stereo unless every track in it is mono.
 | **Stop** | Closes the take; it is already on the timeline |
 | **Import** | Opens a WAV as a new track |
 | **Export** | Mixes down to a WAV |
+| **Open** / **Save** | Opens a session, or writes this one out |
+| **Overdub** | Plays the project while recording over it |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
 | **Monitor** | Plays the input back through the default output |
@@ -168,6 +242,8 @@ and stereo unless every track in it is mono.
 | `R`, `ctrl+space` | Record from the cursor |
 | `S` | Stop the take or playback, or cancel a video render |
 | `I` / `ctrl+E` | Import a WAV / export a mix |
+| `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
+| `[` / `]` | Fade the selection in, or out |
 | `home` | Cursor to the start |
 | `M` | Toggle monitoring |
 | `B` | Show or hide the visualiser panel |

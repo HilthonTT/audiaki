@@ -24,6 +24,7 @@
 
 #include "gui/ui.h"
 
+#include "edit/project.h"
 #include "util/log.h"
 #include "util/path.h"
 
@@ -61,14 +62,33 @@ static int is_wav(const char *name)
          (ext[2] == 'a' || ext[2] == 'A') && (ext[3] == 'v' || ext[3] == 'V');
 }
 
+/* Whether a file is worth offering in this mode, or only folders are. */
+static int lists_file(const app_save *s, const char *name)
+{
+  switch (s->mode)
+  {
+  case APP_SAVE_MODE_OPEN:
+  case APP_SAVE_MODE_EXPORT:
+    return is_wav(name);
+  /* a session is opened by name, and saved over an existing one knowingly */
+  case APP_SAVE_MODE_PROJECT_OPEN:
+  case APP_SAVE_MODE_PROJECT_SAVE:
+    return aud_project_is_project(name);
+  case APP_SAVE_MODE_KEEP:
+  default:
+    return 0;
+  }
+}
+
 /*
  * Fill `s->rows` with what can be clicked in `s->folder`.
  *
- * Saving lists folders only: the files already there are not something to aim
- * at, and offering them would invite saving one take over another. Opening
- * lists the WAVs as well, because a browser that would not show you the file
- * you came for is not one. Hidden entries are left out either way, for the same
- * reason nobody keeps recordings in them.
+ * Filing a take lists folders only: the files already there are not something
+ * to aim at, and offering them would invite saving one take over another.
+ * Everything else lists the files it is about as well - WAVs, or sessions -
+ * because a browser that would not show you the file you came for is not one.
+ * Hidden entries are left out either way, for the same reason nobody keeps
+ * recordings in them.
  */
 static void relist(app_save *s)
 {
@@ -117,7 +137,7 @@ static void relist(app_save *s)
     {
       s->row_is_dir[s->count] = 1;
     }
-    else if (s->mode != APP_SAVE_MODE_KEEP && is_wav(entry->d_name))
+    else if (lists_file(s, entry->d_name))
     {
       s->row_is_dir[s->count] = 0;
     }
@@ -258,6 +278,88 @@ void app_export_dialog(app *a)
   relist(s);
 }
 
+/*
+ * Where the browser should open when it is about a session rather than a take:
+ * beside the project if there is one, and otherwise wherever takes are kept.
+ */
+static void start_in_project_folder(app *a, app_save *s)
+{
+  if (a->project_path[0] != '\0' &&
+      aud_path_dirname(s->folder, sizeof(s->folder), a->project_path) == 0)
+  {
+    return;
+  }
+  if (a->take_dir[0] != '\0')
+  {
+    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+    return;
+  }
+  if (aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) != 0)
+  {
+    snprintf(s->folder, sizeof(s->folder), ".");
+  }
+}
+
+void app_save_project_as(app *a)
+{
+  app_save *s = &a->save;
+  const char *base;
+
+  memset(s, 0, sizeof(*s));
+  s->mode = APP_SAVE_MODE_PROJECT_SAVE;
+  s->focus = APP_SAVE_FIELD_NAME;
+  s->open = 1;
+
+  /* the name it already has, or one derived from the take prefix */
+  if (a->project_path[0] != '\0')
+  {
+    snprintf(s->name, sizeof(s->name), "%s", aud_path_basename(a->project_path));
+  }
+  else
+  {
+    base = aud_path_basename(a->prefix);
+    snprintf(s->name, sizeof(s->name), "%s%s", base[0] != '\0' ? base : "session",
+             AUD_PROJECT_EXT);
+  }
+
+  start_in_project_folder(a, s);
+  relist(s);
+}
+
+void app_save_project(app *a)
+{
+  const char *why = NULL;
+
+  /* never saved: there is nothing to write back to, so ask */
+  if (a->project_path[0] == '\0')
+  {
+    app_save_project_as(a);
+    return;
+  }
+
+  if (aud_project_save(&a->doc, a->project_path, &why) != 0)
+  {
+    app_set_status(a, "cannot save: %s", why != NULL ? why : "unknown");
+    return;
+  }
+
+  a->project_dirty = 0;
+  app_set_status(a, "saved %.80s", aud_path_basename(a->project_path));
+}
+
+void app_open_project_dialog(app *a)
+{
+  app_save *s = &a->save;
+
+  memset(s, 0, sizeof(*s));
+  s->mode = APP_SAVE_MODE_PROJECT_OPEN;
+  s->focus = APP_SAVE_FIELD_NAME;
+  s->open = 1;
+
+  start_in_project_folder(a, s);
+  relist(s);
+}
+
 void app_save_dismiss(app *a)
 {
   app_save *s = &a->save;
@@ -293,10 +395,32 @@ static int save_confirm(app *a)
 
   if (s->name[0] == '\0')
   {
-    snprintf(s->note, sizeof(s->note),
-             s->mode == APP_SAVE_MODE_OPEN ? "pick a file to open"
-                                           : "the take needs a name");
+    const char *ask = "the take needs a name";
+
+    if (s->mode == APP_SAVE_MODE_OPEN || s->mode == APP_SAVE_MODE_PROJECT_OPEN)
+    {
+      ask = "pick a file to open";
+    }
+    else if (s->mode == APP_SAVE_MODE_PROJECT_SAVE)
+    {
+      ask = "the session needs a name";
+    }
+    snprintf(s->note, sizeof(s->note), "%s", ask);
     return -1;
+  }
+
+  /*
+   * A session saved as "riff" is one nothing will offer to open again, so the
+   * extension is put back on rather than the answer refused.
+   */
+  if (s->mode == APP_SAVE_MODE_PROJECT_SAVE && !aud_project_is_project(s->name))
+  {
+    size_t len = strlen(s->name);
+
+    if (len + sizeof(AUD_PROJECT_EXT) <= sizeof(s->name))
+    {
+      snprintf(s->name + len, sizeof(s->name) - len, "%s", AUD_PROJECT_EXT);
+    }
   }
 
   if (strchr(s->name, '/') != NULL)
@@ -323,6 +447,67 @@ static int save_confirm(app *a)
   {
     s->open = 0;
     app_load_track(a, target);
+    return 0;
+  }
+
+  if (s->mode == APP_SAVE_MODE_PROJECT_OPEN)
+  {
+    const char *why = NULL;
+
+    /*
+     * A failed load leaves the timeline alone - see project.h - so the dialog
+     * can simply stay open with the reason in it and let the answer be
+     * corrected. Nothing has been lost either way.
+     */
+    if (aud_project_load(&a->doc, target, &why) != 0)
+    {
+      snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot open that");
+      return -1;
+    }
+
+    snprintf(a->project_path, sizeof(a->project_path), "%s", target);
+    a->project_dirty = 0;
+    a->record_track = -1;
+    a->last_take_track = -1;
+    aud_player_stop(&a->player);
+    s->open = 0;
+    app_set_status(a, "opened %.80s: %zu track(s)", aud_path_basename(target),
+                   a->doc.count);
+    return 0;
+  }
+
+  if (s->mode == APP_SAVE_MODE_PROJECT_SAVE)
+  {
+    const char *why = NULL;
+
+    /* replacing a session is asked about once, like an export */
+    if (access(target, F_OK) == 0 && strcmp(target, a->project_path) != 0 &&
+        !s->confirmed)
+    {
+      snprintf(s->note, sizeof(s->note),
+               "%.140s is already there - Save again to "
+               "replace it",
+               aud_path_basename(target));
+      s->confirmed = 1;
+      return -1;
+    }
+
+    if (aud_path_mkdirs(folder) != 0)
+    {
+      snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
+      return -1;
+    }
+
+    if (aud_project_save(&a->doc, target, &why) != 0)
+    {
+      snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot save that");
+      return -1;
+    }
+
+    snprintf(a->project_path, sizeof(a->project_path), "%s", target);
+    a->project_dirty = 0;
+    s->open = 0;
+    app_set_status(a, "saved %.80s", aud_path_basename(target));
     return 0;
   }
 
@@ -395,6 +580,59 @@ static int save_confirm(app *a)
   return 0;
 }
 
+/* What the dialog is asking, and what the button that answers it says. */
+static const char *save_title(app_save_mode mode)
+{
+  switch (mode)
+  {
+  case APP_SAVE_MODE_OPEN:
+    return "Open a WAV";
+  case APP_SAVE_MODE_EXPORT:
+    return "Export a mix";
+  case APP_SAVE_MODE_PROJECT_SAVE:
+    return "Save the session";
+  case APP_SAVE_MODE_PROJECT_OPEN:
+    return "Open a session";
+  case APP_SAVE_MODE_KEEP:
+  default:
+    return "Keep this take";
+  }
+}
+
+static const char *save_action(app_save_mode mode)
+{
+  switch (mode)
+  {
+  case APP_SAVE_MODE_OPEN:
+  case APP_SAVE_MODE_PROJECT_OPEN:
+    return "Open";
+  case APP_SAVE_MODE_EXPORT:
+    return "Export";
+  case APP_SAVE_MODE_KEEP:
+  case APP_SAVE_MODE_PROJECT_SAVE:
+  default:
+    return "Save";
+  }
+}
+
+static const char *save_hint(app_save_mode mode)
+{
+  switch (mode)
+  {
+  case APP_SAVE_MODE_OPEN:
+    return "click a folder to go in, a file to pick it; Enter opens";
+  case APP_SAVE_MODE_EXPORT:
+    return "the selection if there is one, the whole project if not";
+  case APP_SAVE_MODE_PROJECT_SAVE:
+    return "the takes stay where they are; this writes what was done to them";
+  case APP_SAVE_MODE_PROJECT_OPEN:
+    return "opening a session replaces what is on the timeline";
+  case APP_SAVE_MODE_KEEP:
+  default:
+    return "Tab moves between the fields, Enter saves, Esc keeps it here";
+  }
+}
+
 /* Move the keyboard on, wrapping, the way every other form does. */
 static void cycle_focus(app_save *s, int back)
 {
@@ -446,14 +684,10 @@ void app_save_draw(app *a)
   DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
   DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, AUD_UI_ACCENT);
 
-  aud_ui_text(
-      panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT,
-      s->mode == APP_SAVE_MODE_OPEN
-          ? "Open a WAV"
-          : (s->mode == APP_SAVE_MODE_EXPORT ? "Export a mix" : "Keep this take"));
+  aud_ui_text(panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT, save_title(s->mode));
 
   /* how long it was, so the dialog says which take it is asking about */
-  if (s->mode != APP_SAVE_MODE_OPEN)
+  if (s->mode == APP_SAVE_MODE_KEEP || s->mode == APP_SAVE_MODE_EXPORT)
   {
     char detail[32];
 
@@ -564,12 +798,7 @@ void app_save_draw(app *a)
   else
   {
     aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_MUTED,
-                s->mode == APP_SAVE_MODE_OPEN
-                    ? "click a folder to go in, a file to pick it; Enter opens"
-                    : (s->mode == APP_SAVE_MODE_EXPORT
-                           ? "the selection if there is one, the whole project if not"
-                           : "Tab moves between the fields, Enter saves, Esc keeps "
-                             "it here"));
+                save_hint(s->mode));
   }
 
   save.width = 130.0f;
@@ -588,12 +817,7 @@ void app_save_draw(app *a)
     return;
   }
 
-  if (aud_ui_button(save,
-                    s->mode == APP_SAVE_MODE_OPEN
-                        ? "Open"
-                        : (s->mode == APP_SAVE_MODE_EXPORT ? "Export" : "Save"),
-                    AUD_UI_ACCENT, 1) &&
-      save_confirm(a) == 0)
+  if (aud_ui_button(save, save_action(s->mode), AUD_UI_ACCENT, 1) && save_confirm(a) == 0)
   {
     return;
   }
