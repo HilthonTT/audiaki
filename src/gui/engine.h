@@ -129,6 +129,16 @@ int aud_engine_stop(aud_engine *e);
 void aud_engine_status_get(aud_engine *e, aud_engine_status *out);
 
 /*
+ * Tell the engine the last take is called something else now.
+ *
+ * The file itself is moved by whoever asked; this only keeps the name in the
+ * status - which is what the window puts on its status line and in its title
+ * bar - from going on describing a file that is no longer there. Refused while
+ * a take is open, because that name is the one being written to.
+ */
+void aud_engine_rename_take(aud_engine *e, const char *path);
+
+/*
  * Ask for playback monitoring. The stream is opened and closed on the capture
  * thread, so this only records the intent - watch status.monitoring to see
  * whether it actually came up.

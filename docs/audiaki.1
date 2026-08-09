@@ -143,6 +143,34 @@ construction, nothing is ever overwritten and
 .B \-\-force
 does not apply. Naming an output file as well is an error.
 .TP
+.BR \-\-dir " " \fIFOLDER\fR
+Keep takes in
+.IR FOLDER ,
+creating it if it is not there. A take named without a folder \(em
+.BR \-o " " riff.wav ", or a " \-\-take " prefix \(em is written inside it."
+.IP
+A name that already says where it goes is left alone: a relative name with a
+slash in it, such as
+.IR sub/riff.wav ,
+is relative to the working directory as it always was, and an absolute path is
+itself. Overrides
+.B take_dir
+from the configuration file; see
+.BR FILES .
+.TP
+.B \-\-prompt
+When the take is over, ask which folder to keep it in and what to call it, and
+move it there; see
+.B KEEPING A TAKE
+below.
+Without this the question is asked only when standard input and standard error
+are both a terminal and
+.B \-\-quiet
+was not given.
+.TP
+.B \-\-no\-prompt
+Never ask, whatever the configuration file says.
+.TP
 .BR \-\-preroll " " \fISECS\fR
 Hold
 .I SECS
@@ -423,6 +451,37 @@ Show a usage summary and exit.
 .TP
 .BR \-V ", " \-\-version
 Show the version and exit.
+.SH KEEPING A TAKE
+Once a take is closed and its size reported, audiaki offers it a folder and a
+name:
+.PP
+.nf
+.RS
+audiaki: wrote ~/Takes/session\-001.wav: 42.10 s, 14.2 MiB, 0 xrun(s)
+folder [~/Takes]:
+name [session\-001.wav]: riff\-clean\-take.wav
+audiaki: stored /home/you/Takes/riff\-clean\-take.wav
+.RE
+.fi
+.PP
+Enter accepts what is offered. Anything else moves the take there, creating the
+folder if it has to. The questions go to standard error and are read from
+standard input.
+.PP
+Nothing here can lose the recording. The file is complete and closed on disk
+before the first question is asked; a name that is already taken is asked again
+rather than overwritten, a move that fails reports where the take still is, and
+Ctrl+C or Ctrl+D at either question keeps it where it was written.
+.PP
+The question is asked only when there is someone to answer it \(em both
+standard input and standard error a terminal, and not
+.BR \-\-quiet .
+.B \-\-prompt
+asks regardless, and
+.B \-\-no\-prompt
+never does. Neither is asked when
+.B \-\-preroll
+was interrupted while armed, because no file was created.
 .SH METER
 .PP
 .nf
@@ -716,6 +775,21 @@ status line shows how much is held, and it is written to the front of the take
 when one begins. Nothing is kept while recording or paused, and what was
 prepended is not held a second time for the next take.
 .TP
+.B \-\-dir FOLDER
+Keep takes in
+.IR FOLDER ,
+creating it if it is not there. The prefix above is written inside it.
+Overrides
+.B take_dir
+from the configuration file; see
+.BR FILES .
+.TP
+.B \-\-no\-dialog
+Do not ask where a take should be kept when it stops; leave it where it was
+recorded. The same as
+.B prompt = no
+in the configuration file.
+.TP
 .B \-s, \-\-style NAME
 Visualiser style to start on:
 .BR bars ", " mirror ", " radial ", " scope ", " waterfall " or " tuner .
@@ -914,6 +988,55 @@ used when
 is not given. An unrecognised value warns and is ignored rather than failing, so
 a typo in an exported variable cannot make every invocation \(em including
 .BR \-\-help " \(em" " fail."
+.SH FILES
+.TP
+.I ~/.config/audiaki/config
+Settings that outlive an invocation. Overridden by
+.I $XDG_CONFIG_HOME/audiaki/config
+and by
+.IR $AUDIAKI_CONFIG ,
+which names a file rather than a directory. Everything in it is a default the
+command line can still override, and it is not an error for it to be absent.
+.IP
+One
+.I key = value
+per line;
+.B #
+and
+.B ;
+start a comment, and a line that cannot be understood is reported and skipped.
+Two settings are recognised:
+.RS
+.TP
+.B take_dir
+Where a take named without a folder is written, as
+.BR \-\-dir .
+A leading
+.B ~
+is expanded. Empty means the working directory.
+.TP
+.B prompt
+Whether to ask where a finished take should be kept:
+.B auto
+(only when there is a terminal to ask at),
+.B yes
+or
+.BR no .
+Defaults to
+.BR auto .
+The desktop application reads the same setting, where
+.B no
+means its save dialog does not open.
+.RE
+.IP
+For example:
+.IP
+.nf
+.RS
+take_dir = ~/Takes
+prompt = auto
+.RE
+.fi
 .SH EXIT STATUS
 .TP
 .B 0
@@ -940,6 +1063,14 @@ Tune up first, then record:
 .RS
 audiaki \-\-tune
 audiaki \-\-take session
+.RE
+.fi
+.PP
+Keep a session's takes together, and be asked about each one as it finishes:
+.PP
+.nf
+.RS
+audiaki \-\-dir ~/Takes/2026\-08\-09 \-\-take session
 .RE
 .fi
 .PP

@@ -14,6 +14,7 @@
 #include "audio/format.h"
 #include "backend/backend.h"
 #include "media/visualize.h"
+#include "util/config.h"
 #include "util/log.h"
 
 typedef enum
@@ -42,6 +43,16 @@ typedef struct
   const char *output_path;
   const char *input_path;  /* --visualize, --info and --play source WAV */
   const char *take_prefix; /* --take; output_path is derived from it */
+  /*
+   * Where takes are kept, from --dir or the config file's take_dir. Empty means
+   * the working directory, which is what a bare filename has always meant.
+   *
+   * An array rather than a pointer into argv, because most of the time it does
+   * not come from argv at all - see util/config.h.
+   */
+  char take_dir[AUD_PATH_MAX];
+  /* whether to ask where a finished take should be kept; see term/prompt.h */
+  aud_prompt_mode prompt;
   /*
    * Files named after the first one, which only --info accepts: measuring a
    * session means measuring every take in it. Points into argv.

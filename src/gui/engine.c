@@ -658,6 +658,22 @@ int aud_engine_stop(aud_engine *e)
   return rc;
 }
 
+void aud_engine_rename_take(aud_engine *e, const char *path)
+{
+  if (e == NULL || path == NULL || path[0] == '\0')
+  {
+    return;
+  }
+
+  pthread_mutex_lock(&e->lock);
+  /* the writer holds e->path for as long as a take is open; see the start */
+  if (!e->take_open)
+  {
+    snprintf(e->path, sizeof(e->path), "%s", path);
+  }
+  pthread_mutex_unlock(&e->lock);
+}
+
 void aud_engine_status_get(aud_engine *e, aud_engine_status *out)
 {
   if (out == NULL)

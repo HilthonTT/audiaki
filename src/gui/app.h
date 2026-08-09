@@ -10,11 +10,13 @@
  *   main.c     the run loop, the engine's lifecycle, and the transport actions
  *   args.c     argv and the help text
  *   devices.c  the dropdown's list, and keeping it level with the hardware
+ *   save.c     where a finished take goes, and the dialog that asks
  *   screen.c   every pixel
  *
  * screen.c calls the transport actions and main.c calls the drawing, which is
  * the one cycle here and the usual one for a window: what is on screen is a
- * function of the state, and clicking what is on screen changes it.
+ * function of the state, and clicking what is on screen changes it. save.c is
+ * both at once for the one dialog it owns, which is why it is its own file.
  */
 #ifndef AUDIAKI_GUI_APP_H
 #define AUDIAKI_GUI_APP_H
@@ -25,6 +27,7 @@
 
 #include "backend/backend.h"
 #include "backend/device.h"
+#include "util/path.h"
 
 #include <stdio.h>
 
@@ -78,6 +81,49 @@ typedef struct
   int absent; /* the row kept for a device ALSA did not report, or -1 */
 } app_devices;
 
+/*
+ * Sub-folders the save dialog lists at once. A folder with more than this many
+ * directories in it is not one anybody is about to find a take in by looking,
+ * and the path can still be typed.
+ */
+#define APP_MAX_FOLDERS 512
+
+/* A single filename, at the length Linux filesystems stop at. */
+#define APP_NAME_MAX 256
+
+/* Which field of the save dialog the keyboard is talking to. */
+typedef enum
+{
+  APP_SAVE_FIELD_NAME = 0,
+  APP_SAVE_FIELD_FOLDER,
+  APP_SAVE_FIELD_COUNT,
+} app_save_field;
+
+/*
+ * The dialog that opens when a take stops: where to keep it, and what to call
+ * it. Nothing here has happened to the file yet - `take` is a complete, closed
+ * WAV sitting exactly where it was recorded, and it stays there until either
+ * button is pressed. Closing the window, or the dialog, keeps it.
+ */
+typedef struct
+{
+  int open;
+  char take[AUD_ENGINE_PATH_MAX]; /* the file as it was written */
+  char folder[AUD_PATH_MAX];      /* the folder being offered, as typed */
+  char name[APP_NAME_MAX];
+  double seconds; /* how long the take was, kept so the engine is not re-asked */
+  int focus;      /* an app_save_field */
+
+  /* the sub-folders of `folder`, and the strings the list widget reads */
+  char rows[APP_MAX_FOLDERS][APP_NAME_MAX];
+  const char *labels[APP_MAX_FOLDERS];
+  int count;
+  int scroll;
+  char listed[AUD_PATH_MAX]; /* the folder `rows` was built from */
+
+  char note[AUD_ENGINE_ERROR_MAX]; /* why the last attempt to save did not */
+} app_save;
+
 typedef struct
 {
   aud_engine *engine;
@@ -85,6 +131,15 @@ typedef struct
   aud_engine_config cfg;
 
   char prefix[512];
+  /*
+   * Where takes are kept, from --dir or the config file. Empty means the
+   * working directory. The prefix above is placed in it once, at startup, so
+   * everything after that is holding a path rather than half of one.
+   */
+  char take_dir[AUD_PATH_MAX];
+  /* whether stopping a take opens the dialog that asks where it should go */
+  int want_dialog;
+  app_save save;
   /*
    * What monitoring the next engine to open should come up with: -M at
    * startup, and whatever was on when a device was lost and later returned.
@@ -181,6 +236,27 @@ void app_begin_take(app *a);
 void app_stop_take(app *a, const aud_engine_status *st);
 void app_toggle_record(app *a, const aud_engine_status *st);
 void app_cancel_render(app *a);
+
+/*
+ * Done with the take at `path`: start its video, if one was asked for. Called
+ * when the take stops, or - with the dialog on - once it has been answered,
+ * because ffmpeg reads the WAV and it should read it where it ended up.
+ */
+void app_finish_take(app *a, const char *path);
+
+/* -- save.c ---------------------------------------------------------------- */
+
+/* Ask where the take at `path`, `seconds` long, should be kept. */
+void app_save_open(app *a, const char *path, double seconds);
+
+/*
+ * Draw the dialog and carry out what was clicked. Called from the drawing, over
+ * the top of everything else, and only while a->save.open.
+ */
+void app_save_draw(app *a);
+
+/* Answer it as if "Keep here" had been pressed. Escape, and closing the window. */
+void app_save_dismiss(app *a);
 
 /* -- screen.c -------------------------------------------------------------- */
 

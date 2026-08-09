@@ -22,6 +22,8 @@ complete -c audiaki-gui -s b -l backend -d 'Audio system to talk to' -x -a 'auto
 complete -c audiaki-gui -s r -l rate -d 'Sample rate in Hz' -x -a '44100 48000 88200 96000 192000'
 complete -c audiaki-gui -s c -l channels -d 'Channel count' -x -a '1 2 4 6 8'
 complete -c audiaki-gui -s o -l take -d 'Take name prefix' -r
+complete -c audiaki-gui -l dir -d 'Folder to keep takes in' -x -a '(__fish_complete_directories)'
+complete -c audiaki-gui -l no-dialog -d 'Do not ask where a take should be kept when it stops'
 complete -c audiaki-gui -s s -l style -d 'Visualiser style to start on' -x -a 'bars mirror radial scope waterfall tuner'
 complete -c audiaki-gui -l preroll -d 'Keep SECS of audio while idle, so takes start earlier' -x
 

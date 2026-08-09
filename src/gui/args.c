@@ -15,6 +15,7 @@
 #include "take/preroll.h"
 #include "util/log.h"
 #include "util/parse.h"
+#include "util/path.h"
 #include "version.h"
 
 #include <stdio.h>
@@ -30,6 +31,10 @@ void app_usage(FILE *out, const app *a)
           "  -r, --rate HZ        sample rate (default: %u)\n"
           "  -c, --channels N     channel count (default: %u)\n"
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
+          "      --dir FOLDER     keep takes in FOLDER (default: the config\n"
+          "                       file's take_dir, or here)\n"
+          "      --no-dialog      do not ask where a take should be kept when\n"
+          "                       it stops; leave it where it was recorded\n"
           "  -s, --style NAME     visualiser style (default: %s)\n"
           "  -V, --video          also render an MP4 of the visualiser\n"
           "      --video-silent   render that MP4 without the take's audio\n"
@@ -89,6 +94,11 @@ int app_parse_args(app *a, int argc, char **argv)
       a->want_video_audio = 0;
       continue;
     }
+    if (strcmp(arg, "--no-dialog") == 0)
+    {
+      a->want_dialog = 0;
+      continue;
+    }
 
     /* everything below takes a value */
     if (i + 1 >= argc)
@@ -123,6 +133,16 @@ int app_parse_args(app *a, int argc, char **argv)
     else if (strcmp(arg, "-o") == 0 || strcmp(arg, "--take") == 0)
     {
       snprintf(a->prefix, sizeof(a->prefix), "%s", value);
+    }
+    /* expanded here for the same reason the CLI expands it: a quoted '~' never
+     * reached the shell, and one out of a config file never went near it */
+    else if (strcmp(arg, "--dir") == 0)
+    {
+      if (aud_path_expand(a->take_dir, sizeof(a->take_dir), value) != 0)
+      {
+        aud_error("cannot work out where '%s' is", value);
+        return 2;
+      }
     }
     else if (strcmp(arg, "-s") == 0 || strcmp(arg, "--style") == 0)
     {

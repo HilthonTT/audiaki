@@ -8,7 +8,9 @@
 #include "take/preroll.h"
 #include "take/take.h"
 #include "term/meter.h"
+#include "term/prompt.h"
 #include "util/log.h"
+#include "util/path.h"
 #include "util/signals.h"
 
 #include <errno.h>
@@ -761,28 +763,179 @@ static int output_is_free(const char *path, int overwrite)
   return 0;
 }
 
+/*
+ * Work out the file this invocation writes, from the name that was given and
+ * the folder takes are kept in.
+ *
+ * The folder is created here rather than left to wav_open(): the point of
+ * configuring one is not to have to think about it, and a recorder that
+ * refuses because the folder it was told to use is not there yet has missed
+ * that point. Only the configured folder, though - a name that says where it
+ * goes still fails on a missing directory exactly as it always did, because
+ * there the directory is part of what was typed.
+ */
+static int place_take(char *dst, size_t size, const aud_options *opts)
+{
+  const char *name = opts->take_prefix != NULL ? opts->take_prefix : opts->output_path;
+  char prefix[AUD_PATH_MAX];
+
+  if (aud_path_place(prefix, sizeof(prefix), opts->take_dir, name) != 0)
+  {
+    aud_error("'%s' in '%s' is too long a path to record to", name, opts->take_dir);
+    return -1;
+  }
+
+  if (opts->take_dir[0] != '\0' && strchr(name, '/') == NULL &&
+      aud_path_mkdirs(opts->take_dir) != 0)
+  {
+    aud_perror("cannot use %s", opts->take_dir);
+    return -1;
+  }
+
+  if (opts->take_prefix == NULL)
+  {
+    if ((size_t)snprintf(dst, size, "%s", prefix) >= size)
+    {
+      aud_error("'%s' is too long a path to record to", prefix);
+      return -1;
+    }
+    return output_is_free(dst, opts->overwrite) ? 0 : -1;
+  }
+
+  if (aud_take_next(dst, size, prefix) != 0)
+  {
+    aud_error("cannot pick a take name from '%s'", prefix);
+    aud_info("the prefix may be too long, or the first %u takes may all exist",
+             AUD_TAKE_MAX_NUMBER);
+    return -1;
+  }
+
+  aud_info("recording %s", dst);
+  return 0;
+}
+
+/* Whether there is any point asking where the take should be kept. */
+static int should_ask(const aud_options *opts)
+{
+  if (opts->prompt == AUD_PROMPT_NEVER)
+  {
+    return 0;
+  }
+  if (opts->prompt == AUD_PROMPT_ALWAYS)
+  {
+    return 1;
+  }
+
+  /* --quiet asked for errors only, and a question is not one */
+  return opts->log_level != AUD_LOG_QUIET && aud_prompt_available();
+}
+
+/*
+ * Ask where the finished take should be kept, and put it there.
+ *
+ * Everything here is arranged around one rule: the take has just been played,
+ * it cannot be played again, and nothing this does may lose it. So the file is
+ * already complete and safe on disk before the first question is asked, a
+ * refused answer leaves it exactly where it is, and a move that fails says so
+ * and says where the take still is.
+ *
+ * `path` is updated to wherever it ended up. The folder it is already in is
+ * the default answer, which with a take_dir configured is that folder: the
+ * common case is Enter, Enter, and the take stays where it was always going.
+ */
+static void store_take(char *path, size_t size)
+{
+  char folder[AUD_PATH_MAX];
+  char name[AUD_PATH_MAX];
+
+  if (aud_path_dirname(folder, sizeof(folder), path) != 0 ||
+      snprintf(name, sizeof(name), "%s", aud_path_basename(path)) < 0)
+  {
+    return;
+  }
+
+  for (;;)
+  {
+    char answer[AUD_PATH_MAX];
+    char target[AUD_PATH_MAX];
+    char shown[AUD_PATH_MAX];
+
+    /*
+     * Offered with '~' back in it, and expanded again out of the answer. A
+     * home directory written out in full is most of the width of the line and
+     * none of what it says.
+     */
+    if (aud_path_shorten(shown, sizeof(shown), folder) != 0)
+    {
+      snprintf(shown, sizeof(shown), "%s", folder);
+    }
+
+    if (aud_prompt_line("folder", shown, answer, sizeof(answer)) != 0 ||
+        aud_path_expand(folder, sizeof(folder), answer) != 0)
+    {
+      aud_info("kept %s", path);
+      return;
+    }
+
+    if (aud_prompt_line("name", name, answer, sizeof(answer)) != 0 ||
+        (size_t)snprintf(name, sizeof(name), "%s", answer) >= sizeof(name))
+    {
+      aud_info("kept %s", path);
+      return;
+    }
+
+    if (aud_path_join(target, sizeof(target), folder, name) != 0)
+    {
+      aud_warn("that is too long a path; the take is still at %s", path);
+      return;
+    }
+
+    if (strcmp(target, path) == 0)
+    {
+      aud_info("kept %s", path);
+      return;
+    }
+
+    if (aud_path_mkdirs(folder) != 0)
+    {
+      aud_perror("cannot use %s", folder);
+      continue;
+    }
+
+    if (aud_path_move(path, target) == 0)
+    {
+      snprintf(path, size, "%s", target);
+      aud_info("stored %s", path);
+      return;
+    }
+
+    /*
+     * The one failure worth another go round: a name that is taken is a name
+     * the user can change, and asking beats either clobbering the file that is
+     * there or giving up on the one just recorded.
+     */
+    if (errno == EEXIST)
+    {
+      aud_warn("%s already exists", target);
+      continue;
+    }
+
+    aud_perror("cannot move the take to %s", target);
+    aud_info("it is still at %s", path);
+    return;
+  }
+}
+
 int aud_cmd_record(const aud_options *opts)
 {
   aud_device_config cfg;
   aud_device dev;
   aud_recorder_options rec;
-  char take_path[4096];
-  const char *output = opts->output_path;
+  aud_recorder_stats stats;
+  char output[AUD_PATH_MAX];
   int rc;
 
-  if (opts->take_prefix != NULL)
-  {
-    if (aud_take_next(take_path, sizeof(take_path), opts->take_prefix) != 0)
-    {
-      aud_error("cannot pick a take name from '%s'", opts->take_prefix);
-      aud_info("the prefix may be too long, or the first %u takes may all exist",
-               AUD_TAKE_MAX_NUMBER);
-      return EXIT_FAILURE;
-    }
-    output = take_path;
-    aud_info("recording %s", output);
-  }
-  else if (!output_is_free(output, opts->overwrite))
+  if (place_take(output, sizeof(output), opts) != 0)
   {
     return EXIT_FAILURE;
   }
@@ -817,8 +970,23 @@ int aud_cmd_record(const aud_options *opts)
   rec.metadata = opts->metadata;
   rec.note = opts->note;
 
-  rc = recorder_run(&dev, &rec, NULL);
+  rc = recorder_run(&dev, &rec, &stats);
   aud_device_close(&dev);
 
-  return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (rc != 0)
+  {
+    return EXIT_FAILURE;
+  }
+
+  /*
+   * Nothing to ask about when the take was abandoned while armed: there is no
+   * file, and offering to put it somewhere would be a question about a
+   * recording that was never made.
+   */
+  if (!stats.cancelled && should_ask(opts))
+  {
+    store_take(output, sizeof(output));
+  }
+
+  return EXIT_SUCCESS;
 }

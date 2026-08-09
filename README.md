@@ -78,6 +78,7 @@ audiaki --tune                       # tune up before playing anything
 audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum -t 1:30 take02.wav  # 90 seconds, watching the spectrum
 audiaki --take session               # record the next free session-NNN.wav
+audiaki --dir ~/Takes --take session # ...kept in one folder
 audiaki --channel 1 take03.wav       # a stereo interface, one instrument -> mono
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M take05.wav                # hear it while it records (headphones!)
@@ -88,6 +89,14 @@ audiaki --info session-*.wav         # ...and the rest of them, a row each
 audiaki --play take01.wav            # ...and what does it sound like?
 audiaki --visualize take01.wav       # render take01.mp4
 audiaki-gui                          # the desktop app
+```
+
+When a take finishes, audiaki asks where to keep it and what to call it — Enter
+twice keeps it where it is, and the window asks the same in a dialog. Where they
+go by default is one line in `~/.config/audiaki/config`:
+
+```ini
+take_dir = ~/Takes
 ```
 
 Every option, the meter, the tuner, pre-roll, monitoring, the metronome, take
@@ -129,8 +138,8 @@ system are in [DESIGN.md](DESIGN.md#layout).
 Linux only, through ALSA or PipeWire, on little-endian hosts. Recordings are
 plain 44-byte PCM WAV, so they stop at the 4 GB RIFF limit — about 3.5 hours of
 24-bit stereo at 48 kHz. The tuner is monophonic, video rendering shells out to
-`ffmpeg`, and the desktop app writes numbered takes to the working directory
-with no file dialog. The full list is in
+`ffmpeg`, and the desktop app's save dialog browses folders rather than being
+the system's own file chooser. The full list is in
 [docs/USAGE.md](docs/USAGE.md#limitations).
 
 ## Credits

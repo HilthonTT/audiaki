@@ -106,6 +106,39 @@ void aud_ui_meter(Rectangle bounds, float level, float peak_hold);
 int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *selected,
                 int enabled, int dim);
 
+/* What a text field reports about the frame it was drawn in. */
+#define AUD_UI_FIELD_CLICKED 1   /* the pointer went down on it: give it focus */
+#define AUD_UI_FIELD_SUBMITTED 2 /* Enter, while it had focus */
+#define AUD_UI_FIELD_EDITED 4    /* the text changed */
+
+/*
+ * A single line of editable text, held in `text` and never longer than `size`
+ * including its terminator. Returns the AUD_UI_FIELD_* bits above.
+ *
+ * Focus belongs to the caller rather than to the widget: a dialog knows how
+ * many fields it has and which of them Tab should move to, and an immediate
+ * mode control redrawn from scratch every frame knows neither. So this only
+ * says that it was clicked, and edits when it is told it has focus.
+ *
+ * Text longer than the box shows its end rather than its beginning, because
+ * the end is where the caret is and where a path says which file it means.
+ */
+int aud_ui_field(Rectangle bounds, char *text, size_t size, int focused, int enabled);
+
+/* The height of one row of a list, which is also how it is scrolled. */
+#define AUD_UI_LIST_ROW 26.0f
+
+/*
+ * A scrolling list of rows filling `bounds`, with `*scroll` the index of the
+ * top visible one, written through. Returns the row clicked this frame, or -1.
+ *
+ * `marked` is drawn as the current one, or -1 for none. Unlike the dropdown
+ * this has no selection of its own: it is used to walk through folders, where
+ * clicking a row means "go there" rather than "this one is now chosen".
+ */
+int aud_ui_list(Rectangle bounds, const char *const *items, int count, int marked,
+                int *scroll, int enabled);
+
 /* Rows of an open dropdown drawn before it starts scrolling instead. */
 #define AUD_UI_DROPDOWN_MAX_ROWS 8
 

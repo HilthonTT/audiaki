@@ -29,6 +29,9 @@ complete -c audiaki -s t -l duration -d 'Stop after SS, MM:SS or HH:MM:SS' -x
 complete -c audiaki -s p -l period -d 'Period size in frames' -x
 complete -c audiaki -s n -l periods -d 'Periods per buffer' -x
 complete -c audiaki -l take -d 'Write the next free PREFIX-001.wav' -r
+complete -c audiaki -l dir -d 'Folder to keep takes in' -x -a '(__fish_complete_directories)'
+complete -c audiaki -l prompt -d 'After the take, ask where to keep it and what to call it'
+complete -c audiaki -l no-prompt -d 'Do not ask where to keep the take'
 complete -c audiaki -l preroll -d 'Hold SECS and wait for Enter before recording' -x
 complete -c audiaki -l note -d 'Stamp the take with a note, up to 200 characters' -x
 complete -c audiaki -l no-metadata -d 'Write a plain 44-byte header, unstamped'

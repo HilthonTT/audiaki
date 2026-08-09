@@ -408,6 +408,141 @@ static void text_fit(float x, float y, int size, Color color, const char *text,
   DrawText(TextFormat("%s...", buf), (int)x, (int)y, size, color);
 }
 
+/*
+ * Append `c` to `text` if there is room. Printable ASCII only: the fields this
+ * is used for name files, DrawText() draws the default font, and a character
+ * that arrives as one code point and leaves as a box helps nobody.
+ */
+static int field_append(char *text, size_t size, int c, size_t len)
+{
+  if (c < 0x20 || c > 0x7e || len + 1 >= size)
+  {
+    return 0;
+  }
+
+  text[len] = (char)c;
+  text[len + 1] = '\0';
+  return 1;
+}
+
+int aud_ui_field(Rectangle bounds, char *text, size_t size, int focused, int enabled)
+{
+  float roundness;
+  float pad = 9.0f;
+  size_t len;
+  int result = 0;
+  int hover;
+
+  if (text == NULL || size == 0 || bounds.width <= 2.0f * pad)
+  {
+    return 0;
+  }
+
+  hover = enabled && hovering(bounds);
+  len = strlen(text);
+  roundness = UI_CORNER / bounds.height;
+
+  if (enabled && focused)
+  {
+    int c;
+
+    while ((c = GetCharPressed()) != 0)
+    {
+      if (field_append(text, size, c, len))
+      {
+        len++;
+        result |= AUD_UI_FIELD_EDITED;
+      }
+    }
+
+    if (len > 0 && (IsKeyPressed(KEY_BACKSPACE) || IsKeyPressedRepeat(KEY_BACKSPACE)))
+    {
+      text[--len] = '\0';
+      result |= AUD_UI_FIELD_EDITED;
+    }
+
+    /* the two the terminal has taught everyone: clear the line, paste over it */
+    if (IsKeyDown(KEY_LEFT_CONTROL) || IsKeyDown(KEY_RIGHT_CONTROL))
+    {
+      if (IsKeyPressed(KEY_U) && len > 0)
+      {
+        text[0] = '\0';
+        len = 0;
+        result |= AUD_UI_FIELD_EDITED;
+      }
+      if (IsKeyPressed(KEY_V))
+      {
+        const char *paste = GetClipboardText();
+
+        if (paste != NULL)
+        {
+          for (; *paste != '\0'; paste++)
+          {
+            if (!field_append(text, size, (unsigned char)*paste, len))
+            {
+              continue;
+            }
+            len++;
+            result |= AUD_UI_FIELD_EDITED;
+          }
+        }
+      }
+    }
+
+    if (IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_KP_ENTER))
+    {
+      result |= AUD_UI_FIELD_SUBMITTED;
+    }
+  }
+
+  DrawRectangleRounded(bounds, roundness, 8,
+                       enabled ? mix(AUD_UI_BG, AUD_UI_PANEL, 0.5f)
+                               : mix(AUD_UI_PANEL, AUD_UI_BG, 0.5f));
+  DrawRectangleRoundedLines(
+      bounds, roundness, 8,
+      focused ? AUD_UI_ACCENT
+              : (hover ? mix(AUD_UI_EDGE, AUD_UI_ACCENT, 0.5f) : AUD_UI_EDGE));
+
+  {
+    float inner = bounds.width - 2.0f * pad;
+    float y = bounds.y + (bounds.height - 18.0f) / 2.0f;
+    const char *shown = text;
+    float width;
+
+    /*
+     * Scrolled from the right: the caret is at the end of the line, and a
+     * field that showed the start of a long path would hide the part being
+     * typed. Whole characters at a time, so nothing is drawn half off the box.
+     */
+    while (*shown != '\0' && (float)MeasureText(shown, 18) > inner - 8.0f)
+    {
+      shown++;
+    }
+    width = (float)MeasureText(shown, 18);
+
+    DrawText(shown, (int)(bounds.x + pad), (int)y, 18,
+             enabled ? AUD_UI_TEXT : fade_to(AUD_UI_MUTED, 0.45f));
+
+    /* a caret that blinks, so a field with focus is obvious while it is empty */
+    if (enabled && focused && fmod(GetTime(), 1.0) < 0.55)
+    {
+      DrawRectangleRec((Rectangle){bounds.x + pad + width + 1.0f, y - 1.0f, 2.0f, 20.0f},
+                       AUD_UI_ACCENT);
+    }
+  }
+
+  if (hover)
+  {
+    SetMouseCursor(MOUSE_CURSOR_IBEAM);
+  }
+  if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+  {
+    result |= AUD_UI_FIELD_CLICKED;
+  }
+
+  return result;
+}
+
 static void clamp_scroll(int *scroll, int count, int rows)
 {
   if (*scroll > count - rows)
@@ -418,6 +553,83 @@ static void clamp_scroll(int *scroll, int count, int rows)
   {
     *scroll = 0;
   }
+}
+
+int aud_ui_list(Rectangle bounds, const char *const *items, int count, int marked,
+                int *scroll, int enabled)
+{
+  int rows;
+  int clicked = -1;
+
+  if (items == NULL || scroll == NULL || bounds.height < AUD_UI_LIST_ROW)
+  {
+    return -1;
+  }
+
+  DrawRectangleRounded(bounds, 6.0f / bounds.height, 8, AUD_UI_BG);
+  DrawRectangleRoundedLines(bounds, 6.0f / bounds.height, 8, AUD_UI_EDGE);
+
+  rows = (int)(bounds.height / AUD_UI_LIST_ROW);
+  if (rows > count)
+  {
+    rows = count;
+  }
+
+  if (count > rows && enabled && hovering(bounds))
+  {
+    *scroll -= (int)GetMouseWheelMove();
+  }
+  clamp_scroll(scroll, count, rows);
+
+  if (count == 0)
+  {
+    aud_ui_text_centred(bounds, 16, AUD_UI_MUTED, "nothing here");
+    return -1;
+  }
+
+  for (int i = 0; i < rows; i++)
+  {
+    int item = *scroll + i;
+    Rectangle row = {bounds.x + 3.0f, bounds.y + 3.0f + (float)i * AUD_UI_LIST_ROW,
+                     bounds.width - 6.0f, AUD_UI_LIST_ROW};
+    int row_hover = enabled && hovering(row);
+    Color text = AUD_UI_TEXT;
+
+    if (row_hover)
+    {
+      DrawRectangleRounded(row, 0.35f, 6, mix(AUD_UI_PANEL, AUD_UI_ACCENT, 0.35f));
+      text = WHITE;
+      SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+    }
+    else if (item == marked)
+    {
+      text = AUD_UI_ACCENT;
+    }
+    else if (!enabled)
+    {
+      text = fade_to(AUD_UI_MUTED, 0.45f);
+    }
+
+    text_fit(row.x + 8.0f, row.y + (row.height - 16.0f) / 2.0f, 16, text, items[item],
+             row.width - 16.0f);
+
+    if (row_hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT))
+    {
+      clicked = item;
+    }
+  }
+
+  /* the same "there is more of this" note the dropdown carries */
+  if (count > rows)
+  {
+    char more[48];
+
+    snprintf(more, sizeof(more), "%d-%d of %d", *scroll + 1, *scroll + rows, count);
+    aud_ui_text_right(bounds.x + bounds.width - 4.0f, bounds.y + bounds.height + 3.0f, 14,
+                      AUD_UI_MUTED, more);
+  }
+
+  return clicked;
 }
 
 int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *selected,

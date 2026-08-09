@@ -9,6 +9,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A take gets asked where it should live. The recorder offers a folder and a
+  name once the file is closed - Enter twice keeps it exactly where it is - and
+  the window opens a dialog with the same two questions, the folder it was
+  written in, and the sub-folders of that folder to click through. Naming a take
+  is a job for after it has been played, not for the moment between the count-in
+  and the first note, so nothing is asked before the recording and the file is
+  complete on disk before the first question appears. Every way out that is not
+  an answer leaves the take where it was recorded: Ctrl+C, end of input, **Keep
+  here**, `Esc`, and any failure. A name that is already taken is asked again
+  rather than written over.
+
+  In the terminal this only happens when there is a terminal to ask at - both
+  standard input and standard error, and not `--quiet` - so a pipeline never
+  stops for a question nobody is there to answer. `--prompt` asks anyway and
+  `--no-prompt` never does; the window has `--no-dialog`.
+
+- A config file, `~/.config/audiaki/config`, for the two answers that are the
+  same every session: `take_dir`, the folder a take named without one is written
+  into, and `prompt`, whether to ask about it afterwards. Both binaries read it,
+  everything in it is a default the command line still overrides, and a file
+  that is not there is the behaviour audiaki always had. `--dir` sets the folder
+  for one invocation.
+
+  The folder applies before the first frame is captured rather than by moving
+  the take afterwards, so a long session is not copied twice, and it is created
+  if it is not there. A name that already says where it goes - anything with a
+  slash in it, or an absolute path - is left alone.
+
 - The desktop app explains itself. `?` - or the button now beside the device
   picker - puts every key it answers to over the window, and `Esc` takes it
   away. The keys were real and documented and completely invisible, which for

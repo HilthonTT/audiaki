@@ -12,6 +12,7 @@ covers the decisions behind it, and is aimed at anyone changing the code.
 - [Rendering video](#rendering-video)
 - [Pitch detection](#pitch-detection)
 - [Pre-roll](#pre-roll)
+- [Where takes go](#where-takes-go)
 - [Measuring a take](#measuring-a-take)
 - [What a take carries](#what-a-take-carries)
 - [Playing one back](#playing-one-back)
@@ -63,9 +64,12 @@ src/
     ffmpeg_posix.c  its fork/exec/pipe implementation
   term/
     meter.c/.h    the terminal peak and spectrum displays
+    prompt.c/.h   the one question the recorder asks back
   util/         no domain of its own
     log.c/.h      stderr diagnostics
     parse.c/.h    strict value parsing, shared with the window
+    path.c/.h     joining, creating and moving, without ever clobbering
+    config.c/.h   the preferences that outlive an invocation
     jsonout.c/.h  the little JSON --json needs
     ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
     signals.c/.h  the shared Ctrl+C flag
@@ -74,6 +78,7 @@ src/
     main.c        the run loop, the engine's lifecycle, the transport actions
     args.c        argv and the help text
     devices.c     the dropdown's list, kept level with the hardware
+    save.c        where a finished take goes, and the dialog that asks
     screen.c      every pixel
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
@@ -284,6 +289,41 @@ before you press anything, which is what makes the meters live — so `--preroll
 there just means every take begins that far back. Nothing is kept while a take
 is recording or paused: audio already in the file is not held to be written
 twice, and audio you paused out is not smuggled back in by resuming.
+
+## Where takes go
+
+Two rules, and everything else follows from them.
+
+**A take is never written twice.** The folder is decided before the device is
+opened, so `--dir` and `take_dir` place the file rather than move it afterwards.
+A forty minute session going to an external drive is written there once; a
+recorder that copied it at the end would sit there for a minute doing nothing
+visible, which is where people reach for Ctrl+C.
+
+**A take is never lost to a question.** So nothing is asked before recording —
+the answer to "what should this be called?" is a number, handed out by
+`take.c`, and it can be changed later. Afterwards is different: the WAV is
+closed and complete on disk before the first prompt is drawn, and every way out
+of the question except answering it leaves the file exactly where it is. That
+includes Ctrl+C, end of input, `Esc`, the window's close button, and any
+failure at all.
+
+The move itself is `aud_path_move()`, and deliberately not `rename(2)`: rename
+replaces its destination without a word, and the one thing this must never do is
+drop a good take on top of an older one. A hard link claims the name atomically
+and the original goes only once it is held; across filesystems, where there is
+no link to make, the bytes are copied under an `O_EXCL` create and the original
+is removed after they all arrived. `EEXIST` comes back to the caller, which asks
+again.
+
+The terminal asks only when there is a terminal to ask at, which is the same
+reason `--preroll` treats end of input as a keypress: a program waiting on a
+question nobody can answer is a program that has hung. The window has no such
+doubt — someone is looking at it — so its dialog opens unless it was turned off.
+
+One consequence worth naming: with **Video** on, the render waits for the dialog
+rather than starting beside it. The MP4 is made from the take, and it should be
+made from wherever the take ended up.
 
 ## Measuring a take
 

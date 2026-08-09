@@ -54,7 +54,7 @@ static Rectangle header_help(Rectangle r)
  */
 static void tip(const app *a, Rectangle bounds, const char *text)
 {
-  if (a->device_menu_open || a->help_open)
+  if (a->device_menu_open || a->help_open || a->save.open)
   {
     return;
   }
@@ -73,7 +73,8 @@ static void draw_header(app *a, Rectangle r)
    * The keys are the fast way to drive this and they are invisible, so there is
    * something to click that says what they are.
    */
-  if (aud_ui_toggle(help, "?", a->help_open, AUD_UI_ACCENT, !a->device_menu_open))
+  if (aud_ui_toggle(help, "?", a->help_open, AUD_UI_ACCENT,
+                    !a->device_menu_open && !a->save.open))
   {
     a->help_open = !a->help_open;
   }
@@ -146,8 +147,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   int recording = st->state == AUD_ENGINE_RECORDING;
   int paused = st->state == AUD_ENGINE_PAUSED;
   int rendering = a->render != NULL;
-  /* an open menu or the shortcut list covers these, so nothing takes a click */
-  int covered = a->device_menu_open || a->help_open;
+  /* an open menu, dialog or shortcut list covers these, so none takes a click */
+  int covered = a->device_menu_open || a->help_open || a->save.open;
   int live = (recording || paused) && !covered;
   int usable = st->state != AUD_ENGINE_FAILED && !covered;
 
@@ -513,10 +514,17 @@ void app_draw_fatal(app *a)
   /* last, so an open menu covers the message rather than the other way round */
   if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
                       &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
-                      1))
+                      !a->save.open))
   {
     app_switch_device(a, previous);
   }
+
+  /*
+   * Drawn here too. Losing the capture device does not make the take that was
+   * already recorded any less worth filing, and a dialog that vanished with the
+   * interface would leave it wherever it happened to land.
+   */
+  app_save_draw(a);
 
   aud_ui_tooltip_draw();
 }
@@ -582,7 +590,7 @@ void app_draw_frame(app *a, const aud_engine_status *st)
       tabs.height = 26.0f;
 
       if (aud_ui_tabs(tabs, a->style_labels, AUD_VIZ_MODE_COUNT, &a->style_selected,
-                      !a->device_menu_open && !a->help_open, 1))
+                      !a->device_menu_open && !a->help_open && !a->save.open, 1))
       {
         aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
       }
@@ -600,7 +608,7 @@ void app_draw_frame(app *a, const aud_engine_status *st)
    */
   if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
                       &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
-                      !live && !a->help_open))
+                      !live && !a->help_open && !a->save.open))
   {
     app_switch_device(a, previous);
   }
@@ -616,6 +624,9 @@ void app_draw_frame(app *a, const aud_engine_status *st)
   {
     draw_help(a, header);
   }
+
+  /* over even the shortcut list: it is the one thing here waiting on an answer */
+  app_save_draw(a);
 
   /* last of all, so it is over every control that could have asked for it */
   aud_ui_tooltip_draw();

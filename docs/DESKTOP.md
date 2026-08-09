@@ -12,6 +12,7 @@ and [DESIGN.md](../DESIGN.md) covers why it is built this way.
 - [Building it](#building-it)
 - [Options](#options)
 - [Controls](#controls)
+- [Keeping a take](#keeping-a-take)
 - [Recording video](#recording-video)
 - [The visualisers](#the-visualisers)
 
@@ -46,6 +47,8 @@ audiaki-gui                          # open the window on the default device
 audiaki-gui -D plughw:CARD=Box,DEV=0 # ...on a particular interface
 audiaki-gui -b alsa                  # ...through a particular backend
 audiaki-gui -o session               # name takes session-001.wav and up
+audiaki-gui --dir ~/Takes            # ...written in that folder
+audiaki-gui --no-dialog              # never ask where a take should go
 audiaki-gui -s waterfall             # start on a particular visualiser
 audiaki-gui -s tuner                 # ...come up as a tuner
 audiaki-gui -V                       # also render an MP4 of each take
@@ -87,6 +90,10 @@ back.
 | `F` | Fullscreen |
 | `?` | The list of keys, over the window; `Esc` closes it |
 
+While the save dialog is up it has the keyboard and the rest of the window is
+disabled behind it — including Record, so the take being named cannot be lost
+to a keypress meant for the dialog.
+
 The same list is behind the `?` in the header, because a shortcut nobody can
 find is a shortcut nobody has. Resting the pointer on any control says what it
 does and which key does it too — including the greyed-out ones, which is the
@@ -104,6 +111,31 @@ earlier take.
 
 **Monitoring feeds your input back to your speakers**, which will howl if you
 are recording a microphone in the same room. It starts off for that reason.
+
+## Keeping a take
+
+Stopping opens a small dialog over the window: the name the take was given, the
+folder it was written in, and the sub-folders of that folder to click through.
+
+Nothing has happened to the file when it opens. It is a complete, closed WAV
+sitting exactly where it was recorded, and it stays there unless **Save** is
+pressed — **Keep here**, `Esc` and closing the window all leave it alone. Save
+moves it, creating the folder if it has to, and never lands on a file that is
+already there: a name that is taken comes back as a line under the fields
+rather than as a take you no longer have.
+
+`Tab` moves between the two fields, `Enter` saves, `Esc` keeps it where it is.
+Clicking a folder goes into it; `..` goes up. A path can also be typed or
+pasted into the folder field, and the list follows it.
+
+Where the take was written in the first place is `--dir`, or `take_dir` in the
+config file — the same file the CLI reads, described in
+[USAGE.md](USAGE.md#the-config-file). `--no-dialog`, or `prompt = no` in that
+file, turns the question off and leaves every take where it was recorded.
+
+With **Video** on, the render starts once the dialog is answered rather than
+beside it: the MP4 is made from the take, and it should be made from wherever
+the take ended up.
 
 ## Recording video
 

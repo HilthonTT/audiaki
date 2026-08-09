@@ -94,6 +94,10 @@ _audiaki()
             _audiaki_files
             return
             ;;
+        --dir)
+            _audiaki_files -d
+            return
+            ;;
         # free text, with nothing to guess
         --note)
             return
@@ -109,7 +113,8 @@ _audiaki()
 
     if [[ $cur == -* ]]; then
         opts="--device --backend --rate --channels --channel --format --duration --period
-              --periods --output --force --take --preroll --note --no-metadata
+              --periods --output --force --take --dir --prompt --no-prompt
+              --preroll --note --no-metadata
               --spectrum --no-meter
               --monitor --monitor-device --monitor-gain
               --click --click-beats --click-gain
@@ -158,6 +163,10 @@ _audiaki_gui()
             _audiaki_files
             return
             ;;
+        --dir)
+            _audiaki_files -d
+            return
+            ;;
         --video-fps | --preroll | --pre-roll)
             return
             ;;
@@ -165,8 +174,9 @@ _audiaki_gui()
 
     $split && return
 
-    opts="--device --backend --rate --channels --take --style --preroll --video
-          --video-silent --video-size --video-fps --monitor --verbose --help"
+    opts="--device --backend --rate --channels --take --dir --no-dialog --style
+          --preroll --video --video-silent --video-size --video-fps --monitor
+          --verbose --help"
     mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
 }
 

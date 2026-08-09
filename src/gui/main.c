@@ -23,7 +23,9 @@
 #include "backend/backend.h"
 #include "backend/device.h"
 #include "take/take.h"
+#include "util/config.h"
 #include "util/log.h"
+#include "util/path.h"
 #include "version.h"
 
 #include <math.h>
@@ -222,15 +224,14 @@ void app_begin_take(app *a)
 }
 
 /*
- * Stop the take, and start rendering its video if that was asked for. The WAV
- * has to be closed first: ffmpeg opens it to read the audio, and a header that
- * has not been patched yet describes a file of zero length.
+ * Stop the take, and then deal with what it left behind. The WAV has to be
+ * closed first, before either of those: ffmpeg opens it to read the audio, and
+ * a header that has not been patched yet describes a file of zero length.
  */
 void app_stop_take(app *a, const aud_engine_status *st)
 {
-  aud_render_options opts;
-  char video[AUD_RENDER_PATH_MAX];
   char take[AUD_ENGINE_PATH_MAX];
+  double seconds = st->elapsed;
 
   snprintf(take, sizeof(take), "%s", st->path);
 
@@ -240,6 +241,32 @@ void app_stop_take(app *a, const aud_engine_status *st)
   } /* the failure is already in the status line */
 
   a->render_note[0] = '\0';
+
+  /*
+   * The video waits for the dialog rather than starting beside it: it is
+   * rendered from the take, and it should be rendered from wherever the take
+   * ends up rather than from where it happened to be written.
+   */
+  if (a->want_dialog && take[0] != '\0')
+  {
+    app_save_open(a, take, seconds);
+    return;
+  }
+
+  app_finish_take(a, take);
+}
+
+/*
+ * The take is where it is going to stay. Render its video, if one was asked
+ * for; otherwise there is nothing left to do with it.
+ */
+void app_finish_take(app *a, const char *path)
+{
+  aud_render_options opts;
+  char video[AUD_RENDER_PATH_MAX];
+  char take[AUD_ENGINE_PATH_MAX];
+
+  snprintf(take, sizeof(take), "%s", path);
 
   if (!a->want_video || take[0] == '\0' || a->render != NULL)
   {
@@ -385,6 +412,17 @@ static void app_update_title(app *a, const aud_engine_status *st)
 
 static void handle_keys(app *a, const aud_engine_status *st)
 {
+  /*
+   * The dialog is asking where the last take goes and has fields to type into,
+   * so it takes the keyboard outright - and takes it first, because a window
+   * where R starts a new take while the last one is being named would lose the
+   * one being named.
+   */
+  if (a->save.open)
+  {
+    return;
+  }
+
   /* the menu owns the keyboard while it is open, same as it owns the mouse */
   if (a->device_menu_open)
   {
@@ -454,14 +492,55 @@ static void handle_keys(app *a, const aud_engine_status *st)
   }
 }
 
+/*
+ * Put the take prefix in the folder takes are kept in, and make sure that
+ * folder exists. Once, at startup, so nothing downstream is holding half a
+ * path - and early enough that a folder that cannot be created is a message
+ * before the window rather than a take that will not start inside it.
+ */
+static void app_place_prefix(app *a)
+{
+  char placed[AUD_PATH_MAX];
+
+  if (a->take_dir[0] == '\0' || strchr(a->prefix, '/') != NULL)
+  {
+    return;
+  }
+
+  if (aud_path_mkdirs(a->take_dir) != 0)
+  {
+    aud_perror("cannot use %s, keeping takes here instead", a->take_dir);
+    a->take_dir[0] = '\0';
+    return;
+  }
+
+  if (aud_path_place(placed, sizeof(placed), a->take_dir, a->prefix) != 0 ||
+      (size_t)snprintf(a->prefix, sizeof(a->prefix), "%s", placed) >= sizeof(a->prefix))
+  {
+    aud_warn("'%s' in '%s' is too long a name, keeping takes here instead", a->prefix,
+             a->take_dir);
+    snprintf(a->prefix, sizeof(a->prefix), "%s", APP_DEFAULT_PREFIX);
+  }
+}
+
 int main(int argc, char *argv[])
 {
   static app a;
+  aud_config cfg;
   int rc;
 
   aud_engine_config_defaults(&a.cfg);
   snprintf(a.prefix, sizeof(a.prefix), "%s", APP_DEFAULT_PREFIX);
   a.monitor_gain = 1.0f;
+
+  /*
+   * The same file the CLI reads, and for the same reason: where takes are kept
+   * is answered once and then meant every session. Before parse_args, which is
+   * what lets --dir and --no-dialog say otherwise.
+   */
+  aud_config_load(&cfg);
+  snprintf(a.take_dir, sizeof(a.take_dir), "%s", cfg.take_dir);
+  a.want_dialog = cfg.prompt != AUD_PROMPT_NEVER;
   a.want_video_audio = 1; /* before parse_args, which only ever clears it */
   a.video_width = AUD_RENDER_DEFAULT_WIDTH;
   a.video_height = AUD_RENDER_DEFAULT_HEIGHT;
@@ -491,6 +570,8 @@ int main(int argc, char *argv[])
   {
     return rc < 0 ? EXIT_SUCCESS : rc;
   }
+
+  app_place_prefix(&a);
 
   /* before the first enumeration: the dropdown is filled from whichever answers */
   if (aud_backend_select(a.backend) != 0)

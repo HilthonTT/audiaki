@@ -9,7 +9,9 @@
 #include "media/visualize.h"
 #include "take/meta.h"
 #include "take/preroll.h"
+#include "util/config.h"
 #include "util/parse.h"
+#include "util/path.h"
 #include "version.h"
 
 #include <getopt.h>
@@ -71,6 +73,9 @@ enum
   OPT_CLICK_BEATS,
   OPT_CLICK_GAIN,
   OPT_CHANNEL,
+  OPT_DIR,
+  OPT_PROMPT,
+  OPT_NO_PROMPT,
 };
 
 static const struct option long_options[] = {
@@ -83,6 +88,9 @@ static const struct option long_options[] = {
     {"period", required_argument, NULL, 'p'},
     {"periods", required_argument, NULL, 'n'},
     {"output", required_argument, NULL, 'o'},
+    {"dir", required_argument, NULL, OPT_DIR},
+    {"prompt", no_argument, NULL, OPT_PROMPT},
+    {"no-prompt", no_argument, NULL, OPT_NO_PROMPT},
     {"force", no_argument, NULL, 'y'},
     {"quiet", no_argument, NULL, 'q'},
     {"verbose", no_argument, NULL, 'v'},
@@ -123,6 +131,7 @@ void cli_defaults(aud_options *opts)
 {
   const char *env_device = getenv("AUDIAKI_DEVICE");
   const char *env_backend = getenv("AUDIAKI_BACKEND");
+  aud_config cfg;
 
   memset(opts, 0, sizeof(*opts));
   opts->command = AUD_CMD_RECORD;
@@ -162,6 +171,15 @@ void cli_defaults(aud_options *opts)
   opts->log_level = AUD_LOG_NORMAL;
 
   /*
+   * Read before argv rather than after it, so every one of these is something
+   * an option on the command line can still say otherwise about. The file not
+   * being there is the ordinary case and leaves all of it alone.
+   */
+  aud_config_load(&cfg);
+  snprintf(opts->take_dir, sizeof(opts->take_dir), "%s", cfg.take_dir);
+  opts->prompt = cfg.prompt;
+
+  /*
    * A bad $AUDIAKI_BACKEND is left at auto rather than rejected. An exported
    * variable with a typo in it would otherwise make every invocation fail,
    * including the --help that would explain the spelling.
@@ -186,6 +204,12 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   int opt;
   int click_shape = 0;          /* --click-beats or --click-gain was typed */
   int monitor_device_given = 0; /* --monitor-device was typed */
+  /*
+   * Typed, as opposed to read out of the config file. The config applies to
+   * every invocation, so it cannot be what makes one rejected for asking about
+   * takes on a command that does not make any.
+   */
+  int store_given = 0;
 
   cli_defaults(opts);
 
@@ -259,6 +283,27 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case 'o':
       opts->output_path = optarg;
+      break;
+    /*
+     * Expanded here rather than carried as typed: a shell expands '~' before
+     * audiaki ever sees it, but a value quoted to stop that, or one that came
+     * out of a config file, has to be expanded by someone.
+     */
+    case OPT_DIR:
+      if (aud_path_expand(opts->take_dir, sizeof(opts->take_dir), optarg) != 0)
+      {
+        bad_value("--dir", optarg, "a folder to keep takes in");
+        return CLI_EXIT_USAGE;
+      }
+      store_given = 1;
+      break;
+    case OPT_PROMPT:
+      opts->prompt = AUD_PROMPT_ALWAYS;
+      store_given = 1;
+      break;
+    case OPT_NO_PROMPT:
+      opts->prompt = AUD_PROMPT_NEVER;
+      store_given = 1;
       break;
     case 'y':
       opts->overwrite = 1;
@@ -473,6 +518,18 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   if (opts->take_prefix != NULL && opts->command != AUD_CMD_RECORD)
   {
     aud_error("--take only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * Both are about what happens to a take once it is made, so on a command
+   * that makes none they would be quietly ignored. --visualize in particular
+   * writes a file and could plausibly be thought to honour --dir; it does not,
+   * and -o is how that one is placed.
+   */
+  if (store_given && opts->command != AUD_CMD_RECORD)
+  {
+    aud_error("--dir, --prompt and --no-prompt only apply when recording");
     return CLI_EXIT_USAGE;
   }
 

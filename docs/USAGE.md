@@ -10,6 +10,7 @@ systems also have `man audiaki`.
 - [Reading the meter](#reading-the-meter)
 - [Tuning up](#tuning-up)
 - [Numbering takes](#numbering-takes)
+- [Where takes are kept](#where-takes-are-kept)
 - [Recording one channel](#recording-one-channel)
 - [Pre-roll](#pre-roll)
 - [Hearing yourself](#hearing-yourself)
@@ -32,6 +33,7 @@ audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum take01.wav        # record, watching the spectrum
 audiaki -t 1:30 take02.wav           # record 90 seconds
 audiaki --take session               # record the next free session-NNN.wav
+audiaki --dir ~/Takes --take session # ...in that folder
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M --click 120 take05.wav    # play to a metronome (headphones!)
 audiaki --info take01.wav            # how did that take come out?
@@ -53,6 +55,9 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-n, --periods N` | Periods per buffer (default 4) |
 | `-y, --force` | Overwrite an existing output file |
 | `--take PREFIX` | Write the next free `PREFIX-001.wav` |
+| `--dir FOLDER` | Keep takes in `FOLDER`, so a bare filename is written there |
+| `--prompt` | After the take, ask which folder to keep it in and what to call it |
+| `--no-prompt` | Never ask, whatever the config file says |
 | `--note TEXT` | Stamp the take with a note, up to 200 characters |
 | `--no-metadata` | Write a plain 44-byte header with nothing about the take |
 | `--preroll SECS` | Hold SECS and wait for Enter; the take starts that far back |
@@ -181,6 +186,72 @@ It picks the first free number, so it never overwrites anything and `--force`
 never comes into it. A prefix that already carries an extension keeps it —
 `--take session.wav` also writes `session-001.wav` — and a path works as well
 as a bare name: `--take takes/riff`.
+
+## Where takes are kept
+
+By default a take is written where you are standing, which is fine until you
+notice a year of recordings scattered across every folder you have ever run a
+shell in. `--dir` says where they go instead:
+
+```sh
+audiaki --dir ~/Takes --take session   # ~/Takes/session-001.wav
+```
+
+The folder is created if it is not there. It only applies to a name that is
+only a name: `--dir ~/Takes -o riff.wav` writes `~/Takes/riff.wav`, but
+`-o sub/riff.wav` already says where it goes and is left alone, as is any
+absolute path.
+
+Typing `--dir` every time would be no better than typing the folder, so it has
+a config file — see [below](#the-config-file).
+
+### Being asked afterwards
+
+Once the take is over, audiaki offers it a folder and a name:
+
+```
+audiaki: wrote ~/Takes/session-001.wav: 42.10 s, 14.2 MiB, 0 xrun(s)
+folder [~/Takes]:
+name [session-001.wav]: riff-clean-take.wav
+audiaki: stored /home/you/Takes/riff-clean-take.wav
+```
+
+Enter accepts what is offered, so keeping it where it is costs two keystrokes.
+Anything else moves it there, creating the folder if it has to and never
+landing on a file that is already there — a name that is taken is asked again
+rather than overwritten. Ctrl+C or Ctrl+D at either question keeps the take
+where it is.
+
+This only happens when there is a terminal to ask at. A run whose input is a
+pipe, or a file, or `/dev/null` is never asked, and neither is `--quiet` — a
+script that suddenly waited for a folder name would look like a script that had
+hung. `--prompt` asks anyway, and `--no-prompt` never does.
+
+Nothing here is asked before the recording. Where a take is going is a question
+for afterwards; where it is being written is settled before the first frame
+arrives, so there is no moment when audio is playing and nothing is catching it.
+
+### The config file
+
+`~/.config/audiaki/config`, or `$XDG_CONFIG_HOME/audiaki/config`, or whatever
+`$AUDIAKI_CONFIG` names. It holds the two answers that are the same every
+session:
+
+```ini
+# where a take named without a folder is written
+take_dir = ~/Takes
+
+# ask where to keep it afterwards: auto, yes or no
+prompt = auto
+```
+
+`auto` is the default described above. Everything in the file is a default that
+the command line still overrides, `#` and `;` start a comment, and a line that
+makes no sense is reported and skipped rather than stopping the recording.
+
+The window reads the same file: `take_dir` is where its numbered takes are
+written, and `prompt = no` is the same as starting it with `--no-dialog`. See
+[DESKTOP.md](DESKTOP.md).
 
 ## Recording one channel
 
@@ -546,8 +617,11 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
-- The desktop app records to numbered takes in the working directory. There is
-  no file dialog, and no playback of a finished take.
+- The desktop app records to numbered takes in `take_dir`, or the working
+  directory, and asks about them afterwards in a dialog of its own. That dialog
+  browses folders rather than being the system's file chooser, and it lists
+  neither hidden folders nor the files already in one. There is still no
+  playback of a finished take.
 - Video is rendered after the take, so a long take with video on means waiting
   roughly its own length again. Cancelling is always available, and the audio
   is safe on disk regardless.
