@@ -249,6 +249,28 @@ typedef struct
    */
   int overdub;
   double latency_ms;
+
+  /*
+   * The rest of what the transport will do when it is next pressed. Intents
+   * rather than state, like `overdub` above: the player is told them when a
+   * pass starts, and holds none of them between passes.
+   *
+   * The tempo they are counted on is not here - it belongs to the project, is
+   * saved with it, and is what the ruler draws. See edit/doc.h.
+   */
+  int loop;     /* Play goes round the selection instead of stopping at it */
+  int click_on; /* the metronome plays over whatever else is being heard */
+  float click_gain;
+
+  /*
+   * A tempo named on the command line, held until there is a document to put
+   * it in - and applied after any project has opened, so `--tempo` means it
+   * rather than being overwritten by what the session was saved at. Zero in
+   * either is "nothing was said"; a bare pulse is one beat to the bar, which
+   * click.h already treats as no bar at all.
+   */
+  double start_tempo;
+  unsigned start_beats;
   float *take_buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
   /* frames of those the current engine's channel count fits; 0 without one */
   size_t take_buf_frames;
@@ -420,6 +442,17 @@ void app_edit(app *a, app_edit_action action);
 
 /* Play from the cursor, or from the start of the selection. Stops if playing. */
 void app_toggle_play(app *a);
+
+/*
+ * Hand the player the transport's options: the tempo to count on, whether the
+ * metronome plays, and whether the pass goes round. Called before a pass
+ * starts and again whenever one of them changes, so a tempo nudged while
+ * something is playing takes without stopping it.
+ */
+void app_apply_transport(app *a);
+
+/* Change the tempo by `beats`, holding it to what the metronome will play. */
+void app_nudge_tempo(app *a, double beats);
 
 /* Mix the project - or the selection - down to a WAV. */
 void app_export(app *a, const char *path);

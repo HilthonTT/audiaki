@@ -29,6 +29,13 @@ complete -c audiaki-gui -l preroll -d 'Keep SECS of audio while idle, so takes s
 complete -c audiaki-gui -l no-overdub -d 'Do not play the project while recording over it'
 complete -c audiaki-gui -l latency -d 'Round-trip latency to place an overdub by' -x
 
+complete -c audiaki-gui -l tempo -d 'Tempo the ruler counts bars on' -x -a '60 80 90 100 110 120 140 160 180'
+complete -c audiaki-gui -l click -d 'That tempo, with the metronome already on' -x -a '60 80 90 100 110 120 140 160 180'
+complete -c audiaki-gui -l click-beats -d 'Beats to a bar, accenting the first' -x -a '1 2 3 4 5 6 7 8 12'
+complete -c audiaki-gui -l click-gain -d 'How loud the click is, 0.0 to 2.0' -x
+complete -c audiaki-gui -l grid -d 'Come up with the bar grid drawn and snapped to'
+complete -c audiaki-gui -l loop -d 'Come up looping what Play is given'
+
 complete -c audiaki-gui -s V -l video -d 'Also render an MP4 of each take'
 complete -c audiaki-gui -l video-silent -d 'Render that MP4 without the take\'s audio'
 complete -c audiaki-gui -l video-size -d 'Video size' -x -a '480p 720p 1080p 1440p 2160p'

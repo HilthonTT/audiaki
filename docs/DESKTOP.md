@@ -15,6 +15,7 @@ and [DESIGN.md](../DESIGN.md) covers why it is built this way.
 - [The layout](#the-layout)
 - [Recording onto the timeline](#recording-onto-the-timeline)
 - [Playing it back](#playing-it-back)
+- [Counting the bars](#counting-the-bars)
 - [Editing](#editing)
 - [Exporting](#exporting)
 - [Controls](#controls)
@@ -64,6 +65,12 @@ audiaki-gui -M                       # come up already monitoring
 audiaki-gui --preroll 10             # start each take 10 s before Record
 audiaki-gui --no-overdub             # do not play the project while recording
 audiaki-gui --latency 14             # place overdubs by a measured round trip
+audiaki-gui --tempo 96               # count the ruler in bars at 96 BPM
+audiaki-gui --click 96               # ...and play a metronome at it
+audiaki-gui --click 96 --click-beats 3   # ...in three
+audiaki-gui --click 96 --click-gain 0.8  # ...louder
+audiaki-gui --grid                   # come up with the bar grid on
+audiaki-gui --loop                   # come up looping whatever Play is given
 audiaki-gui take01.wav take02.wav    # open takes as tracks straight away
 audiaki-gui yesterday.aki            # ...or open a saved session
 ```
@@ -118,6 +125,55 @@ tracks and the view follows it.
 What you hear is the mix — every track that is not muted, at its gain and pan,
 with solo taking over the moment any track has it. It is the same mix **Export**
 writes, which is the point of it being one piece of code.
+
+**Loop**, or `L`, plays it round and round instead of stopping at the end.
+Select a bar and it repeats that bar until you stop it — which is what learning
+one is — and select nothing and it repeats from the cursor to the end. The
+bounds are fixed when playback starts, so moving the selection while it runs
+does not move the loop out from under you; stop and play again to move it.
+
+It can be turned on and off while something is playing, so a passage can be put
+on repeat without stopping it first. Recording never loops: a take runs
+straight through, and a loop underneath one would be music that repeated behind
+a performance that did not.
+
+## Counting the bars
+
+A session has a tempo. It is 120 to the bar of four until you say otherwise,
+and it is saved with the session rather than with the window — two people
+opening the same project see the same bar lines.
+
+The tempo cluster at the end of the edit bar is the whole of it: **Click**,
+`− 120 BPM +`, and **Grid**.
+
+- **Click**, or `C`, plays a metronome over whatever else you are hearing. It
+  is mixed into the output on its way to your headphones and nowhere near the
+  file — the take is written from the samples the interface delivered, whatever
+  was being played to the person making it. It runs under playback, under an
+  overdub, and on its own over an empty timeline, which is what a count-in is.
+- `−` and `+`, or the `-` and `+` keys, move the tempo a beat at a time; hold
+  `shift` for ten. It can be nudged while something is playing, which is how
+  anybody actually arrives at a tempo — against what they are already hearing.
+- **Grid**, or `G`, counts the ruler in bars instead of minutes and seconds,
+  draws the bar lines down the tracks, and puts the pointer on them: clicking,
+  scrubbing and dragging a selection all land on the nearest beat. Holding
+  `alt` steps off the grid for the one cut that has to go between two beats.
+
+The grid thins itself out as you zoom away — beats give way to bars, and bars
+double until they are far enough apart to be lines rather than a wash.
+
+The metronome and the ruler count the same grid, from the same tempo, both
+computed from the frame index rather than accumulated: beat 400 is where the
+arithmetic says it is, and the click you hear lands on the line you can see
+however long the session runs. That also survives a loop's seam — the click
+does not restart the bar wherever the loop happens to begin.
+
+**A click you play along to costs you the same round trip an overdub does**, so
+recording to one places the take a round trip earlier for the same reason and
+by the same measurement. See [Overdubbing](#overdubbing).
+
+There is one tempo for the whole session. No tempo changes, no time signature
+beyond how many beats get counted to a bar, and no subdivisions.
 
 ## Editing
 
@@ -204,11 +260,16 @@ take a round trip earlier than you pressed the button, because that is when the
 sound was actually made.
 
 **That only happens when there is something to play along to.** Recording from
-past the end of the project, with Overdub off, or with no output to play
-through, there is nothing to be late against — so the take starts exactly on the
-line you put it on, which is what you asked for. A correction is a guess about a
-delay, and guessing when nothing was played would move the take off the line for
-no reason.
+past the end of the project, with Overdub off and the metronome off, or with no
+output to play through, there is nothing to be late against — so the take starts
+exactly on the line you put it on, which is what you asked for. A correction is
+a guess about a delay, and guessing when nothing was played would move the take
+off the line for no reason.
+
+A metronome counts as something to play along to. It reaches you down the same
+output and costs the same round trip, so recording to a click gets the same
+correction — including with Overdub off, where the click plays and the project
+does not.
 
 The correction is estimated from the two queues, which is a starting point and
 not a measurement: the converters, the driver and the interface all add delay
@@ -244,12 +305,16 @@ and stereo unless every track in it is mono.
 | Control | Does |
 | --- | --- |
 | **Play** | Plays the selection, or from the cursor |
+| **Loop** | Plays it round and round rather than stopping at the end |
 | **Record** | Records onto the timeline at the cursor |
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
 | **Stop** | Closes the take; it is already on the timeline |
 | **Import** | Opens a WAV as a new track |
 | **Export** | Mixes down to a WAV |
 | **Open** / **Save** | Opens a session, or writes this one out |
+| **Click** | Plays a metronome at the session's tempo; heard, never recorded |
+| `− BPM +` | The tempo, a beat at a time; `shift` for ten |
+| **Grid** | Counts the ruler in bars, and puts the pointer on them |
 | **Overdub** | Plays the project while recording over it |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
@@ -262,6 +327,10 @@ and stereo unless every track in it is mono.
 | `space` | Play, or pause and resume once a take is running |
 | `R`, `ctrl+space` | Record from the cursor |
 | `S` | Stop the take or playback, or cancel a video render |
+| `L` | Loop what Play is given |
+| `C` | The metronome |
+| `G` | The bar grid; `alt` steps off it while it is on |
+| `-` / `+` | The tempo, a beat at a time; `shift` for ten |
 | `I` / `ctrl+E` | Import a WAV / export a mix |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |

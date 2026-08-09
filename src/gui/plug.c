@@ -354,6 +354,7 @@ void app_begin_take(app *a)
   uint64_t skip;
   uint64_t latency;
   long target;
+  int along;
 
   if (a->engine == NULL || aud_take_next(path, sizeof(path), a->prefix) != 0)
   {
@@ -366,17 +367,29 @@ void app_begin_take(app *a)
 
   /*
    * Playback first, because whether it started is what decides where the take
-   * goes. Overdubbing means there is something to be late against; recording
-   * from past the end of the project, or with the output refusing to open, or
-   * with Overdub off, means there is not - and then the take belongs exactly on
-   * the line, which is where it was asked for.
+   * goes. Playing along to something means hearing it late, whether that
+   * something is the project or the metronome counting over an empty
+   * timeline - so anything that opens an output is something the take has to
+   * be shifted back against. Nothing to play along to, or an output that will
+   * not open, and the take belongs exactly on the line where it was asked for.
    */
   latency = 0;
-  if (a->overdub && aud_doc_end(&a->doc) > at &&
-      aud_player_start(&a->player, &a->doc, at, aud_doc_end(&a->doc),
-                       a->cfg.monitor_device) == 0)
+  along = a->overdub && aud_doc_end(&a->doc) > at;
+
+  if (along || a->click_on)
   {
-    latency = app_latency_frames(a);
+    /* the project only when it was asked for; the click runs either way, and
+     * past the end of what is there, so the pass has no end of its own */
+    aud_player_set_mix(&a->player, along);
+    app_apply_transport(a);
+    aud_player_set_loop(&a->player, 0);
+
+    if (aud_player_start(&a->player, &a->doc, at,
+                         a->click_on ? AUD_PLAYER_OPEN_ENDED : aud_doc_end(&a->doc),
+                         a->cfg.monitor_device) == 0)
+    {
+      latency = app_latency_frames(a);
+    }
   }
 
   aud_latency_place(at, latency, &start, &skip);
@@ -415,8 +428,18 @@ void app_begin_take(app *a)
 
   if (latency > 0)
   {
-    app_set_status(a, "overdubbing %.50s (%.0f ms back)", aud_path_basename(path),
-                   1000.0 * (double)latency / aud_engine_rate(a->engine));
+    double back = 1000.0 * (double)latency / aud_engine_rate(a->engine);
+
+    if (along)
+    {
+      app_set_status(a, "overdubbing %.50s (%.0f ms back)", aud_path_basename(path),
+                     back);
+    }
+    else
+    {
+      app_set_status(a, "recording %.40s to the click (%.0f ms back)",
+                     aud_path_basename(path), back);
+    }
     return;
   }
 
@@ -764,6 +787,26 @@ void app_edit(app *a, app_edit_action action)
  * the two things anyone means by pressing play in an editor: "let me hear that
  * bit" and "let me hear the rest".
  */
+void app_apply_transport(app *a)
+{
+  aud_player_set_click(&a->player, a->click_on ? a->doc.tempo : 0.0, a->doc.beats_per_bar,
+                       a->click_gain);
+  /*
+   * Never while a take is open. A loop means playing the same seconds over
+   * and over, and a recording made against one would be a single straight
+   * take laid over music that repeated underneath it.
+   */
+  aud_player_set_loop(&a->player, a->loop && a->record_track < 0);
+}
+
+void app_nudge_tempo(app *a, double beats)
+{
+  aud_doc_set_tempo(&a->doc, a->doc.tempo + beats, a->doc.beats_per_bar);
+  a->project_dirty = 1;
+  app_apply_transport(a);
+  app_set_status(a, "%.0f BPM, %u to the bar", a->doc.tempo, a->doc.beats_per_bar);
+}
+
 void app_toggle_play(app *a)
 {
   uint64_t from;
@@ -776,7 +819,13 @@ void app_toggle_play(app *a)
     return;
   }
 
-  if (a->doc.count == 0)
+  /*
+   * With the metronome on there is always something to hear, even with an
+   * empty timeline: playing a bar in before the first take is exactly what a
+   * count-in is, and refusing it because no audio exists yet would be
+   * refusing the one thing it is for.
+   */
+  if (a->doc.count == 0 && !a->click_on)
   {
     app_set_status(a, "nothing to play yet");
     return;
@@ -792,12 +841,35 @@ void app_toggle_play(app *a)
     to = aud_doc_end(&a->doc);
   }
 
+  /*
+   * A click over an empty stretch has nothing to bound it, so it runs until
+   * it is stopped. Anything with audio in it plays that audio, looped or not.
+   */
+  if (to <= from)
+  {
+    to = AUD_PLAYER_OPEN_ENDED;
+  }
+
+  aud_player_set_mix(&a->player, 1);
+  app_apply_transport(a);
+
   if (aud_player_start(&a->player, &a->doc, from, to, a->cfg.monitor_device) != 0)
   {
     app_set_status(a, "cannot open an output to play through");
     return;
   }
 
+  if (to == AUD_PLAYER_OPEN_ENDED)
+  {
+    app_set_status(a, "counting at %.0f BPM", a->doc.tempo);
+    return;
+  }
+
+  if (a->loop)
+  {
+    app_set_status(a, "looping %.2f s", (double)(to - from) / a->doc.rate);
+    return;
+  }
   app_set_status(a, "playing %.2f s", (double)(to - from) / a->doc.rate);
 }
 
@@ -1260,6 +1332,46 @@ static void handle_keys(app *a, const aud_engine_status *st)
     a->viz_open = !a->viz_open;
   }
 
+  /* the three that count time: the loop, the metronome and the grid it beats on */
+  if (IsKeyPressed(KEY_L))
+  {
+    a->loop = !a->loop;
+    app_apply_transport(a);
+    app_set_status(a, "%s", a->loop ? "looping" : "playing straight through");
+  }
+
+  if (IsKeyPressed(KEY_C))
+  {
+    a->click_on = !a->click_on;
+    app_apply_transport(a);
+    if (a->click_on)
+    {
+      app_set_status(a, "metronome on at %.0f BPM", a->doc.tempo);
+    }
+    else
+    {
+      app_set_status(a, "metronome off");
+    }
+  }
+
+  if (IsKeyPressed(KEY_G))
+  {
+    a->timeline.grid = !a->timeline.grid;
+    app_set_status(a, "%s", a->timeline.grid ? "grid on - alt steps off it" : "grid off");
+  }
+
+  /* the tempo, without having to reach for the spinner */
+  if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD))
+  {
+    app_nudge_tempo(a,
+                    IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT) ? 10.0 : 1.0);
+  }
+  if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT))
+  {
+    app_nudge_tempo(a, IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT) ? -10.0
+                                                                               : -1.0);
+  }
+
   if (IsKeyPressed(KEY_S))
   {
     if (a->render != NULL)
@@ -1419,6 +1531,7 @@ int aud_plug_init(int argc, char **argv)
    * nothing, there being nothing to play.
    */
   a->overdub = 1;
+  a->click_gain = (float)AUD_CLICK_DEFAULT_GAIN;
   /* the sentinel, until the config file or --latency says otherwise below */
   a->latency_ms = -1.0;
 
@@ -1561,6 +1674,19 @@ int aud_plug_init(int argc, char **argv)
 
     app_load_track(a, a->open_paths[i]);
   }
+
+  /*
+   * After the files, so a tempo asked for on the command line is the one that
+   * holds rather than the one a session happened to be saved at. Said nothing
+   * and the project keeps its own, which for a new one is 120 to the bar of
+   * four.
+   */
+  if (a->start_tempo > 0.0 || a->start_beats > 0u)
+  {
+    aud_doc_set_tempo(&a->doc, a->start_tempo > 0.0 ? a->start_tempo : a->doc.tempo,
+                      a->start_beats > 0u ? a->start_beats : a->doc.beats_per_bar);
+  }
+
   if (a->doc.count > 0)
   {
     aud_timeline_fit(&a->timeline, &a->doc,

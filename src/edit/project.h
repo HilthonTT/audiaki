@@ -15,6 +15,7 @@
  *
  *   audiaki-project 1
  *   rate 48000
+ *   tempo 120.000000 4
  *   cursor 0
  *   selection 0 0
  *   source takes/take-001.wav
@@ -28,6 +29,12 @@
  * by index: `clip SOURCE OFFSET FRAMES START FADE_IN FADE_OUT`, all in frames.
  * Sources under the project's own folder are written relative to it, so a
  * session folder can be copied to another disk and still open.
+ *
+ * `tempo BPM BEATS_PER_BAR` is what the ruler counts its bars on and what the
+ * metronome plays; a project without one opens at 120 to the bar of four. It
+ * is a line rather than a version bump for the reason the reader below steps
+ * over what it does not know: a session written by a newer audiaki should
+ * still open in an older one, minus whatever the older one cannot show.
  *
  * What is deliberately not here is the audio. A project refers to the takes; it
  * does not contain them. Move a take away and the project says which one is

@@ -45,6 +45,16 @@ void app_usage(FILE *out, const app *a)
           "                       starts that far before Record was pressed\n"
           "      --no-overdub     do not play the project while recording over\n"
           "                       it; the default is to play along to it\n"
+          "      --tempo BPM      the tempo the ruler counts bars on and the\n"
+          "                       metronome plays (default: %.0f, or whatever a\n"
+          "                       session names)\n"
+          "      --click BPM      that tempo, with the metronome already on\n"
+          "      --click-beats N  beats to a bar, accenting the first\n"
+          "                       (default: %u; 1 for a bare pulse)\n"
+          "      --click-gain X   how loud the click is, 0.0 to 2.0\n"
+          "                       (default: %.1f)\n"
+          "      --grid           come up with the bar grid drawn and snapped to\n"
+          "      --loop           come up looping what Play is given\n"
           "      --latency MS     round-trip latency to place an overdub by\n"
           "                       (default: estimated from the buffers)\n"
           "  -M, --monitor        start with playback monitoring on\n"
@@ -63,11 +73,13 @@ void app_usage(FILE *out, const app *a)
           "\n"
           "keys: space record or pause, S stop, I import, M monitor, B the\n"
           "      visualiser panel, V style, 1-6 a style outright, F fit,\n"
+          "      L loop, C metronome, G grid, -/+ tempo,\n"
           "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
           "      ctrl+wheel zoom, ? the list of them in the window\n",
           a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
           aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
-          a->video_height, a->video_fps);
+          a->video_height, a->video_fps, AUD_DOC_DEFAULT_TEMPO, AUD_CLICK_DEFAULT_BEATS,
+          AUD_CLICK_DEFAULT_GAIN);
 }
 
 /* Returns 0 to carry on, or a process exit code to stop with. */
@@ -111,6 +123,16 @@ int app_parse_args(app *a, int argc, char **argv)
     if (strcmp(arg, "--no-overdub") == 0)
     {
       a->overdub = 0;
+      continue;
+    }
+    if (strcmp(arg, "--grid") == 0)
+    {
+      a->timeline.grid = 1;
+      continue;
+    }
+    if (strcmp(arg, "--loop") == 0)
+    {
+      a->loop = 1;
       continue;
     }
 
@@ -221,6 +243,48 @@ int app_parse_args(app *a, int argc, char **argv)
                   AUD_LATENCY_MAX_MS);
         return 2;
       }
+    }
+    /*
+     * --tempo sets the grid, --click sets it and turns the metronome on. Two
+     * spellings because they are two different asks: a session counted in bars
+     * that nobody wants to hear counted, and a take played to a click.
+     */
+    else if (strcmp(arg, "--tempo") == 0 || strcmp(arg, "--click") == 0 ||
+             strcmp(arg, "--metronome") == 0)
+    {
+      if (parse_double(value, AUD_CLICK_BPM_MIN, AUD_CLICK_BPM_MAX, &a->start_tempo) != 0)
+      {
+        aud_error("bad tempo '%s' (%.0f to %.0f BPM)", value, AUD_CLICK_BPM_MIN,
+                  AUD_CLICK_BPM_MAX);
+        return 2;
+      }
+      if (strcmp(arg, "--tempo") != 0)
+      {
+        a->click_on = 1;
+      }
+      /* a tempo is only any use if it can be seen, and the ruler is where it
+       * is seen; --tempo with no grid would be a setting with no effect */
+      a->timeline.grid = 1;
+    }
+    else if (strcmp(arg, "--click-beats") == 0)
+    {
+      if (parse_uint(value, 1u, AUD_CLICK_BEATS_MAX, &a->start_beats) != 0)
+      {
+        aud_error("bad beats per bar '%s' (1 to %u)", value, AUD_CLICK_BEATS_MAX);
+        return 2;
+      }
+    }
+    else if (strcmp(arg, "--click-gain") == 0)
+    {
+      double gain = 0.0;
+
+      if (parse_double(value, AUD_CLICK_GAIN_MIN, AUD_CLICK_GAIN_MAX, &gain) != 0)
+      {
+        aud_error("bad click gain '%s' (%.1f to %.1f)", value, AUD_CLICK_GAIN_MIN,
+                  AUD_CLICK_GAIN_MAX);
+        return 2;
+      }
+      a->click_gain = (float)gain;
     }
     else if (strcmp(arg, "--video-fps") == 0)
     {

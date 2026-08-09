@@ -656,7 +656,9 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   is late against the grid the clicks were generated on by however long the
   output buffer is. It keeps the tempo; it does not sample-align the take.
 - The click is one tempo for the whole take. No tempo changes, no subdivisions,
-  and nothing is written into the file to say what it was set to.
+  and nothing is written into the file to say what it was set to. The desktop
+  app saves its tempo in the session rather than in the take, and it is one
+  tempo there too.
 - `--channel` picks one channel of the capture; it does not mix several down
   to one, and monitoring still plays every channel the device delivered.
 - `--play` runs start to finish. There is no seeking, no pausing and no
@@ -664,6 +666,9 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - The tuner is monophonic: one pitch at a time, no chords, and it looks between
   40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
   piccolo is not.
+- The desktop app's grid snaps to beats, not to bar lines or to subdivisions of
+  a beat, and it snaps the pointer rather than the arrow keys. A take already
+  recorded is not moved onto the grid by turning it on.
 - Rate and channels are fixed for the session in the desktop app; only the
   device can be changed from the window. A device that disappears mid-take ends
   that take where it stopped — what was written stays on disk, but the app does

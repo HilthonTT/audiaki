@@ -15,11 +15,20 @@
 #ifndef AUDIAKI_GUI_PLAYER_H
 #define AUDIAKI_GUI_PLAYER_H
 
+#include "audio/click.h"
 #include "edit/doc.h"
 #include "edit/mix.h"
 
 /* Frames mixed per pass; the output rarely wants more than this at once. */
 #define AUD_PLAYER_CHUNK 4096u
+
+/*
+ * A `to` that means "until something stops it". What a take runs against: the
+ * metronome has to keep counting past the end of what is on the timeline,
+ * because the whole point of recording to one is that there is nothing there
+ * yet.
+ */
+#define AUD_PLAYER_OPEN_ENDED UINT64_MAX
 
 typedef struct aud_monitor aud_monitor;
 
@@ -37,13 +46,68 @@ typedef struct
   uint64_t to;      /* where it stops */
   uint64_t written; /* frames handed over since it started */
   int playing;
+
+  /*
+   * Round and round [from, to) rather than stopping at it. Ignored for an
+   * open-ended pass, which has no end to come back from.
+   */
+  int looping;
+
+  /*
+   * Whether the project itself is heard. Off leaves the metronome alone with
+   * the stream, which is what recording with Overdub turned off and the click
+   * turned on asks for: count me in, but do not play me what is already there.
+   */
+  int mix_on;
+
+  /*
+   * The metronome, mixed over the project on its way out and into nothing
+   * else - the take is written from what the interface delivered, and a click
+   * you can hear on the recording is a click in the wrong place.
+   *
+   * Counted on the absolute project frame rather than on how long this pass
+   * has been running, so beat n is where the ruler draws it whatever the
+   * transport did to get there: seek into the middle of a session and the bar
+   * lines and the clicks still agree.
+   */
+  aud_click click;
+  int click_on;
+  /*
+   * What the click was asked for, kept apart from the generator above because
+   * a tempo can be set before there is a stream to play it through: the rate
+   * only arrives with the output, and these are what it is built from then.
+   */
+  double click_bpm; /* 0 when the metronome is off */
+  unsigned click_beats;
+  float click_gain;
 } aud_player;
 
 void aud_player_init(aud_player *p);
 
 /*
+ * Arm the metronome for the next pass, and for the one in progress. `bpm` of
+ * zero turns it off; anything else is taken as read from the document, whose
+ * tempo it is. Gain is peak amplitude, as click.h has it.
+ *
+ * Settable while playing so a tempo can be found by ear against what is
+ * already there, which is how anybody actually arrives at one.
+ */
+void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar, float gain);
+
+/* Whether the next pass, or this one, goes round rather than stopping. */
+void aud_player_set_loop(aud_player *p, int on);
+
+/* Whether the project is heard at all. On until something says otherwise. */
+void aud_player_set_mix(aud_player *p, int on);
+
+/*
  * Start playing `d` from `from` until `to`, through `device` (NULL for the
- * default). `to` of 0 plays to the end of the project.
+ * default). `to` of 0 plays to the end of the project, and
+ * AUD_PLAYER_OPEN_ENDED runs until it is stopped.
+ *
+ * An open-ended pass is allowed to start with nothing to play - a metronome
+ * over an empty timeline is a stream of silence with clicks in it, and that is
+ * exactly what counting a take in wants.
  *
  * Returns 0, or -1 after saying why through log.h - an output that will not
  * open is not fatal to anything, and the caller carries on without it.
@@ -59,11 +123,16 @@ void aud_player_stop(aud_player *p);
  * what keeps playback fed, so a window that stops drawing stops playing.
  *
  * Returns non-zero once the end has been reached and playback has stopped
- * itself, which is the caller's cue to put the transport back.
+ * itself, which is the caller's cue to put the transport back. A looping or
+ * open-ended pass never reaches one, so it only ever returns zero.
  */
 int aud_player_pump(aud_player *p, const aud_doc *d);
 
-/* Where playback has reached, allowing for what the output has not played yet. */
+/*
+ * Where playback has reached, allowing for what the output has not played yet.
+ * Inside [from, to) whatever the pass has done: a loop reports where round it
+ * is rather than how far it has been.
+ */
 uint64_t aud_player_head(const aud_player *p);
 
 int aud_player_playing(const aud_player *p);

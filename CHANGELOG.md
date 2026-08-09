@@ -9,6 +9,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- A tempo, and the three things that read it. A session now counts on one -
+  120 to the bar of four until told otherwise - and it is saved with the
+  session, so two people opening the same project see the same bar lines.
+
+  **Grid** (`G`) counts the ruler in bars instead of minutes and seconds, draws
+  the bar lines down the tracks, and puts the pointer on them: clicking,
+  scrubbing and dragging a selection land on the nearest beat, with `alt` to
+  step off for the cut that has to go between two. **Click** (`C`) plays a
+  metronome at that tempo - mixed into the output on its way to your
+  headphones and nowhere near the file, so a take made to one carries no click
+  in it. It runs under playback, under an overdub, and on its own over an empty
+  timeline, which is what a count-in is. `-` and `+` move the tempo a beat at a
+  time, while something is playing if that is how you want to find it.
+
+  The ruler and the metronome count one grid from one number, both computed
+  from the frame index rather than accumulated, so the click lands on the line
+  however long the session runs. Playing to a click costs the same round trip
+  playing to a backing track does, so recording to one places the take by the
+  same correction - `--latency` and all.
+
+  `--tempo`, `--click`, `--click-beats`, `--click-gain` and `--grid` set it up
+  from the command line. A `.aki` file gains a `tempo` line, which older
+  audiakis step over rather than refuse.
+
+- **Loop** (`L`), which plays the selection round and round rather than
+  stopping at the end of it. Select a bar and it repeats that bar, which is
+  what learning one is; select nothing and it repeats from the cursor. It can
+  be turned on and off without stopping what is playing. Recording never loops.
+  `--loop` comes up with it on.
+
 - The window can be rebuilt while it is running. `make HOTRELOAD=1 gui` builds
   it as a shell plus a library it loads, and F5 loads the library again: the
   device stays open, the timeline stays as it is, and a take that is recording

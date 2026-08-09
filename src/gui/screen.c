@@ -32,6 +32,21 @@
 #define SCREEN_BUTTON_MAX 96.0f
 #define SCREEN_BUTTON_GAP 5.0f
 
+/* Loop, which shares the transport row without taking a whole slot of it. */
+#define SCREEN_LOOP_W 52.0f
+
+/*
+ * The tempo cluster at the end of the edit bar: the metronome, the number it
+ * counts on and the grid it draws. One group because they are one idea - what
+ * a bar is - and separating them would mean hunting for the tempo in one row
+ * and the thing it drives in another.
+ */
+#define SCREEN_CLICK_W 52.0f
+#define SCREEN_STEP_W 26.0f
+#define SCREEN_TEMPO_W 60.0f
+#define SCREEN_GRID_W 46.0f
+#define SCREEN_ZOOM_W 34.0f
+
 /* The device dropdown's slot, which the header leaves clear for it. */
 static Rectangle header_picker(Rectangle r)
 {
@@ -207,30 +222,69 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   int playing = aud_player_playing(&a->player);
   float w = slot_width(r, 11);
   Rectangle play = slot_at(r, w, 0);
-  Rectangle rec = slot_at(r, w, 1);
-  Rectangle pause = slot_at(r, w, 2);
-  Rectangle stop = slot_at(r, w, 3);
-  Rectangle import = slot_at(r, w, 4);
-  Rectangle export_to = slot_at(r, w, 5);
-  Rectangle open_project = slot_at(r, w, 6);
-  Rectangle save_project = slot_at(r, w, 7);
+  /*
+   * Loop takes a slot of its own rather than a full one: it is a modifier on
+   * Play rather than a transport button in its own right, and giving it the
+   * same width as Record would say otherwise - as well as pushing the capture
+   * options off the end of the bar on a narrower window.
+   */
+  Rectangle loop = {play.x + play.width + SCREEN_BUTTON_GAP, r.y, SCREEN_LOOP_W,
+                    r.height};
+  Rectangle rest = r;
+  Rectangle rec;
+  Rectangle pause;
+  Rectangle stop;
+  Rectangle import;
+  Rectangle export_to;
+  Rectangle open_project;
+  Rectangle save_project;
+
+  rest.x = loop.x + loop.width + SCREEN_BUTTON_GAP;
+  rest.width = r.x + r.width - rest.x;
+
+  rec = slot_at(rest, w, 0);
+  pause = slot_at(rest, w, 1);
+  stop = slot_at(rest, w, 2);
+  import = slot_at(rest, w, 3);
+  export_to = slot_at(rest, w, 4);
+  open_project = slot_at(rest, w, 5);
+  save_project = slot_at(rest, w, 6);
 
   /*
    * Play first, because it is the one pressed most and the one the eye goes to
    * first. Recording is what the window was for; playing back is what it is for
    * once there is something on the timeline.
    */
+  /* the metronome is something to play even with an empty timeline, and
+   * counting a bar in before the first take is exactly what it is for */
   if (aud_ui_button(play, playing ? "Playing" : "Play", AUD_UI_OK,
-                    !covered(a) && !live && a->doc.count > 0))
+                    !covered(a) && !live && (a->doc.count > 0 || a->click_on)))
   {
     app_toggle_play(a);
   }
   tip(a, play,
-      a->doc.count == 0
-          ? "nothing on the timeline to play"
+      (a->doc.count == 0 && !a->click_on)
+          ? "nothing on the timeline to play - turn Click on to count instead"
           : (live ? "stop the take first"
                   : (playing ? "stop playing   space"
                              : "play the selection, or from the cursor   space")));
+
+  /*
+   * Beside Play because it is a way of playing rather than a thing of its
+   * own: what it changes is what happens when the passage being played runs
+   * out. Settable while it is running, so a passage can be put on repeat
+   * without stopping it first.
+   */
+  if (aud_ui_toggle(loop, "Loop", a->loop, AUD_UI_OK, !covered(a) && !live))
+  {
+    a->loop = !a->loop;
+    app_apply_transport(a);
+  }
+  tip(a, loop,
+      live ? "stop the take first"
+           : (aud_doc_has_range(&a->doc)
+                  ? "play the selection round and round   L"
+                  : "play round and round; select a passage to loop that   L"));
 
   /* a render holds the drawing thread, so no new take can start under it */
   if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD,
@@ -429,23 +483,95 @@ static const struct
 
 #define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
 
+/*
+ * The metronome, the tempo and the grid, drawn as one control at the end of
+ * the edit bar. The reading between the two steps is text rather than a field:
+ * a tempo is arrived at by nudging it against what you are playing until it
+ * sits right, not by typing a number you already knew.
+ */
+static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
+                               Rectangle reading, Rectangle faster, Rectangle grid)
+{
+  int usable = !covered(a);
+  int shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
+  double step = shift ? 10.0 : 1.0;
+  char text[32];
+
+  if (aud_ui_toggle(click, "Click", a->click_on, AUD_UI_WARN, usable))
+  {
+    a->click_on = !a->click_on;
+    app_apply_transport(a);
+  }
+  tip(a, click,
+      a->click_on ? "the metronome is playing - it is heard, never recorded   C"
+                  : "play a metronome over whatever is being heard   C");
+
+  if (aud_ui_button(slower, "-", AUD_UI_ACCENT, usable))
+  {
+    app_nudge_tempo(a, -step);
+  }
+  tip(a, slower, "slower; hold shift for ten at a time   -");
+
+  DrawRectangleRec(reading, AUD_UI_PANEL);
+  snprintf(text, sizeof(text), "%.0f BPM", a->doc.tempo);
+  aud_ui_text_centred(reading, 15, a->click_on ? AUD_UI_TEXT : AUD_UI_MUTED, text);
+  tip(a, reading, "the tempo this session is counted on; it is saved with it");
+
+  if (aud_ui_button(faster, "+", AUD_UI_ACCENT, usable))
+  {
+    app_nudge_tempo(a, step);
+  }
+  tip(a, faster, "faster; hold shift for ten at a time   +");
+
+  if (aud_ui_toggle(grid, "Grid", a->timeline.grid, AUD_UI_ACCENT, usable))
+  {
+    a->timeline.grid = !a->timeline.grid;
+  }
+  tip(a, grid,
+      a->timeline.grid ? "the ruler is counting bars; alt drops off the grid   G"
+                       : "count the ruler in bars, and put the pointer on them   G");
+}
+
 static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
 {
   int usable = !covered(a);
-  int total = SCREEN_EDIT_COUNT + 3; /* the three zoom buttons at the far end */
-  float w = slot_width(r, total);
-  float zoom_w = 34.0f;
-  Rectangle zoom_out = {r.x + r.width - zoom_w * 3.0f - SCREEN_BUTTON_GAP * 2.0f, r.y,
-                        zoom_w, r.height};
-  Rectangle zoom_in = {zoom_out.x + zoom_w + SCREEN_BUTTON_GAP, r.y, zoom_w, r.height};
-  Rectangle fit = {zoom_in.x + zoom_w + SCREEN_BUTTON_GAP, r.y, zoom_w, r.height};
+  Rectangle zoom_out = {r.x + r.width - SCREEN_ZOOM_W * 3.0f - SCREEN_BUTTON_GAP * 2.0f,
+                        r.y, SCREEN_ZOOM_W, r.height};
+  Rectangle zoom_in = {zoom_out.x + SCREEN_ZOOM_W + SCREEN_BUTTON_GAP, r.y, SCREEN_ZOOM_W,
+                       r.height};
+  Rectangle fit = {zoom_in.x + SCREEN_ZOOM_W + SCREEN_BUTTON_GAP, r.y, SCREEN_ZOOM_W,
+                   r.height};
+  Rectangle grid = {zoom_out.x - SCREEN_BUTTON_GAP - SCREEN_GRID_W, r.y, SCREEN_GRID_W,
+                    r.height};
+  /* the three of these butt up against each other: one control, not three */
+  Rectangle faster = {grid.x - SCREEN_BUTTON_GAP - SCREEN_STEP_W, r.y, SCREEN_STEP_W,
+                      r.height};
+  Rectangle reading = {faster.x - SCREEN_TEMPO_W, r.y, SCREEN_TEMPO_W, r.height};
+  Rectangle slower = {reading.x - SCREEN_STEP_W, r.y, SCREEN_STEP_W, r.height};
+  Rectangle click = {slower.x - SCREEN_BUTTON_GAP - SCREEN_CLICK_W, r.y, SCREEN_CLICK_W,
+                     r.height};
+  /*
+   * What is left for the edits, once the clusters at the far end have had
+   * theirs. Sized from the room that remains rather than from a slot count
+   * that pretends they are buttons in the same row: a fixed group and a
+   * sharing one do not divide the same way.
+   */
+  Rectangle row = r;
+  float w;
+
+  row.width = click.x - SCREEN_BUTTON_GAP - row.x;
+  if (row.width < SCREEN_BUTTON_MIN)
+  {
+    row.width = SCREEN_BUTTON_MIN;
+  }
+  w = slot_width(row, SCREEN_EDIT_COUNT);
 
   for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
   {
-    Rectangle slot = slot_at(r, w, i);
+    Rectangle slot = slot_at(row, w, i);
     int enabled = usable;
 
-    if (slot.x + slot.width > zoom_out.x - SCREEN_BUTTON_GAP)
+    if (slot.x + slot.width > row.x + row.width)
     {
       break; /* the window is too narrow for the rest; zoom stays reachable */
     }
@@ -479,6 +605,8 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
     }
     tip(a, slot, enabled ? screen_edits[i].tip : "select some audio on a track first");
   }
+
+  draw_tempo_cluster(a, click, slower, reading, faster, grid);
 
   if (aud_ui_button(zoom_out, "-", AUD_UI_ACCENT, usable))
   {
@@ -717,6 +845,10 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
 static const char *const help_keys[][2] = {
     {"space", "record, or pause and resume a take"},
     {"S", "stop the take, or cancel a video render"},
+    {"L", "play the selection round and round"},
+    {"C", "the metronome; it is heard, never recorded"},
+    {"G", "count the ruler in bars; alt drops off the grid"},
+    {"- / +", "the tempo, a beat at a time; shift for ten"},
     {"I", "import a WAV as a new track"},
     {"M", "playback monitoring on and off"},
     {"B", "show or hide the visualiser panel"},

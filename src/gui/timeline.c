@@ -57,6 +57,88 @@ static const double tl_steps[] = {0.001, 0.002, 0.005, 0.01,  0.02,   0.05,  0.1
 
 #define TL_STEP_COUNT ((int)(sizeof(tl_steps) / sizeof(tl_steps[0])))
 
+/*
+ * How close together the tempo grid is allowed to get before it thins itself
+ * out: beats give way to bars, and bars double until they are far enough
+ * apart to be lines rather than a wash. A ruler that drew every beat of a
+ * three minute session would be a grey band.
+ */
+#define TL_GRID_BEAT_PX 9.0
+#define TL_GRID_BAR_PX 26.0
+
+/* The zoom at which there is room to number the beats as well as the bars. */
+#define TL_GRID_LABEL_BEAT_PX 54.0
+
+/* The tempo grid as it lands on screen, worked out once and drawn twice. */
+typedef struct
+{
+  double beat; /* seconds to a beat */
+  double bar;
+  double step; /* seconds between the lines actually drawn */
+  int per_bar;
+  int beats; /* non-zero when `step` is one beat rather than whole bars */
+} tl_grid;
+
+/*
+ * Work out what the grid looks like at this zoom, or say there is none. No
+ * grid is the answer whenever the switch is off, the project has no usable
+ * tempo, or the view is so far out that even doubled bars would not separate.
+ */
+static int grid_of(const aud_timeline *tl, const aud_doc *d, tl_grid *g)
+{
+  double frames = aud_doc_beat_frames(d);
+
+  if (!tl->grid || frames <= 0.0 || d->rate == 0)
+  {
+    return 0;
+  }
+
+  g->per_bar = d->beats_per_bar < 2u ? 1 : (int)d->beats_per_bar;
+  g->beat = frames / (double)d->rate;
+  g->bar = g->beat * (double)g->per_bar;
+
+  if (g->beat * tl->zoom >= TL_GRID_BEAT_PX)
+  {
+    g->step = g->beat;
+    g->beats = 1;
+    return 1;
+  }
+
+  g->beats = 0;
+  g->step = g->bar;
+  while (g->step * tl->zoom < TL_GRID_BAR_PX)
+  {
+    g->step *= 2.0;
+    /* an hour between lines is not a grid any more, whatever the arithmetic */
+    if (g->step > 3600.0)
+    {
+      return 0;
+    }
+  }
+  return 1;
+}
+
+/*
+ * The beat a grid line falls on, counted from the start of the project.
+ *
+ * From the line's index rather than from an accumulated total, for the reason
+ * click.h counts its beats the same way: a session is thousands of beats long,
+ * and adding a step at a time would have the grid and the metronome drift
+ * apart over one.
+ */
+static long grid_beat_at(const tl_grid *g, long line)
+{
+  return (long)floor((double)line * g->step / g->beat + 0.5);
+}
+
+/* Where the leftmost line on screen is, as an index into the grid. */
+static long grid_first(const aud_timeline *tl, const tl_grid *g)
+{
+  double at = floor(tl->scroll / g->step);
+
+  return at < 0.0 ? 0 : (long)at;
+}
+
 void aud_timeline_init(aud_timeline *tl)
 {
   memset(tl, 0, sizeof(*tl));
@@ -234,12 +316,25 @@ static void label_time(char *dst, size_t size, double seconds, double step)
 static uint64_t frame_at(const aud_timeline *tl, const aud_doc *d, float x)
 {
   double seconds = aud_timeline_seconds_at(tl, x);
+  uint64_t frame;
 
   if (seconds < 0.0)
   {
     return 0;
   }
-  return (uint64_t)(seconds * d->rate + 0.5);
+  frame = (uint64_t)(seconds * d->rate + 0.5);
+
+  /*
+   * The one place the pointer becomes a position, so the one place snapping
+   * belongs: clicking, scrubbing and dragging a selection all arrive here and
+   * all land on the grid together. Alt steps off it - a cut that has to go
+   * between two beats should not need the grid turned off and back on.
+   */
+  if (tl->grid && !IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT))
+  {
+    frame = aud_doc_snap(d, frame);
+  }
+  return frame;
 }
 
 /* The waveform area: what is left of `area` once the panel and scale are out. */
@@ -256,12 +351,120 @@ static Rectangle wave_bounds(Rectangle area)
   return w;
 }
 
+/* The ruler counted in minutes and seconds, which is what it says with no grid. */
+static void draw_ruler_time(const aud_timeline *tl, Rectangle ruler, Rectangle strip)
+{
+  double step = pick_step(tl->zoom, 64.0);
+  double first = floor(tl->scroll / step) * step;
+
+  for (double t = first;; t += step)
+  {
+    float x = strip.x + aud_timeline_x_of(tl, t);
+    char text[32];
+
+    if (x > strip.x + strip.width)
+    {
+      break;
+    }
+    if (x < strip.x - 40.0f || t < 0.0)
+    {
+      continue;
+    }
+
+    DrawLine((int)x, (int)(ruler.y + ruler.height - 7.0f), (int)x,
+             (int)(ruler.y + ruler.height), AUD_UI_MUTED);
+
+    label_time(text, sizeof(text), t, step);
+    if (x >= strip.x)
+    {
+      aud_ui_text(x + 4.0f, ruler.y + 4.0f, TL_RULER_FONT, AUD_UI_MUTED, text);
+    }
+  }
+
+  /* half-height ticks between the labelled ones, for reading off a position */
+  {
+    double minor = step / 5.0;
+
+    if (minor * tl->zoom >= 6.0)
+    {
+      for (double t = first;; t += minor)
+      {
+        float x = strip.x + aud_timeline_x_of(tl, t);
+
+        if (x > strip.x + strip.width)
+        {
+          break;
+        }
+        if (x < strip.x || t < 0.0)
+        {
+          continue;
+        }
+        DrawLine((int)x, (int)(ruler.y + ruler.height - 4.0f), (int)x,
+                 (int)(ruler.y + ruler.height), Fade(AUD_UI_EDGE, 0.9f));
+      }
+    }
+  }
+}
+
+/*
+ * The same ruler counted in bars, which is what it says once there is a grid.
+ *
+ * It replaces the clock rather than sitting beside it: a strip this tall
+ * carrying two numbering schemes at once is one you have to read twice to find
+ * out which one you are looking at. What the seconds were is on the status
+ * line and under the playhead regardless.
+ */
+static void draw_ruler_bars(const aud_timeline *tl, const tl_grid *g, Rectangle ruler,
+                            Rectangle strip)
+{
+  long first = grid_first(tl, g);
+  int label_beats = g->beats && g->beat * tl->zoom >= TL_GRID_LABEL_BEAT_PX;
+
+  for (long line = first;; line++)
+  {
+    double t = (double)line * g->step;
+    float x = strip.x + aud_timeline_x_of(tl, t);
+    long beat = grid_beat_at(g, line);
+    int on_bar = (beat % g->per_bar) == 0;
+    char text[48];
+
+    if (x > strip.x + strip.width)
+    {
+      break;
+    }
+    if (x < strip.x)
+    {
+      continue;
+    }
+
+    DrawLine((int)x, (int)(ruler.y + ruler.height - (on_bar ? 9.0f : 4.0f)), (int)x,
+             (int)(ruler.y + ruler.height), on_bar ? AUD_UI_MUTED : AUD_UI_EDGE);
+
+    /* bars and beats are counted from one, the way anybody playing counts them */
+    if (on_bar)
+    {
+      snprintf(text, sizeof(text), "%ld", beat / g->per_bar + 1);
+    }
+    else if (label_beats)
+    {
+      snprintf(text, sizeof(text), "%ld.%ld", beat / g->per_bar + 1,
+               beat % g->per_bar + 1);
+    }
+    else
+    {
+      continue;
+    }
+
+    aud_ui_text(x + 4.0f, ruler.y + 4.0f, TL_RULER_FONT,
+                on_bar ? AUD_UI_MUTED : AUD_UI_EDGE, text);
+  }
+}
+
 static void draw_ruler(aud_timeline *tl, aud_doc *d, Rectangle ruler, uint64_t playhead,
                        int enabled)
 {
   Rectangle strip = ruler;
-  double step;
-  double first;
+  tl_grid grid;
   float wave_x = ruler.x + AUD_TIMELINE_PANEL_W + AUD_TIMELINE_SCALE_W;
   float wave_w = ruler.x + ruler.width - wave_x;
 
@@ -294,55 +497,13 @@ static void draw_ruler(aud_timeline *tl, aud_doc *d, Rectangle ruler, uint64_t p
     }
   }
 
-  step = pick_step(tl->zoom, 64.0);
-  first = floor(tl->scroll / step) * step;
-
-  for (double t = first;; t += step)
+  if (grid_of(tl, d, &grid))
   {
-    float x = wave_x + aud_timeline_x_of(tl, t);
-    char text[32];
-
-    if (x > strip.x + strip.width)
-    {
-      break;
-    }
-    if (x < strip.x - 40.0f || t < 0.0)
-    {
-      continue;
-    }
-
-    DrawLine((int)x, (int)(ruler.y + ruler.height - 7.0f), (int)x,
-             (int)(ruler.y + ruler.height), AUD_UI_MUTED);
-
-    label_time(text, sizeof(text), t, step);
-    if (x >= strip.x)
-    {
-      aud_ui_text(x + 4.0f, ruler.y + 4.0f, TL_RULER_FONT, AUD_UI_MUTED, text);
-    }
+    draw_ruler_bars(tl, &grid, ruler, strip);
   }
-
-  /* half-height ticks between the labelled ones, for reading off a position */
+  else
   {
-    double minor = step / 5.0;
-
-    if (minor * tl->zoom >= 6.0)
-    {
-      for (double t = first;; t += minor)
-      {
-        float x = wave_x + aud_timeline_x_of(tl, t);
-
-        if (x > strip.x + strip.width)
-        {
-          break;
-        }
-        if (x < strip.x || t < 0.0)
-        {
-          continue;
-        }
-        DrawLine((int)x, (int)(ruler.y + ruler.height - 4.0f), (int)x,
-                 (int)(ruler.y + ruler.height), Fade(AUD_UI_EDGE, 0.9f));
-      }
-    }
+    draw_ruler_time(tl, ruler, strip);
   }
 
   /* the playhead, drawn as a small triangle so it reads as a handle */
@@ -910,6 +1071,38 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
     }
 
     y += h + 1.0f;
+  }
+
+  /*
+   * The grid, over every lane at once and under the cursor.
+   *
+   * Over the waveforms rather than behind them: each lane paints its own
+   * background, and a line drawn before that is a line nobody sees. Faint
+   * enough that the audio stays the thing being looked at.
+   */
+  {
+    tl_grid grid;
+
+    if (grid_of(tl, d, &grid))
+    {
+      for (long line = grid_first(tl, &grid);; line++)
+      {
+        double t = (double)line * grid.step;
+        float x = wave.x + aud_timeline_x_of(tl, t);
+        int on_bar = (grid_beat_at(&grid, line) % grid.per_bar) == 0;
+
+        if (x > wave.x + wave.width)
+        {
+          break;
+        }
+        if (x < wave.x)
+        {
+          continue;
+        }
+        DrawLine((int)x, (int)rows.y, (int)x, (int)(rows.y + rows.height),
+                 Fade(AUD_UI_EDGE, on_bar ? 0.85f : 0.35f));
+      }
+    }
   }
 
   /* the cursor and the playhead, over every lane at once */

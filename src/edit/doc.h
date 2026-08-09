@@ -20,6 +20,13 @@
 
 #include "edit/track.h"
 
+/*
+ * For the tempo bounds, and for nothing else. The tempo a project is counted
+ * on and the tempo a metronome can play are the same number, and two sets of
+ * limits for it would be one set too many.
+ */
+#include "audio/click.h"
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -35,6 +42,9 @@
 /* What an undo step is called, for the button that offers to take it back. */
 #define AUD_DOC_LABEL_MAX 32
 
+/* What a project counts on until someone says otherwise. */
+#define AUD_DOC_DEFAULT_TEMPO 120.0
+
 typedef struct
 {
   aud_track *tracks;
@@ -48,6 +58,19 @@ typedef struct
 typedef struct
 {
   unsigned rate;
+
+  /*
+   * The tempo the project is counted on: what the ruler draws its bars from,
+   * what the metronome plays, and what the pointer snaps to. A property of the
+   * session rather than of the view, so it is saved with it - two people
+   * opening the same project should see the same bar lines.
+   *
+   * Not part of an undo step. Everything on the undo stack is audio moving
+   * about, and the tempo moves none: changing it redraws the grid and leaves
+   * every sample where it was.
+   */
+  double tempo;
+  unsigned beats_per_bar; /* 0 or 1 for a bare pulse with no bar to it */
 
   aud_track *tracks;
   size_t count;
@@ -96,6 +119,31 @@ uint64_t aud_doc_end(const aud_doc *d);
 
 /* Frames of audio held across every track, for the memory readout. */
 size_t aud_doc_bytes(const aud_doc *d);
+
+/* -- the tempo ------------------------------------------------------------- */
+
+/*
+ * Set the tempo, held to what click.h will play. A `bpm` outside those bounds
+ * is clamped rather than refused: this is driven by a spinner and by a
+ * hand-edited project file, and neither wants an error for an answer.
+ */
+void aud_doc_set_tempo(aud_doc *d, double bpm, unsigned beats_per_bar);
+
+/*
+ * Frames between one beat and the next, as a real number so a tempo that does
+ * not divide the sample rate does not drift a frame per bar. Zero when there
+ * is no usable tempo, which is the caller's cue that there is no grid.
+ */
+double aud_doc_beat_frames(const aud_doc *d);
+
+/* The same for a bar. Equal to a beat when the project is a bare pulse. */
+double aud_doc_bar_frames(const aud_doc *d);
+
+/*
+ * The nearest beat to `frame`, or `frame` itself when there is no grid. What
+ * "snap to the grid" means, in the one place that decides it.
+ */
+uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame);
 
 /* -- selection ------------------------------------------------------------- */
 

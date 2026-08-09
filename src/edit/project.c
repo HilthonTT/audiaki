@@ -248,6 +248,7 @@ int aud_project_save(const aud_doc *d, const char *path, const char **why)
 
   if (fprintf(f, "%s %d\n", AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION) < 0 ||
       fprintf(f, "rate %u\n", d->rate) < 0 ||
+      fprintf(f, "tempo %.6f %u\n", d->tempo, d->beats_per_bar) < 0 ||
       fprintf(f, "cursor %llu\n", (unsigned long long)d->cursor) < 0 ||
       fprintf(f, "selection %llu %llu\n", (unsigned long long)d->sel_start,
               (unsigned long long)d->sel_end) < 0 ||
@@ -353,7 +354,7 @@ static float clampf(float v, float lo, float hi)
   return v > hi ? hi : v;
 }
 
-static int take_float(const char *text, float *out)
+static int take_double(const char *text, double *out)
 {
   char *end = NULL;
   double value;
@@ -361,6 +362,19 @@ static int take_float(const char *text, float *out)
   errno = 0;
   value = strtod(text, &end);
   if (errno != 0 || end == text || !(value >= -1e6 && value <= 1e6))
+  {
+    return -1;
+  }
+
+  *out = value;
+  return 0;
+}
+
+static int take_float(const char *text, float *out)
+{
+  double value;
+
+  if (take_double(text, &value) != 0)
   {
     return -1;
   }
@@ -609,6 +623,31 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
       }
       rate = (unsigned)value;
       built.rate = rate;
+      continue;
+    }
+
+    if (strcmp(word, "tempo") == 0)
+    {
+      double bpm = 0.0;
+      uint64_t beats = AUD_CLICK_DEFAULT_BEATS;
+      char *rest = args;
+
+      /*
+       * "tempo BPM BEATS", with the beats optional: a line typed by hand is
+       * likely to say only the number anybody means by a tempo, and four to
+       * the bar is what that means. Out-of-range values are clamped by
+       * aud_doc_set_tempo() rather than refused - a project should still open
+       * when someone has put 5000 in it.
+       */
+      if (take_double(args, &bpm) == 0)
+      {
+        while (*rest != '\0' && *rest != ' ' && *rest != '\t')
+        {
+          rest++;
+        }
+        (void)take_u64(&rest, &beats);
+        aud_doc_set_tempo(&built, bpm, (unsigned)beats);
+      }
       continue;
     }
 

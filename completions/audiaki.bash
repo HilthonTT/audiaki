@@ -176,7 +176,15 @@ _audiaki_gui()
             _audiaki_files -d
             return
             ;;
-        --video-fps | --preroll | --pre-roll | --latency)
+        --tempo | --click | --metronome)
+            mapfile -t COMPREPLY < <(compgen -W "60 80 90 100 110 120 140 160 180" -- "$cur")
+            return
+            ;;
+        --click-beats)
+            mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 5 6 7 8 12" -- "$cur")
+            return
+            ;;
+        --video-fps | --preroll | --pre-roll | --latency | --click-gain)
             return
             ;;
     esac
@@ -185,6 +193,7 @@ _audiaki_gui()
 
     opts="--device --backend --rate --channels --take --dir --no-dialog --style
           --preroll --no-overdub --latency
+          --tempo --click --click-beats --click-gain --grid --loop
           --video --video-silent --video-size --video-fps --monitor
           --verbose --help"
     mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

@@ -257,6 +257,60 @@ TEST(unusable_tempos_are_refused)
   CHECK_EQ_INT(aud_click_init(&c, &cfg), -1);
 }
 
+TEST(seeking_lands_on_the_same_grid_as_playing_up_to_it)
+{
+  aud_click straight;
+  aud_click sought;
+
+  start(&straight, 137.0, 4u, 1.0f);
+  render(&straight, g_buf, 96000u, 1024u);
+
+  /*
+   * The whole point of a seek: a transport that jumped into the middle of a
+   * project has to hear the beat the grid says is there, not a new beat one.
+   * A tempo that does not divide the rate, so a walked grid and a computed
+   * one would have parted company by here if either rounded.
+   */
+  start(&sought, 137.0, 4u, 1.0f);
+  aud_click_seek(&sought, 48000u);
+  render(&sought, g_alt, 48000u, 1024u);
+
+  for (size_t i = 0; i < 48000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[48000u + i], 1e-6);
+  }
+}
+
+TEST(seeking_backwards_and_forwards_costs_nothing_and_stays_on_the_beat)
+{
+  aud_click c;
+  size_t at;
+
+  start(&c, 120.0, 4u, 1.0f);
+
+  /*
+   * Chunk by chunk, seeking to each one before mixing it - which is what a
+   * looping transport does every pass. The result has to be the plain grid.
+   */
+  render(&c, g_buf, 96000u, 4096u);
+
+  memset(g_alt, 0, sizeof(g_alt));
+  for (at = 0; at < 96000u; at += 4096u)
+  {
+    aud_click_seek(&c, at);
+    aud_click_mix(&c, g_alt + at, 4096u, 1u);
+  }
+
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-6);
+  }
+
+  /* and a seek past the end of everything is still on the grid */
+  aud_click_seek(&c, 24000u * 1000u);
+  CHECK_EQ_INT((long long)c.beat, 1000);
+}
+
 int main(void)
 {
   RUN(beats_land_on_the_frame_the_tempo_says);
@@ -267,6 +321,8 @@ int main(void)
   RUN(gain_scales_the_beat_and_zero_silences_it);
   RUN(every_channel_gets_the_beat_and_nothing_is_overwritten);
   RUN(reset_puts_the_grid_back_to_the_first_beat);
+  RUN(seeking_lands_on_the_same_grid_as_playing_up_to_it);
+  RUN(seeking_backwards_and_forwards_costs_nothing_and_stays_on_the_beat);
   RUN(unusable_tempos_are_refused);
   return TEST_RESULT();
 }

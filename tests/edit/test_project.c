@@ -121,6 +121,102 @@ TEST(a_project_comes_back_as_it_went_in)
   aud_doc_free(&saved);
 }
 
+TEST(the_tempo_is_saved_with_the_session)
+{
+  aud_doc saved;
+  aud_doc opened;
+  char path[256];
+  const char *why = NULL;
+
+  in_dir(path, sizeof(path), "tempo" AUD_PROJECT_EXT);
+  build(&saved);
+  aud_doc_set_tempo(&saved, 137.5, 7u);
+
+  CHECK_EQ_INT(aud_project_save(&saved, path, &why), 0);
+
+  aud_doc_init(&opened, 0);
+  CHECK_EQ_INT(aud_project_load(&opened, path, &why), 0);
+  CHECK_EQ_DBL(opened.tempo, 137.5, 1e-6);
+  CHECK_EQ_INT(opened.beats_per_bar, 7);
+
+  aud_doc_free(&opened);
+  aud_doc_free(&saved);
+}
+
+/*
+ * The reason the tempo is a line rather than a version bump: a session written
+ * before there was one has to open, and open counting on something.
+ */
+TEST(a_session_with_no_tempo_line_opens_at_the_default)
+{
+  aud_doc d;
+  char path[256];
+  const char *why = NULL;
+  FILE *f;
+
+  in_dir(path, sizeof(path), "untimed" AUD_PROJECT_EXT);
+  f = fopen(path, "wb");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  fprintf(f, "%s %d\nrate %u\n", AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION, TEST_RATE);
+  fclose(f);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), 0);
+  CHECK_EQ_DBL(d.tempo, AUD_DOC_DEFAULT_TEMPO, 1e-9);
+  CHECK_EQ_INT(d.beats_per_bar, AUD_CLICK_DEFAULT_BEATS);
+
+  aud_doc_free(&d);
+}
+
+/*
+ * A file somebody has edited by hand: the beats may be missing, and the number
+ * may be one no metronome would play. Neither is a reason to refuse a session
+ * whose audio is perfectly good.
+ */
+TEST(a_hand_written_tempo_is_taken_as_far_as_it_can_be)
+{
+  aud_doc d;
+  char path[256];
+  const char *why = NULL;
+  FILE *f;
+
+  in_dir(path, sizeof(path), "byhand" AUD_PROJECT_EXT);
+  f = fopen(path, "wb");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  fprintf(f, "%s %d\nrate %u\ntempo 90\n", AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION,
+          TEST_RATE);
+  fclose(f);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), 0);
+  CHECK_EQ_DBL(d.tempo, 90.0, 1e-9);
+  CHECK_EQ_INT(d.beats_per_bar, AUD_CLICK_DEFAULT_BEATS);
+  aud_doc_free(&d);
+
+  f = fopen(path, "wb");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  fprintf(f, "%s %d\nrate %u\ntempo 100000 4\n", AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION,
+          TEST_RATE);
+  fclose(f);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), 0);
+  CHECK_EQ_DBL(d.tempo, AUD_CLICK_BPM_MAX, 1e-9);
+  aud_doc_free(&d);
+}
+
 TEST(two_clips_over_one_take_share_the_block_again)
 {
   aud_doc saved;
@@ -285,6 +381,9 @@ int main(void)
   write_wav(two, 2, 900);
 
   RUN(a_project_comes_back_as_it_went_in);
+  RUN(the_tempo_is_saved_with_the_session);
+  RUN(a_session_with_no_tempo_line_opens_at_the_default);
+  RUN(a_hand_written_tempo_is_taken_as_far_as_it_can_be);
   RUN(two_clips_over_one_take_share_the_block_again);
   RUN(sources_beside_the_project_are_stored_relative);
   RUN(a_missing_take_is_named_and_nothing_is_replaced);
@@ -299,7 +398,8 @@ int main(void)
   remove(two);
   {
     static const char *const leftovers[] = {"session", "shared",  "relative",
-                                            "missing", "rubbish", "loose"};
+                                            "missing", "rubbish", "loose",
+                                            "tempo",   "untimed", "byhand"};
 
     for (size_t i = 0; i < sizeof(leftovers) / sizeof(leftovers[0]); i++)
     {

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "edit/doc.h"
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -14,6 +15,69 @@ void aud_doc_init(aud_doc *d, unsigned rate)
 
   memset(d, 0, sizeof(*d));
   d->rate = rate != 0 ? rate : 44100u;
+  d->tempo = AUD_DOC_DEFAULT_TEMPO;
+  d->beats_per_bar = AUD_CLICK_DEFAULT_BEATS;
+}
+
+void aud_doc_set_tempo(aud_doc *d, double bpm, unsigned beats_per_bar)
+{
+  if (d == NULL)
+  {
+    return;
+  }
+
+  /* written the way round that catches NaN rather than letting it through */
+  if (!(bpm >= AUD_CLICK_BPM_MIN))
+  {
+    bpm = AUD_CLICK_BPM_MIN;
+  }
+  else if (bpm > AUD_CLICK_BPM_MAX)
+  {
+    bpm = AUD_CLICK_BPM_MAX;
+  }
+
+  d->tempo = bpm;
+  d->beats_per_bar =
+      beats_per_bar > AUD_CLICK_BEATS_MAX ? AUD_CLICK_BEATS_MAX : beats_per_bar;
+}
+
+double aud_doc_beat_frames(const aud_doc *d)
+{
+  if (d == NULL || d->rate == 0 || !(d->tempo >= AUD_CLICK_BPM_MIN) ||
+      d->tempo > AUD_CLICK_BPM_MAX)
+  {
+    return 0.0;
+  }
+  return 60.0 * (double)d->rate / d->tempo;
+}
+
+double aud_doc_bar_frames(const aud_doc *d)
+{
+  double beat = aud_doc_beat_frames(d);
+
+  if (beat <= 0.0 || d->beats_per_bar < 2u)
+  {
+    return beat;
+  }
+  return beat * (double)d->beats_per_bar;
+}
+
+uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame)
+{
+  double beat = aud_doc_beat_frames(d);
+  double at;
+
+  if (beat <= 0.0)
+  {
+    return frame;
+  }
+
+  at = ((double)frame / beat + 0.5);
+  if (at < 0.0)
+  {
+    return 0;
+  }
+  return (uint64_t)(floor(at) * beat + 0.5);
 }
 
 /* Free the tracks of a snapshot, or of the project itself. */

@@ -40,6 +40,17 @@ typedef struct
   float rows;    /* pixels the track stack is scrolled down by */
 
   /*
+   * Show the project's tempo as bar lines, and put the pointer on them. One
+   * switch rather than two: a grid you can see but not land on is decoration,
+   * and one you land on but cannot see is a mystery. Holding alt steps off it
+   * for the one edit that has to go between two beats.
+   *
+   * A view preference, like the zoom beside it - what the bars are counted on
+   * is the document's tempo, and that is what gets saved.
+   */
+  int grid;
+
+  /*
    * Which drag is in progress, if any. Immediate mode has no widget to hold
    * this, and a drag is the one thing that has to outlive the frame it started
    * in - a selection that stopped following the pointer the moment it left the

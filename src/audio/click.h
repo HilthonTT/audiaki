@@ -80,6 +80,17 @@ int aud_click_init(aud_click *c, const aud_click_config *cfg);
 void aud_click_reset(aud_click *c);
 
 /*
+ * Move to `frame` on the same grid: the next frame mixed is that one, and the
+ * beat it falls in is the beat that sounds.
+ *
+ * What lets a click follow a transport that jumps. The grid is counted from
+ * frame zero whatever the playhead does, so seeking to the middle of a project
+ * gives the beat the ruler draws there rather than a new beat one - and a loop
+ * that wraps stays in time rather than restarting the bar wherever it landed.
+ */
+void aud_click_seek(aud_click *c, uint64_t frame);
+
+/*
  * Add `frames` of click to `interleaved`, which holds `channels` samples per
  * frame. Adds rather than overwrites, so it layers over monitored input; a
  * caller with nothing to layer over passes a zeroed buffer.

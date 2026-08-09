@@ -116,6 +116,31 @@ void aud_click_reset(aud_click *c)
   }
 }
 
+void aud_click_seek(aud_click *c, uint64_t frame)
+{
+  if (c == NULL)
+  {
+    return;
+  }
+
+  c->frame = frame;
+
+  if (!(c->spacing > 0.0))
+  {
+    c->beat = 0; /* never initialised; the mix will find nothing to do anyway */
+    return;
+  }
+
+  /*
+   * Worked out rather than walked to, so seeking an hour in costs the same as
+   * seeking a bar in. Landing a beat either side of the right one is harmless:
+   * aud_click_mix() steps the beat forward until the burst it holds reaches
+   * the frame being mixed, and a beat not yet due is simply silence until it
+   * is - which is what makes this safe to call before every pass.
+   */
+  c->beat = (uint64_t)((double)frame / c->spacing);
+}
+
 /*
  * Where beat `n` starts, computed from n rather than accumulated, so rounding
  * cannot build up: at 48 kHz the product stays exact in a double for longer
