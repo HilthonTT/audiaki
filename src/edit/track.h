@@ -233,6 +233,29 @@ int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src);
 int aud_track_record_begin(aud_track *t, uint64_t start, size_t capacity_hint);
 
 /*
+ * Reopen the last clip and carry on growing it, for a take the capture device
+ * was pulled out of and which is being continued into the same file.
+ *
+ * `at` must be exactly where that clip ends, because what is about to arrive
+ * is the rest of the same performance and belongs against it rather than near
+ * it.
+ *
+ * One clip rather than two touching ones, and the reason is not cosmetic: the
+ * two halves are one file now, and a project stores a clip as an offset into
+ * the file it came from. Two clips would both be stamped with that one file
+ * and both claim to start at the beginning of it, so reloading the project
+ * would play the first half twice.
+ *
+ * Refused when the last clip is not where `at` says, when a take is already
+ * open, or when anything else shares that clip's audio - a block another clip
+ * is reading must not change under it.
+ *
+ * Returns 0, or -1 when the take cannot be carried on, at which point the
+ * caller should open a new clip and a new file the way it always did.
+ */
+int aud_track_record_continue(aud_track *t, uint64_t at);
+
+/*
  * Append `frames` frames of interleaved audio, at the track's channel count,
  * to the clip being recorded into. Returns the number taken, which is short of
  * `frames` only when memory ran out.

@@ -402,17 +402,34 @@ audiaki: warning: monitor: cannot connect the playback stream to 'no-such-output
 audiaki: warning: recording without monitoring
 ```
 
-Under ALSA the output has to accept the capture rate directly — audiaki does
-not resample — so monitoring a 44.1 kHz capture on a 48 kHz output declines
-rather than playing back at the wrong pitch. Use `--backend pipewire`, or the
-`plug` layer: `--monitor-device plughw:CARD=Box,DEV=0`.
+An output that will not run at the capture rate is converted to on the way out,
+so monitoring a 44.1 kHz capture through a 48 kHz output works rather than
+declining:
 
-You are hearing the input late, through a second buffer of its own — tens of
-milliseconds under ALSA, around a tenth of a second under PipeWire. That is
-fine for checking a level, a tone or a room; it is not latency to play in time
-against. Frames the output cannot keep up with are
-dropped rather than queued, so the monitor may skip on a busy machine without
-that reaching the file — `-v` reports the count at the end.
+```
+audiaki: monitor: output wants 48000 Hz and the audio is 44100 Hz; converting
+         on the way out
+```
+
+The conversion is a windowed sinc, and it is on the playback path only — the
+file is always the samples the device delivered, at the rate it delivered them.
+Going down as well as up matters here: dropping 96 kHz to 48 without filtering
+first would fold everything above 24 kHz back into the audible band as tones
+nobody played, so the cutoff follows the lower of the two rates. It costs a
+couple of million multiply-adds a second, which is nothing next to the drawing.
+
+You are still hearing the input late, through a second buffer of its own — tens
+of milliseconds under ALSA, around a tenth of a second under PipeWire. That is
+the output queue, not something a correction can remove. It is fine for checking
+a level, a tone or a room; it is not latency to play in time against.
+
+Frames the output cannot keep up with are dropped rather than queued, so the
+monitor may skip on a busy machine without that reaching the file — `-v` reports
+the count at the end.
+
+What you hear follows `--channel`: a take being written as one channel is
+monitored as one channel, so the headphones carry the take being made rather
+than the pair it was taken out of.
 
 ## Playing to a click
 
@@ -472,12 +489,32 @@ frames 0, 24000, 48000 and so on, exactly. Without `--preroll` frame 0 is the
 first frame of the file, so the beats fall on round numbers you can line a
 session up on later.
 
-What you cannot assume is that your *playing* lands on those frames. You hear
-the click through the output's own buffer — tens of milliseconds under ALSA,
-around a tenth of a second under PipeWire — so a take played perfectly in time
-is late against the grid by however long that path is. It is a metronome, which
-is to say it will keep you at 120 BPM; it is not a DAW's click, and the take is
-not sample-aligned to a timeline by having been played to one.
+Generating a beat at a frame is not the same as anybody hearing it there. You
+hear the click through the output's buffer, and what you play in response comes
+back through the input's — the same round trip an overdub is placed by. Left
+alone, a take played perfectly in time lands that whole round trip behind the
+grid the clicks were counted on.
+
+So the click is struck early by exactly that much, and arrives at your ears
+where the grid says it should be. The grid itself does not move: beat n is
+still frame n × 24000 of the file. `--latency` sets the correction, and
+`latency_ms` in the config file sets it for both this and the desktop app's
+overdubs, since it is the same measurement:
+
+```sh
+audiaki -M --click 120 --latency 12 take01.wav   # a measured round trip
+audiaki -M --click 120 --latency 0 take01.wav    # no correction, as it was
+```
+
+The default is worked out from the buffer sizes, which is a good estimate and
+not a measurement — the converters, the driver and the interface all add delay
+that nothing here can see. Play a click into a loopback, look at where it lands
+in the file, and put that number in `latency_ms`.
+
+What is left after that is jitter rather than offset: playback is fed from one
+loop and capture runs on another, so the two agree to within a few milliseconds
+rather than to the sample. The systematic part is gone; the rest is the price of
+not having one clock behind both.
 
 ## What a take says about itself
 
@@ -531,6 +568,24 @@ was, and the whole stamp costs under a kilobyte. `--no-metadata` writes the
 plain 44-byte header instead, for a tool that wants nothing between the `fmt`
 and `data` chunks. The desktop app stamps its takes the same way, minus the
 note, since there is nowhere in the window to type one.
+
+A stamped take also reserves 36 bytes for a `ds64` chunk, which is what lets it
+pass 4 GB. RIFF counts in 32 bits and stops there — about three and a half
+hours of 24-bit stereo at 48 kHz — and RF64 is the standard way past it: the
+sizes are written again in 64 bits and the 32-bit fields are set to `0xFFFFFFFF`
+to say so. The room is reserved as a `JUNK` chunk, which every reader of the
+format already skips, and only filled in on close if the take actually needed
+it. So a take that stayed under 4 GB is an ordinary WAV, a take that did not is
+an RF64 one, and no audio has to be moved to make the difference:
+
+```sh
+$ ffprobe -hide_banner long-take.wav
+Input #0, wav, from 'long-take.wav':
+  Duration: 05:12:41.30, bitrate: 2304 kb/s
+```
+
+`--no-metadata` has nowhere to put the reservation, so that one still stops at
+4 GB — it asked for the plain header and the plain header is what it gets.
 
 Metadata is written **before** the audio, which is where the BWF specification
 requires `bext` and what means an interrupted take still carries its stamp. It
@@ -601,6 +656,11 @@ Files named after the first are played after it, in the order given, so a shell
 glob is a playlist. `-t` applies to each of them rather than to the run, and a
 file that cannot be read is stepped over the way `--info` steps over one — the
 rest still plays, and the exit status still says something was wrong.
+
+Seeking and pausing drop whatever is queued in the output, so both land where
+they were asked for rather than a buffer's worth of audio later. An output that
+will not take the file's rate is converted to one it will, rather than refused —
+see [Hearing yourself](#hearing-yourself).
 
 `--shuffle` plays them in a random order instead, and picks a fresh one each
 time through a repeating list rather than cycling the same permutation forever.
@@ -746,43 +806,28 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 
 ## Limitations
 
-- PCM WAV with a `LIST`/`INFO` and `bext` stamp ahead of the audio, so
-  recordings stop at the 4 GB RIFF limit (about 3.5 hours of 24-bit stereo at
-  48 kHz). `--no-metadata` gets the plain 44-byte header back.
 - Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
-- The desktop app records to numbered takes in `take_dir`, or the working
-  directory, and asks about them afterwards in a dialog of its own. That dialog
-  browses folders rather than being the system's file chooser: it has no
-  bookmarks, no recent places and no search, and it does not follow whatever
-  the desktop's own chooser has been configured to do.
 - Video is rendered after the take, so a long take with video on means waiting
   roughly its own length again. Cancelling is always available, and the audio
   is safe on disk regardless.
-- Monitoring and `--play` through ALSA need an output that accepts the stream's
-  rate directly: audiaki does not resample, so it declines rather than play
-  back at the wrong pitch. The PipeWire backend has no such limit.
+- `--no-metadata` writes the plain 44-byte header, and a plain header has
+  nowhere to put a 64-bit size — so that one still stops at the 4 GB RIFF limit,
+  about 3.5 hours of 24-bit stereo at 48 kHz. A stamped take reserves the room
+  and becomes an RF64 file instead.
 - `-M` monitors through a buffer of its own, so what you hear is tens of
-  milliseconds behind what you played. It is for checking a sound, not for
-  playing along with one.
-- `--click` reaches you down that same path, so a take played in time with it
-  is late against the grid the clicks were generated on by however long the
-  output buffer is. It keeps the tempo; it does not sample-align the take.
+  milliseconds behind what you played. That is the output queue and not
+  something a correction can remove: it is for checking a sound, not for
+  playing along with one. What *is* corrected is where the click falls against
+  it — see `--latency`.
 - The click is one tempo for the whole take: no tempo changes part way through.
-  It divides the beat (`--click-subdiv`) and it writes what it was set to into
-  the take's `LIST`/`INFO` chunk, which `--info` reads back — but the desktop
-  app still keeps its tempo in the session rather than in the take, and it is
-  one tempo there too.
+  The desktop app keeps its tempo in the session rather than in the take, and it
+  is one tempo there too.
 - The `metronome` stamp is written under `ITMP`, which is audiaki's own tag
   rather than a registered one, so other tools ignore it rather than showing it.
-- `--channel N` picks one channel and `--channel mix` averages them all, but
-  monitoring still plays every channel the device delivered either way.
 - `--play` takes its keys from a terminal, so a pipe or a service manager gets
-  the old behaviour of playing each file start to finish. Seeking and pausing
-  act on what is being handed to the output rather than on what is coming out
-  of it, so both land a buffer's worth of audio — around a tenth of a second —
-  from where they were asked for.
+  the old behaviour of playing each file start to finish.
 - The tuner is monophonic: one pitch at a time, and no chords. The range it
   searches runs from a five-string bass's low B to a piccolo's top C, and
   `--tune-min`/`--tune-max` move either end — but the low end is quadratic, so
@@ -790,10 +835,15 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - The desktop app's grid does not move audio that is already on the timeline:
   turning it on, or dividing it more finely, changes where the *next* edit
   lands and leaves every existing clip where it was.
+- The system file chooser is used when `zenity` or `kdialog` is installed, and
+  the built-in folder browser when neither is. That browser has no bookmarks, no
+  recent places and no search — it is the fallback rather than the intent, and
+  `AUDIAKI_FILE_CHOOSER=none` keeps it deliberately.
 - Rate and channels are fixed for the session in the desktop app; only the
   device can be changed from the window. A device that disappears mid-take ends
   that take where it stopped — what was written stays on disk and on the
-  timeline, and the same device coming back within thirty seconds carries the
-  take on as a second file on the same lane. It is two files, not one; a
-  different rate or channel count is not carried on at all; and after the
-  thirty seconds the stream still reopens but the take does not resume.
+  timeline — and the same device coming back within thirty seconds carries the
+  take on in the same file and the same clip. A device back at a different rate
+  or channel count is not carried on at all, a file something else has appended
+  to falls back to a second take on the same lane, and after the thirty seconds
+  the stream still reopens but the take does not resume.

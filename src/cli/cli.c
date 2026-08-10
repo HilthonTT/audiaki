@@ -7,6 +7,7 @@
 #include "backend/device.h"
 #include "backend/monitor.h"
 #include "media/visualize.h"
+#include "take/latency.h"
 #include "take/meta.h"
 #include "take/preroll.h"
 #include "util/config.h"
@@ -78,6 +79,7 @@ enum
   OPT_CLICK_BEATS,
   OPT_CLICK_SUBDIV,
   OPT_CLICK_GAIN,
+  OPT_LATENCY,
   OPT_CHANNEL,
   OPT_DIR,
   OPT_PROMPT,
@@ -112,6 +114,7 @@ static const struct option long_options[] = {
     {"click-beats", required_argument, NULL, OPT_CLICK_BEATS},
     {"click-subdiv", required_argument, NULL, OPT_CLICK_SUBDIV},
     {"click-gain", required_argument, NULL, OPT_CLICK_GAIN},
+    {"latency", required_argument, NULL, OPT_LATENCY},
     {"no-meter", no_argument, NULL, OPT_NO_METER},
     {"spectrum", no_argument, NULL, OPT_SPECTRUM},
     {"visualize", required_argument, NULL, OPT_VISUALIZE},
@@ -200,6 +203,8 @@ void cli_defaults(aud_options *opts)
   aud_config_load(&cfg);
   snprintf(opts->take_dir, sizeof(opts->take_dir), "%s", cfg.take_dir);
   opts->prompt = cfg.prompt;
+  /* the same number the desktop app places an overdub by; --click leads by it */
+  opts->latency_ms = cfg.latency_ms;
 
   /*
    * A bad $AUDIAKI_BACKEND is left at auto rather than rejected. An exported
@@ -406,6 +411,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
                        &opts->click_gain) != 0)
       {
         bad_value("--click-gain", optarg, "0.0 to 2.0, where 1.0 is full scale");
+        return CLI_EXIT_USAGE;
+      }
+      click_shape = 1;
+      break;
+    case OPT_LATENCY:
+      if (parse_double(optarg, 0.0, AUD_LATENCY_MAX_MS, &opts->latency_ms) != 0)
+      {
+        bad_value("--latency", optarg, "a round trip in milliseconds, 0 to 500");
         return CLI_EXIT_USAGE;
       }
       click_shape = 1;

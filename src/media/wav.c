@@ -12,81 +12,139 @@
 /* off_t, fseeko and ftello, so the reader can seek past the 2 GB mark */
 #include <sys/types.h>
 
+/* The 32-bit size fields RF64 leaves behind to say "look in ds64 instead". */
+#define WAV_SIZE_IS_64_BIT 0xFFFFFFFFu
+
 /*
- * The canonical header, with `extra_bytes` of chunks understood to sit between
- * the fmt and data chunks. They are not written here - only counted, because
- * the RIFF size has to include them - so the caller writes the first 36 bytes,
- * then its own chunks, then the last 8.
+ * The three pieces of a header, written in file order with whatever belongs
+ * between them. Separate rather than one block because a reserved ds64 slot
+ * sits between the first and the second, and the metadata between the second
+ * and the third.
  */
-static void build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
-                         uint32_t extra_bytes, uint32_t rate, uint16_t channels,
-                         uint16_t bits)
+
+static void build_riff(unsigned char out[12], const char *magic, uint32_t riff_size)
+{
+  memcpy(out + 0, magic, 4);
+  aud_wr_u32le(out + 4, riff_size);
+  memcpy(out + 8, "WAVE", 4);
+}
+
+static void build_fmt(unsigned char out[24], uint32_t rate, uint16_t channels,
+                      uint16_t bits)
 {
   uint16_t block_align = (uint16_t)(channels * (bits / 8u));
-  uint32_t byte_rate = rate * block_align;
-  /* RIFF chunks are word aligned; an odd data chunk carries a pad byte. */
-  uint32_t pad = data_bytes & 1u;
 
-  memcpy(out + 0, "RIFF", 4);
-  aud_wr_u32le(out + 4, 36u + extra_bytes + data_bytes + pad);
-  memcpy(out + 8, "WAVE", 4);
+  memcpy(out + 0, "fmt ", 4);
+  aud_wr_u32le(out + 4, 16u); /* PCM fmt chunk size */
+  aud_wr_u16le(out + 8, 1u);  /* WAVE_FORMAT_PCM */
+  aud_wr_u16le(out + 10, channels);
+  aud_wr_u32le(out + 12, rate);
+  aud_wr_u32le(out + 16, rate * block_align);
+  aud_wr_u16le(out + 20, block_align);
+  aud_wr_u16le(out + 22, bits);
+}
 
-  memcpy(out + 12, "fmt ", 4);
-  aud_wr_u32le(out + 16, 16u); /* PCM fmt chunk size */
-  aud_wr_u16le(out + 20, 1u);  /* WAVE_FORMAT_PCM */
-  aud_wr_u16le(out + 22, channels);
-  aud_wr_u32le(out + 24, rate);
-  aud_wr_u32le(out + 28, byte_rate);
-  aud_wr_u16le(out + 32, block_align);
-  aud_wr_u16le(out + 34, bits);
-
-  memcpy(out + 36, "data", 4);
-  aud_wr_u32le(out + 40, data_bytes);
+static void build_data(unsigned char out[8], uint32_t data_bytes)
+{
+  memcpy(out + 0, "data", 4);
+  aud_wr_u32le(out + 4, data_bytes);
 }
 
 void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
                       uint32_t rate, uint16_t channels, uint16_t bits)
 {
-  build_header(out, data_bytes, 0, rate, channels, bits);
+  /* RIFF chunks are word aligned; an odd data chunk carries a pad byte. */
+  uint32_t pad = data_bytes & 1u;
+
+  build_riff(out, "RIFF", 36u + data_bytes + pad);
+  build_fmt(out + 12, rate, channels, bits);
+  build_data(out + 36, data_bytes);
 }
 
 /*
- * Patch the two size fields in place. With no metadata this is one write of the
- * whole 44 byte header; with metadata the header is in two pieces with the
- * chunks between them, and each piece is written where it belongs.
+ * How big the RIFF size field should say the file is: everything after the
+ * first eight bytes. Returned as 64 bits so the caller can see whether it fits.
  */
-static int write_header(wav_writer *w, uint32_t data_bytes)
+static uint64_t riff_size_of(const wav_writer *w)
 {
-  unsigned char header[WAV_HEADER_BYTES];
-
-  build_header(header, data_bytes, w->meta_bytes, w->rate, w->channels, w->bits);
-
-  if (fseek(w->file, 0, SEEK_SET) != 0)
-  {
-    return -1;
-  }
-  if (w->meta_bytes == 0)
-  {
-    return fwrite(header, 1, sizeof(header), w->file) == sizeof(header) ? 0 : -1;
-  }
-
-  if (fwrite(header, 1, 36u, w->file) != 36u)
-  {
-    return -1;
-  }
-  if (fseek(w->file, (long)(36u + w->meta_bytes), SEEK_SET) != 0)
-  {
-    return -1;
-  }
-  return fwrite(header + 36, 1, 8u, w->file) == 8u ? 0 : -1;
+  return (uint64_t)w->head_bytes - 8u + w->data_bytes + (w->data_bytes & 1u);
 }
 
-int wav_open_meta(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
-                  uint16_t bits, int overwrite, const aud_meta *meta)
+/* The ds64 body, which only an RF64 file ever has filled in. */
+static void build_ds64(unsigned char out[WAV_DS64_BODY_BYTES], uint64_t riff_size,
+                       uint64_t data_bytes, uint64_t frames)
+{
+  aud_wr_u32le(out + 0, (uint32_t)(riff_size & 0xFFFFFFFFu));
+  aud_wr_u32le(out + 4, (uint32_t)(riff_size >> 32));
+  aud_wr_u32le(out + 8, (uint32_t)(data_bytes & 0xFFFFFFFFu));
+  aud_wr_u32le(out + 12, (uint32_t)(data_bytes >> 32));
+  aud_wr_u32le(out + 16, (uint32_t)(frames & 0xFFFFFFFFu));
+  aud_wr_u32le(out + 20, (uint32_t)(frames >> 32));
+  aud_wr_u32le(out + 24, 0u); /* no table: the data chunk is the only big one */
+}
+
+/*
+ * Patch the sizes in place, promoting the file to RF64 if the payload outgrew
+ * what a 32-bit field can say.
+ *
+ * Every piece is written where it belongs rather than as one block, because
+ * what sits between them - the reserved slot, the metadata - is already on disk
+ * and must not be trampled.
+ */
+static int write_header(wav_writer *w)
+{
+  unsigned char riff[12];
+  unsigned char data[8];
+  uint64_t riff_size = riff_size_of(w);
+  int promote = w->large && (riff_size > 0xFFFFFFFEu || w->data_bytes > 0xFFFFFFFEu);
+
+  if (promote)
+  {
+    unsigned char slot[WAV_DS64_CHUNK_BYTES];
+    uint16_t block = (uint16_t)(w->channels * (w->bits / 8u));
+
+    build_riff(riff, "RF64", WAV_SIZE_IS_64_BIT);
+    build_data(data, WAV_SIZE_IS_64_BIT);
+
+    memcpy(slot, "ds64", 4);
+    aud_wr_u32le(slot + 4, WAV_DS64_BODY_BYTES);
+    build_ds64(slot + 8, riff_size, w->data_bytes, block > 0 ? w->data_bytes / block : 0);
+
+    if (fseek(w->file, 12, SEEK_SET) != 0 ||
+        fwrite(slot, 1, sizeof(slot), w->file) != sizeof(slot))
+    {
+      return -1;
+    }
+  }
+  else
+  {
+    build_riff(riff, "RIFF", (uint32_t)riff_size);
+    build_data(data, (uint32_t)w->data_bytes);
+  }
+
+  if (fseek(w->file, 0, SEEK_SET) != 0 || fwrite(riff, 1, sizeof(riff), w->file) != 12u)
+  {
+    return -1;
+  }
+  /* the data chunk header is the last eight bytes before the payload */
+  if (fseek(w->file, (long)(w->head_bytes - 8u), SEEK_SET) != 0 ||
+      fwrite(data, 1, sizeof(data), w->file) != 8u)
+  {
+    return -1;
+  }
+  return 0;
+}
+
+int wav_open_ex(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
+                uint16_t bits, int overwrite, const aud_meta *meta, unsigned flags)
 {
   unsigned char chunks[AUD_META_MAX_BYTES];
-  unsigned char header[WAV_HEADER_BYTES];
+  unsigned char riff[12];
+  unsigned char fmt[24];
+  unsigned char data[8];
+  unsigned char slot[WAV_DS64_CHUNK_BYTES];
   size_t meta_bytes = 0;
+  int large = (flags & WAV_OPEN_LARGE) != 0;
 
   memset(w, 0, sizeof(*w));
 
@@ -114,12 +172,29 @@ int wav_open_meta(wav_writer *w, const char *path, uint32_t rate, uint16_t chann
   w->bits = bits;
   w->data_bytes = 0;
   w->meta_bytes = (uint32_t)meta_bytes;
+  w->large = large;
+  w->head_bytes =
+      (uint32_t)(WAV_HEADER_BYTES + meta_bytes + (large ? WAV_DS64_CHUNK_BYTES : 0u));
 
-  /* straight through, in file order: RIFF and fmt, the chunks, the data header */
-  build_header(header, 0, w->meta_bytes, rate, channels, bits);
-  if (fwrite(header, 1, 36u, w->file) != 36u ||
+  /*
+   * Written as JUNK rather than ds64, and left that way unless the payload
+   * needs it. A reader that has never heard of RF64 skips a JUNK chunk without
+   * being told to, so a take that stayed small is an ordinary WAV file.
+   */
+  memcpy(slot, "JUNK", 4);
+  aud_wr_u32le(slot + 4, WAV_DS64_BODY_BYTES);
+  memset(slot + 8, 0, WAV_DS64_BODY_BYTES);
+
+  build_riff(riff, "RIFF", (uint32_t)riff_size_of(w));
+  build_fmt(fmt, rate, channels, bits);
+  build_data(data, 0);
+
+  /* straight through, in file order */
+  if (fwrite(riff, 1, sizeof(riff), w->file) != sizeof(riff) ||
+      (large && fwrite(slot, 1, sizeof(slot), w->file) != sizeof(slot)) ||
+      fwrite(fmt, 1, sizeof(fmt), w->file) != sizeof(fmt) ||
       (meta_bytes > 0 && fwrite(chunks, 1, meta_bytes, w->file) != meta_bytes) ||
-      fwrite(header + 36, 1, 8u, w->file) != 8u)
+      fwrite(data, 1, sizeof(data), w->file) != sizeof(data))
   {
     int saved = errno;
     fclose(w->file);
@@ -130,10 +205,108 @@ int wav_open_meta(wav_writer *w, const char *path, uint32_t rate, uint16_t chann
   return 0;
 }
 
+int wav_open_meta(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
+                  uint16_t bits, int overwrite, const aud_meta *meta)
+{
+  /*
+   * Metadata and the room to grow travel together: --no-metadata asks for the
+   * plain 44 byte header, and a plain header has nowhere to put a 64-bit size.
+   */
+  return wav_open_ex(w, path, rate, channels, bits, overwrite, meta,
+                     meta != NULL ? WAV_OPEN_LARGE : 0u);
+}
+
 int wav_open(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
              uint16_t bits, int overwrite)
 {
-  return wav_open_meta(w, path, rate, channels, bits, overwrite, NULL);
+  return wav_open_ex(w, path, rate, channels, bits, overwrite, NULL, 0u);
+}
+
+int wav_open_append(wav_writer *w, const char *path, uint32_t rate, uint16_t channels,
+                    uint16_t bits)
+{
+  wav_reader r;
+  uint64_t data_offset;
+  uint64_t data_bytes;
+  int large;
+  long end;
+
+  memset(w, 0, sizeof(*w));
+
+  if (path == NULL || rate == 0 || channels == 0 || bits == 0 || (bits % 8u) != 0)
+  {
+    errno = EINVAL;
+    return -1;
+  }
+
+  /* the reader already knows how to find the payload, whatever is in front of it */
+  if (wav_read_open(&r, path) != 0)
+  {
+    if (errno == 0)
+    {
+      errno = EINVAL;
+    }
+    return -1;
+  }
+
+  /*
+   * The stream has to match, because these frames are going on the end of
+   * those. A device that came back at another rate is a different recording.
+   */
+  if (r.rate != rate || r.channels != channels || r.bits != bits || r.is_float)
+  {
+    wav_read_close(&r);
+    errno = EINVAL;
+    return -1;
+  }
+
+  data_offset = r.data_offset;
+  data_bytes = r.frames * r.block;
+  large = r.has_ds64_slot;
+  wav_read_close(&r);
+
+  w->file = fopen(path, "r+b");
+  if (w->file == NULL)
+  {
+    return -1;
+  }
+
+  /*
+   * The payload must be the last thing in the file. audiaki writes nothing
+   * after it, but a file an editor has appended tags to would have them
+   * overwritten by the first frame - so that one is refused rather than
+   * quietly damaged.
+   */
+  if (fseek(w->file, 0, SEEK_END) != 0 || (end = ftell(w->file)) < 0 ||
+      (uint64_t)end != data_offset + data_bytes + (data_bytes & 1u))
+  {
+    fclose(w->file);
+    w->file = NULL;
+    errno = EINVAL;
+    return -1;
+  }
+
+  /*
+   * An odd payload was followed by a pad byte on close. It is not part of the
+   * audio, so the next frame goes over it.
+   */
+  if (fseek(w->file, (long)(data_offset + data_bytes), SEEK_SET) != 0)
+  {
+    fclose(w->file);
+    w->file = NULL;
+    errno = EINVAL;
+    return -1;
+  }
+
+  w->path = path;
+  w->rate = rate;
+  w->channels = channels;
+  w->bits = bits;
+  w->data_bytes = data_bytes;
+  w->head_bytes = (uint32_t)data_offset;
+  w->meta_bytes = 0; /* only used to place the header, which head_bytes now does */
+  w->large = large;
+  return 0;
 }
 
 int wav_write(wav_writer *w, const void *data, size_t bytes)
@@ -159,7 +332,9 @@ int wav_write(wav_writer *w, const void *data, size_t bytes)
 
 int wav_would_overflow(const wav_writer *w, size_t bytes)
 {
-  return w->data_bytes + (uint64_t)bytes > (uint64_t)WAV_MAX_DATA_BYTES;
+  uint64_t cap = w->large ? WAV_MAX_LARGE_DATA_BYTES : (uint64_t)WAV_MAX_DATA_BYTES;
+
+  return w->data_bytes + (uint64_t)bytes > cap;
 }
 
 int wav_close(wav_writer *w)
@@ -182,7 +357,7 @@ int wav_close(wav_writer *w)
     }
   }
 
-  if (rc == 0 && write_header(w, (uint32_t)w->data_bytes) != 0)
+  if (rc == 0 && write_header(w) != 0)
   {
     rc = -1;
     saved = errno;
@@ -251,6 +426,9 @@ int wav_read_open(wav_reader *r, const char *path)
   uint64_t data_bytes = 0;
   uint16_t tag = 0;
   int have_fmt = 0;
+  int is_rf64 = 0;
+  uint64_t ds64_data_bytes = 0;
+  int have_ds64 = 0;
 
   if (r == NULL)
   {
@@ -281,7 +459,14 @@ int wav_read_open(wav_reader *r, const char *path)
     msg = "too short to be a WAV file";
     goto fail;
   }
-  if (memcmp(riff, "RIFF", 4) != 0 || memcmp(riff + 8, "WAVE", 4) != 0)
+  /*
+   * RF64 is the EBU's name and BW64 the ITU's for the same layout: a file
+   * whose 32-bit sizes have overflowed and whose real ones are in a ds64
+   * chunk. Both are accepted, and the only difference from here on is where
+   * the data chunk's length is read from.
+   */
+  is_rf64 = memcmp(riff, "RF64", 4) == 0 || memcmp(riff, "BW64", 4) == 0;
+  if ((memcmp(riff, "RIFF", 4) != 0 && !is_rf64) || memcmp(riff + 8, "WAVE", 4) != 0)
   {
     msg = "not a RIFF/WAVE file";
     goto fail;
@@ -306,7 +491,38 @@ int wav_read_open(wav_reader *r, const char *path)
     /* RIFF chunks are word aligned; an odd body is followed by a pad byte. */
     skip = (off_t)size + (size & 1u);
 
-    if (memcmp(head, "fmt ", 4) == 0)
+    /*
+     * The 64-bit sizes, which in an RF64 file are the real ones. Only the data
+     * size is taken: the RIFF size describes the file rather than the audio,
+     * and the sample count is a convenience that has to agree with the data
+     * size anyway.
+     */
+    if (memcmp(head, "ds64", 4) == 0)
+    {
+      /* riffSize and dataSize, which is as much of the body as matters here */
+      unsigned char body[16];
+
+      if (size < sizeof(body))
+      {
+        msg = "malformed ds64 chunk";
+        goto fail;
+      }
+      if (read_exact(r->file, body, sizeof(body)) != 0)
+      {
+        msg = "truncated ds64 chunk";
+        goto fail;
+      }
+      ds64_data_bytes = aud_rd_u64le(body + 8);
+      have_ds64 = 1;
+      r->has_ds64_slot = 1;
+
+      if (fseeko(r->file, skip - (off_t)sizeof(body), SEEK_CUR) != 0)
+      {
+        msg = "cannot seek past the ds64 chunk";
+        goto fail;
+      }
+    }
+    else if (memcmp(head, "fmt ", 4) == 0)
     {
       size_t take = size < sizeof(fmt) ? size : sizeof(fmt);
 
@@ -370,6 +586,25 @@ int wav_read_open(wav_reader *r, const char *path)
     }
     else if (memcmp(head, "data", 4) == 0)
     {
+      /*
+       * 0xFFFFFFFF is RF64's way of saying the real length is in ds64, which
+       * is required to sit ahead of this and so has already been read. Without
+       * one the number is taken at face value: a chunk of very nearly 4 GB is
+       * legal in plain RIFF, and it is not this reader's place to decide it
+       * meant something else.
+       */
+      uint64_t payload = size;
+
+      if (size == WAV_SIZE_IS_64_BIT && (have_ds64 || is_rf64))
+      {
+        if (!have_ds64)
+        {
+          msg = "RF64 file with no ds64 chunk to size it";
+          goto fail;
+        }
+        payload = ds64_data_bytes;
+      }
+
       /* the first one is the audio; a malformed second is not a second take */
       if (data_offset < 0)
       {
@@ -379,7 +614,7 @@ int wav_read_open(wav_reader *r, const char *path)
           msg = "cannot locate the data chunk";
           goto fail;
         }
-        data_bytes = size;
+        data_bytes = payload;
       }
       /*
        * Stepping over the payload rather than reading it, so reaching the tail
@@ -387,14 +622,28 @@ int wav_read_open(wav_reader *r, const char *path)
        * recording killed before its header was patched - lands past the end,
        * where the next read fails and ends the walk with what has been found.
        */
-      if (fseeko(r->file, skip, SEEK_CUR) != 0)
+      if (fseeko(r->file, (off_t)(payload + (payload & 1u)), SEEK_CUR) != 0)
       {
         break;
       }
     }
-    else if (fseeko(r->file, skip, SEEK_CUR) != 0)
+    else
     {
-      break;
+      /*
+       * The reserved slot, still unused: a JUNK chunk of exactly ds64's size,
+       * sitting where ds64 would go. That is this writer's own reservation
+       * rather than anybody's padding, and it means the file can still be
+       * promoted if it is carried on and grows past 4 GB.
+       */
+      if (memcmp(head, "JUNK", 4) == 0 && size == WAV_DS64_BODY_BYTES &&
+          data_offset < 0 && !have_fmt)
+      {
+        r->has_ds64_slot = 1;
+      }
+      if (fseeko(r->file, skip, SEEK_CUR) != 0)
+      {
+        break;
+      }
     }
 
     if (have_fmt && data_offset >= 0 && r->meta.present)

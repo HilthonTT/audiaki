@@ -124,6 +124,20 @@ unsigned long aud_engine_capture_frames(const aud_engine *e);
 int aud_engine_start(aud_engine *e, const char *path, int overwrite);
 
 /*
+ * Carry on writing a take the device was pulled out of, rather than starting a
+ * new file beside it.
+ *
+ * `path` is a WAV this engine wrote and closed when the stream died. The
+ * stream has to match what this engine is now capturing; when it does not, or
+ * the file cannot be reopened, this fails and the caller should fall back to
+ * aud_engine_start() with a new name - a second file is worse than one file
+ * and much better than no take.
+ *
+ * Nothing already on disk is rewritten to do it. See wav_open_append().
+ */
+int aud_engine_continue(aud_engine *e, const char *path);
+
+/*
  * Stop appending to the file without closing it. The stream keeps running, so
  * the meters and the visualiser stay live. A no-op unless recording.
  */

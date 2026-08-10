@@ -93,8 +93,15 @@ typedef struct
   unsigned click_beats;       /* beats to a bar; the first of each is accented */
   unsigned click_subdiv;      /* ticks to a beat; 1 is the beat undivided */
   double click_gain;          /* how loud the click is, on the same scale as above */
-  int metadata;               /* stamp the take with what made it; see meta.h */
-  const char *note;           /* free text to stamp along with it */
+  /*
+   * Round trip to strike --click ahead of the grid by, so it is heard on the
+   * beat rather than a buffer after it. Negative means nothing was said and it
+   * is worked out from the buffers; zero turns the correction off. Shared with
+   * the desktop app's overdub placement through the config file.
+   */
+  double latency_ms;
+  int metadata;     /* stamp the take with what made it; see meta.h */
+  const char *note; /* free text to stamp along with it */
   unsigned viz_width;
   unsigned viz_height;
   unsigned viz_fps;

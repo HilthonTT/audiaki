@@ -48,6 +48,7 @@ _audiaki() {
     '--click-beats[beats to a bar, accenting the first]:beats:'
     '--click-subdiv[ticks to a beat, struck softer than the beat]:ticks:(1 2 3 4 6 8)'
     '--click-gain[how loud the click is, 0.0 to 2.0]:gain:'
+    '--latency[round trip to strike the click ahead of the beat by, in ms]:ms:'
     '--visualize[render a WAV to a video and exit]:wav file:_files -g "*.wav(-.)"'
     '(-o --output)'{-o,--output}'[output file]:file:_files'
     '--style[visualiser style]:style:(bars scope waveform)'

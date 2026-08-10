@@ -695,6 +695,67 @@ out:
   return rc;
 }
 
+int aud_engine_continue(aud_engine *e, const char *path)
+{
+  int rc = -1;
+
+  if (e == NULL || path == NULL || path[0] == '\0')
+  {
+    return -1;
+  }
+
+  pthread_mutex_lock(&e->lock);
+
+  if (e->state == AUD_ENGINE_FAILED)
+  {
+    set_error(e, "the capture device is no longer running");
+    goto out;
+  }
+  if (e->state != AUD_ENGINE_IDLE)
+  {
+    set_error(e, "a take is already in progress");
+    goto out;
+  }
+  if (strlen(path) >= sizeof(e->path))
+  {
+    set_error(e, "that path is too long");
+    goto out;
+  }
+  snprintf(e->path, sizeof(e->path), "%s", path);
+
+  /*
+   * No metadata is written: the file already carries the stamp from when the
+   * take started, which is the right answer - this is the same take, and the
+   * time it began is the time it began.
+   */
+  if (wav_open_append(&e->wav, e->path, e->dev.rate, (uint16_t)e->dev.channels,
+                      (uint16_t)aud_format_wav_bits(e->dev.format)) != 0)
+  {
+    set_error(e, "cannot carry on %s: %s", e->path, strerror(errno));
+    goto out;
+  }
+
+  e->take_open = 1;
+  aud_ringbuf_reset(&e->take);
+  atomic_store_explicit(&e->take_dropped, 0, memory_order_relaxed);
+  /*
+   * `frames` counts this pass rather than the file, because it is what the
+   * status line and the growing clip are drawn from and both are about the
+   * audio arriving now. What is already in the file is already on the lane.
+   */
+  e->frames = 0;
+  e->clipped = 0;
+  e->xruns = 0;
+  e->error[0] = '\0';
+  e->flush_preroll = 1;
+  e->state = AUD_ENGINE_RECORDING;
+  rc = 0;
+
+out:
+  pthread_mutex_unlock(&e->lock);
+  return rc;
+}
+
 void aud_engine_pause(aud_engine *e)
 {
   if (e == NULL)

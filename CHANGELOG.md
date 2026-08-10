@@ -9,6 +9,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Takes are no longer capped at 4 GB. A stamped take reserves 36 bytes for a
+  `ds64` chunk, and becomes an RF64 file - the format EBU Tech 3306 defines and
+  the ITU calls BW64 - if the payload ever needs it. Three and a half hours of
+  24-bit stereo at 48 kHz was the old ceiling; there is no longer one worth
+  quoting.
+
+  Reserved as a `JUNK` chunk rather than promoted eagerly, so a take that stayed
+  small is an ordinary RIFF/WAVE file with one chunk in it that every reader of
+  the format already skips - and a take that outgrew it needs no audio moved to
+  make room. The reader takes RF64 and BW64 as well as RIFF. Verified against
+  ffmpeg, which reads both the small and the promoted file correctly.
+
+  `--no-metadata` still stops at 4 GB. It asks for the plain 44-byte header, and
+  a plain header has nowhere to put a 64-bit size.
+
+- Sample rate conversion on the playback path, so an ALSA output that will not
+  run at the stream's rate is converted to rather than refused. Monitoring a
+  44.1 kHz capture through a 48 kHz output used to decline; now it plays.
+
+  A windowed sinc rather than a linear interpolator, because the cut runs both
+  ways: going down, an unfiltered converter folds everything above the new
+  Nyquist back into the audible band as tones nobody played. The cutoff follows
+  the lower of the two rates, which makes the same code correct in both
+  directions. Nothing resamples what is written to a take - the file is the
+  samples the device delivered, at the rate it delivered them.
+
+- `--latency MS`, and the click is struck early by it. Hearing a beat costs an
+  output buffer and what gets played in response costs an input buffer, so a
+  take played perfectly in time used to land that whole round trip behind the
+  grid the clicks were counted on. It is now struck a round trip early and
+  arrives at the ears where the grid says it should be; the grid itself does not
+  move. The same number, and the same arithmetic, that already placed an
+  overdub - `latency_ms` in the config file sets both.
+
+- The desktop app hands the save, import and export questions to the system file
+  chooser when `zenity` or `kdialog` is installed, through **Browse...**. That
+  is the desktop's real chooser, with its bookmarks, recent places and search,
+  and under a sandbox it goes through xdg-desktop-portal.
+
+  The chooser runs beside the window and is polled once a frame rather than
+  waited on, so the window keeps drawing and the take keeps recording while
+  somebody browses. What comes back lands in the dialog's two fields rather than
+  acting on its own, so it can still be corrected before either button is
+  pressed. The built-in browser stays as the fallback, and
+  `AUDIAKI_FILE_CHOOSER=none` keeps it deliberately.
+
 - `--click-subdiv N` divides the beat: `2` for eighths, `3` for triplets, `4`
   for sixteenths, up to 8. The ticks are the beat tone struck softer, so the
   pulse still reads as the pulse. What a slow tempo usually wants - at 60 BPM
@@ -244,6 +290,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one being recorded is indexed as it arrives.
 
 ### Fixed
+
+- A take the capture device was pulled out of now carries on in the *same*
+  file, and the same clip on the lane, rather than in a second one beside it.
+
+  Nothing already written is rewritten to do it: the frames go on the end of the
+  ones that are there and the header is patched when the take finally stops, so
+  a crash part way through the second half leaves the file exactly as long as it
+  was after the first - the same amount lost as a second file that never got
+  created. The first half is never put at risk to save the second, which was the
+  objection to splicing in the first place.
+
+  One clip rather than two touching ones, and that part is not cosmetic: a
+  project stores a clip as an offset into the file it came from, and two clips
+  both stamped with the one file would both claim to start at the beginning of
+  it - so reloading the project would have played the first half twice.
+
+  A file that will not take the rest - one something else has appended to, or a
+  device back at a different rate - falls back to the second take on the same
+  lane, which is what this always used to do.
+
+- Seeking and pausing in `--play` land where they were asked for. Both used to
+  act on what had been handed to the output while a buffer's worth - around a
+  tenth of a second - was still on its way to the speaker, so a jump was heard
+  late and a pause was followed by more audio. The queue is now dropped along
+  with the jump.
+
+- Monitoring follows `--channel`. A take being written as one channel is now
+  monitored as one channel, rather than the headphones carrying every channel
+  the device delivered while the file kept one of them.
 
 - Host byte order no longer has to be little-endian. WAV and every format a
   backend delivers are little-endian wherever they came from, and the decoders

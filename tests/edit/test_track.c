@@ -458,6 +458,91 @@ TEST(an_edit_ahead_of_a_take_leaves_the_take_where_it_is)
   aud_track_free(&t);
 }
 
+TEST(an_interrupted_take_carries_on_in_the_same_clip)
+{
+  aud_track t;
+  float first[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+  float second[4] = {2.0f, 2.0f, 2.0f, 2.0f};
+
+  aud_track_init(&t, "t", 1);
+
+  /* a take that the device was pulled out of four frames in */
+  CHECK_EQ_INT(aud_track_record_begin(&t, 100, 64), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, first, 4), 4);
+  aud_track_record_end(&t);
+  CHECK_EQ_INT(t.count, 1);
+
+  /* the device came back, and the rest of it goes into the same clip */
+  CHECK_EQ_INT(aud_track_record_continue(&t, 104), 0);
+  CHECK(aud_track_recording(&t));
+  CHECK_EQ_INT((int)aud_track_record_push(&t, second, 4), 4);
+  aud_track_record_end(&t);
+
+  /*
+   * One clip, not two touching ones. Two would both be stamped with the one
+   * file the halves now share and both claim to start at the beginning of it.
+   */
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(well_formed(&t));
+  CHECK_EQ_INT((int)aud_track_end(&t), 108);
+  CHECK(at(&t, 100) == 1.0f);
+  CHECK(at(&t, 103) == 1.0f);
+  CHECK(at(&t, 104) == 2.0f);
+  CHECK(at(&t, 107) == 2.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(carrying_a_take_on_is_refused_when_it_would_not_be_the_same_take)
+{
+  aud_track t;
+  float buf[4] = {1.0f, 1.0f, 1.0f, 1.0f};
+
+  aud_track_init(&t, "t", 1);
+
+  /* nothing recorded yet: there is no tail to carry on */
+  CHECK_EQ_INT(aud_track_record_continue(&t, 0), -1);
+
+  CHECK_EQ_INT(aud_track_record_begin(&t, 100, 64), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 4), 4);
+
+  /* a take is already open */
+  CHECK_EQ_INT(aud_track_record_continue(&t, 104), -1);
+  aud_track_record_end(&t);
+
+  /* not where the clip actually ends: something was edited in the gap */
+  CHECK_EQ_INT(aud_track_record_continue(&t, 103), -1);
+  CHECK_EQ_INT(aud_track_record_continue(&t, 105), -1);
+
+  /* and the right frame still works, so the refusals above were about the gap */
+  CHECK_EQ_INT(aud_track_record_continue(&t, 104), 0);
+  aud_track_record_end(&t);
+
+  aud_track_free(&t);
+}
+
+TEST(carrying_a_take_on_is_refused_when_the_audio_is_shared)
+{
+  aud_track t;
+  float buf[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+
+  aud_track_init(&t, "t", 1);
+  CHECK_EQ_INT(aud_track_record_begin(&t, 0, 64), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 8), 8);
+  aud_track_record_end(&t);
+
+  /*
+   * A split leaves two clips reading one block. Growing it would change what
+   * the other one plays, so this has to decline and let the caller open a
+   * second file the way it always did.
+   */
+  CHECK_EQ_INT(aud_track_split(&t, 4), 0);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK_EQ_INT(aud_track_record_continue(&t, 8), -1);
+
+  aud_track_free(&t);
+}
+
 TEST(deleting_the_clip_a_take_is_going_into_ends_the_take)
 {
   aud_track t;
@@ -721,6 +806,9 @@ int main(void)
   RUN(the_edges_of_a_track_are_where_its_clips_begin_and_end);
   RUN(a_split_adds_an_edge_to_step_to);
   RUN(an_empty_track_has_nowhere_to_step_to);
+  RUN(an_interrupted_take_carries_on_in_the_same_clip);
+  RUN(carrying_a_take_on_is_refused_when_it_would_not_be_the_same_take);
+  RUN(carrying_a_take_on_is_refused_when_the_audio_is_shared);
 
   return TEST_RESULT();
 }

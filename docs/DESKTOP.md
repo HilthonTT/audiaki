@@ -389,11 +389,15 @@ WAV is closed and patched the instant the stream dies, and the clip that was
 growing on the timeline becomes a finished one over that file. The window says
 which take it was and how much of it it kept.
 
-Plug the interface back in within **thirty seconds** and the take carries on:
-the same lane, starting at the frame the first half stopped at, in a take file
-of its own. Two files rather than one — the first is already closed and safe on
-disk, and splicing them would mean rewriting it to produce a recording whose
-middle is a moment the interface was not running.
+Plug the interface back in within **thirty seconds** and the take carries on in
+the same file and the same clip, starting at the frame the first half stopped
+at. One take, one WAV, one thing on the lane.
+
+Nothing already written is rewritten to do it. The new frames go on the end of
+the ones that are there and the header is patched when the take finally stops,
+so a crash part way through the second half leaves the file exactly as long as
+it was after the first — the same amount lost as a second file that never got
+created, and the first half is never put at risk to save the second.
 
 It has to be the same device to carry on with. One that comes back at another
 rate or another channel count cannot be laid onto the end of a lane recorded at
@@ -401,6 +405,11 @@ the old one, and the window says so and waits for **Record** instead. After the
 thirty seconds it does the same: the stream reopens either way, so nothing is
 lost — a window left running is simply not going to start recording to disk on
 its own because of something that happened half an hour ago.
+
+A file that will not take the rest of the take — one something else has
+appended to since — falls back to what this used to always do, a second take
+butted against the first on the same lane. Two files is worse than one and much
+better than losing the half that is coming.
 
 **Monitoring feeds your input back to your speakers**, which will howl if you
 are recording a microphone in the same room. It starts off for that reason.
@@ -434,6 +443,20 @@ once one is clicked: hear what you are about to file, or hear what you are
 about to be told is in the way. The button says how far in it has got, and the
 audition stops when the dialog does. **Import** and **Export** get the same
 button.
+
+**Browse…** hands the question to the desktop's own file chooser, which has the
+bookmarks, the recent places and the search this one never will. It appears when
+`zenity` or `kdialog` is installed — a KDE session gets `kdialog`, anything else
+`zenity` — and under a sandbox both go through `xdg-desktop-portal`, which is
+the one that gets it right. Whatever comes back lands in the two fields as
+though it had been typed, so it can still be looked at and corrected before
+either button is pressed; cancelling out of it leaves the dialog saying what it
+said before.
+
+The window keeps drawing and the take keeps recording while it is up: the
+chooser runs beside audiaki rather than inside it, and is looked in on once a
+frame. `AUDIAKI_FILE_CHOOSER` names which to use — `zenity`, `kdialog`, or
+`none` to keep the built-in browser whatever else is installed.
 
 **Hidden** lists dot files and dot folders. Off by default — hardly anybody
 keeps takes in one, and showing them would be noise in every home directory —

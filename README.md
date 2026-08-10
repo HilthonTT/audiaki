@@ -151,15 +151,16 @@ system are in [DESIGN.md](DESIGN.md#layout).
 
 ## Limitations
 
-Linux only, through ALSA or PipeWire. Recordings are PCM WAV, so they stop at
-the 4 GB RIFF limit — about 3.5 hours of 24-bit stereo at 48 kHz. The tuner is
-monophonic, video rendering shells out to `ffmpeg`, and the desktop app's save
-dialog browses folders itself rather than being the system's own file chooser.
-A device pulled out mid-take carries that take on in a second file when it comes
-straight back, not in the one it interrupted. Overdubs are placed by a latency
-correction that is estimated unless you measure it, and playback and capture
-start within a drawn frame of each other rather than on the same sample, so they
-land close rather than sample locked. The full list is in
+Linux only, through ALSA or PipeWire — no JACK or CoreAudio backend. The tuner
+is monophonic, and video rendering shells out to `ffmpeg` and happens after the
+take rather than during it. The desktop app falls back to browsing folders
+itself when neither `zenity` nor `kdialog` is installed to hand the question to.
+`--no-metadata` still stops at the 4 GB RIFF limit, since a plain 44-byte header
+has nowhere to put a 64-bit size; a stamped take becomes an RF64 file instead
+and keeps going. Overdubs and the click are placed by a latency correction that
+is estimated unless you measure it, and playback and capture start within a
+drawn frame of each other rather than on the same sample, so they land close
+rather than sample locked. The full list is in
 [docs/USAGE.md](docs/USAGE.md#limitations).
 
 ## Credits

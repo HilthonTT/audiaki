@@ -71,6 +71,7 @@ typedef struct
   /* What a caller feeding a file rather than a live capture needs; see monitor.h */
   long (*space)(void *impl);
   void (*drain)(void *impl);
+  void (*flush)(void *impl);
 } aud_monitor_ops;
 
 /*

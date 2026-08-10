@@ -86,4 +86,20 @@ long aud_monitor_space(aud_monitor *m);
  */
 void aud_monitor_drain(aud_monitor *m);
 
+/*
+ * Throw away everything queued but not yet heard, and carry on.
+ *
+ * The opposite of drain, and what a seek needs. Between the write and the
+ * speaker sits a buffer's worth of audio - around a tenth of a second - so a
+ * player that jumps and simply carries on writing keeps playing the old
+ * position for that long after being asked not to. Dropping the queue is what
+ * makes the jump land where it was asked for.
+ *
+ * Pausing wants it for the same reason: without it, "stop" is followed by a
+ * tenth of a second more of the take.
+ *
+ * Safe to call at any time, and cheap enough to call on every keypress.
+ */
+void aud_monitor_flush(aud_monitor *m);
+
 #endif /* AUDIAKI_MONITOR_H */

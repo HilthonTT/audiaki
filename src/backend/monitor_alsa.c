@@ -5,6 +5,7 @@
  * The second of the two translation units that include <alsa/asoundlib.h>.
  * Contract and semantics are monitor.h's; this is how ALSA meets them.
  */
+#include "audio/resample.h"
 #include "backend/backend.h"
 #include "backend/monitor.h"
 #include "util/log.h"
@@ -21,15 +22,26 @@
 #define MONITOR_DEFAULT_PERIOD_FRAMES 512u
 #define MONITOR_DEFAULT_PERIODS 3u
 
+/* Input frames converted per pass when the output will not take the rate. */
+#define MONITOR_RESAMPLE_CHUNK 1024u
+
 typedef struct
 {
   snd_pcm_t *pcm;
-  unsigned rate;
+  unsigned rate;    /* what the device is actually running at */
+  unsigned in_rate; /* what callers hand over, which may not be the same */
   unsigned channels;
   snd_pcm_uframes_t period_frames;
   snd_pcm_uframes_t buffer_frames;
   int16_t *stage;      /* period_frames * channels samples */
   size_t stage_frames; /* frames the staging buffer holds */
+  /*
+   * Only there when the device would not take the stream's rate. NULL is the
+   * ordinary case and the write path costs nothing extra for it.
+   */
+  aud_resampler *resampler;
+  float *converted; /* output of the converter, interleaved */
+  size_t converted_cap;
   unsigned long dropped;
   int failed;
 } alsa_monitor;
@@ -85,18 +97,17 @@ static int configure(alsa_monitor *m, const aud_monitor_config *cfg)
     aud_warn("monitor: cannot set %u Hz playback: %s", cfg->rate, snd_strerror(err));
     return -1;
   }
+  /*
+   * A device that will not take the stream's rate used to be the end of it.
+   * Now the difference is converted on the way out - see audio/resample.h - so
+   * an interface that only offers 48 kHz can still monitor a 44.1 kHz take.
+   * The file is untouched either way: this is the playback path.
+   */
   if (rate != cfg->rate)
   {
-    /*
-     * Resampling here would mean carrying an interpolator around for a
-     * convenience feature. Refusing is honest, and "default" almost always
-     * accepts whatever the capture side negotiated. The PipeWire backend does
-     * not have this limitation: the server resamples as a matter of course.
-     */
-    aud_warn("monitor: output wants %u Hz but the audio is %u Hz, not playing it", rate,
-             cfg->rate);
-    aud_info("the pipewire backend monitors at any rate: --backend pipewire");
-    return -1;
+    aud_info("monitor: output wants %u Hz and the audio is %u Hz; converting on the "
+             "way out",
+             rate, cfg->rate);
   }
 
   dir = 0;
@@ -150,6 +161,7 @@ static int configure(alsa_monitor *m, const aud_monitor_config *cfg)
   }
 
   m->rate = rate;
+  m->in_rate = cfg->rate;
   m->channels = cfg->channels;
   m->period_frames = period;
   m->buffer_frames = buffer;
@@ -171,6 +183,8 @@ static void alsa_monitor_close(void *impl)
     snd_pcm_close(m->pcm);
   }
   free(m->stage);
+  aud_resample_destroy(m->resampler);
+  free(m->converted);
   free(m);
 }
 
@@ -216,6 +230,28 @@ static void *alsa_monitor_open(const aud_monitor_config *cfg, unsigned *rate_out
     snd_pcm_close(m->pcm);
     free(m);
     return NULL;
+  }
+
+  if (m->rate != m->in_rate)
+  {
+    m->resampler = aud_resample_create(m->in_rate, m->rate, m->channels);
+    if (m->resampler != NULL)
+    {
+      m->converted_cap = aud_resample_out_max(m->resampler, MONITOR_RESAMPLE_CHUNK);
+      m->converted = malloc(m->converted_cap * m->channels * sizeof(*m->converted));
+    }
+    if (m->resampler == NULL || m->converted == NULL)
+    {
+      /*
+       * Without the converter there is nothing sensible to play: the device is
+       * running at a rate the audio is not. Better to say so than to play it
+       * at the wrong pitch.
+       */
+      aud_warn("monitor: cannot convert %u Hz to %u Hz, not playing it", m->in_rate,
+               m->rate);
+      alsa_monitor_close(m);
+      return NULL;
+    }
   }
 
   aud_debug("monitor: %s, %u Hz, %u ch, period %lu frames, buffer %lu frames (%.1f ms)",
@@ -272,17 +308,16 @@ static int recover(alsa_monitor *m, int err)
   return -1;
 }
 
-static int alsa_monitor_write(void *impl, const float *interleaved, size_t frames,
-                              float gain)
+/*
+ * Hand frames already at the device's own rate to the device. The rate
+ * conversion, when there is one, happens in the caller.
+ */
+static int push_frames(alsa_monitor *m, const float *interleaved, size_t frames,
+                       float gain)
 {
-  alsa_monitor *m = impl;
   snd_pcm_sframes_t avail;
 
-  if (m == NULL || m->failed)
-  {
-    return -1;
-  }
-  if (interleaved == NULL || frames == 0)
+  if (frames == 0)
   {
     return 0;
   }
@@ -355,6 +390,47 @@ static int alsa_monitor_write(void *impl, const float *interleaved, size_t frame
   return 0;
 }
 
+static int alsa_monitor_write(void *impl, const float *interleaved, size_t frames,
+                              float gain)
+{
+  alsa_monitor *m = impl;
+
+  if (m == NULL || m->failed)
+  {
+    return -1;
+  }
+  if (interleaved == NULL || frames == 0)
+  {
+    return 0;
+  }
+
+  if (m->resampler == NULL)
+  {
+    return push_frames(m, interleaved, frames, gain);
+  }
+
+  /*
+   * Converted a bufferful at a time. The converter carries its phase and its
+   * tail across calls, so cutting the stream up here is not audible in it -
+   * see resample.h.
+   */
+  while (frames > 0)
+  {
+    size_t take = frames < MONITOR_RESAMPLE_CHUNK ? frames : MONITOR_RESAMPLE_CHUNK;
+    size_t got =
+        aud_resample_run(m->resampler, interleaved, take, m->converted, m->converted_cap);
+
+    if (push_frames(m, m->converted, got, gain) != 0)
+    {
+      return -1;
+    }
+
+    interleaved += take * m->channels;
+    frames -= take;
+  }
+  return 0;
+}
+
 static long alsa_monitor_space(void *impl)
 {
   alsa_monitor *m = impl;
@@ -379,6 +455,18 @@ static long alsa_monitor_space(void *impl)
     } /* recovered but still not ready; ask again next time */
   }
 
+  /*
+   * Answered in the caller's frames rather than the device's. A caller reads
+   * its source and hands it over at the source's rate; telling it how much
+   * room there is in the device's frames would have it over-read whenever the
+   * output runs faster than the file, and the surplus would be dropped.
+   *
+   * Rounded down, so the answer is never more than will actually fit.
+   */
+  if (m->resampler != NULL && m->rate != 0)
+  {
+    return (long)((uint64_t)avail * m->in_rate / m->rate);
+  }
   return (long)avail;
 }
 
@@ -407,6 +495,36 @@ static void alsa_monitor_drain(void *impl)
   snd_pcm_nonblock(m->pcm, 1);
 }
 
+static void alsa_monitor_flush(void *impl)
+{
+  alsa_monitor *m = impl;
+
+  if (m == NULL || m->failed)
+  {
+    return;
+  }
+
+  /*
+   * Drop rather than drain: the queued audio is the audio being jumped away
+   * from, and playing it out is exactly what the caller asked not to happen.
+   * The stream stops when it is dropped, so it has to be prepared again before
+   * the next write.
+   */
+  snd_pcm_drop(m->pcm);
+  if (snd_pcm_prepare(m->pcm) < 0)
+  {
+    /* not fatal on its own: the next write recovers or reports it */
+    return;
+  }
+
+  /*
+   * The converter is holding the tail of what was playing in its filter. Left
+   * alone it would smear that across the first frames after the jump, which is
+   * the one artefact a seek must not have.
+   */
+  aud_resample_reset(m->resampler);
+}
+
 const aud_monitor_ops aud_monitor_ops_alsa = {
     .name = "alsa",
     .open = alsa_monitor_open,
@@ -415,4 +533,5 @@ const aud_monitor_ops aud_monitor_ops_alsa = {
     .dropped = alsa_monitor_dropped,
     .space = alsa_monitor_space,
     .drain = alsa_monitor_drain,
+    .flush = alsa_monitor_flush,
 };

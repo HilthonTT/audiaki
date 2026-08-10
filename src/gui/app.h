@@ -185,6 +185,12 @@ typedef struct
   double lost_at; /* GetTime() when the stream went, for the window below */
   unsigned rate;
   unsigned channels;
+  /*
+   * The file it was being written to, so the rest of it can go on the end
+   * rather than into a second one beside it. Empty when there is nothing to
+   * carry on.
+   */
+  char path[AUD_ENGINE_PATH_MAX];
 } app_interrupted;
 
 typedef struct
@@ -231,6 +237,14 @@ typedef struct
    * it right, and refusing outright would make that impossible.
    */
   int confirmed;
+
+  /*
+   * The desktop's own chooser, while one is up. NULL the rest of the time,
+   * which is most of it - see gui/chooser.h for why it is polled rather than
+   * waited on, and why the built-in browser stays behind it rather than being
+   * replaced by it.
+   */
+  struct aud_chooser *chooser;
 } app_save;
 
 typedef struct

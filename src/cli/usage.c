@@ -79,7 +79,12 @@ void cli_print_usage(FILE *out)
           "                        2 for eighths, 3 for triplets, 4 for\n"
           "                        sixteenths (1 to 8, default: %u)\n"
           "      --click-gain X    how loud the click is, 0.0 to 2.0 (default: "
-          "%.2g)\n",
+          "%.2g)\n"
+          "      --latency MS      round trip to strike the click ahead of the\n"
+          "                        beat by, so it is heard on the grid rather\n"
+          "                        than a buffer after it (default: from the\n"
+          "                        buffers, or latency_ms in the config file;\n"
+          "                        0 turns the correction off)\n",
           AUD_DEFAULT_DEVICE, AUD_DEFAULT_RATE, AUD_DEFAULT_CHANNELS,
           AUD_DEFAULT_PERIOD_FRAMES, AUD_DEFAULT_PERIODS, AUD_META_NOTE_MAX,
           AUD_MONITOR_DEFAULT_DEVICE, AUD_CLICK_DEFAULT_BEATS, AUD_CLICK_DEFAULT_SUBDIV,

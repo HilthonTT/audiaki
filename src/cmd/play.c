@@ -143,13 +143,12 @@ static void draw_meter(aud_meter *meter, aud_spectrum *spectrum, size_t bands,
 /*
  * Move `seconds` from where the file is being read, clamped to it.
  *
- * Relative to what has been handed to the output rather than to what is coming
- * out of it, which is a buffer's worth behind - a tenth of a second at the
- * defaults. Correcting for it would make the number on the line disagree with
- * where the file actually is, and a tenth of a second is not what anybody is
- * aiming for with a cursor key.
+ * Relative to what has been handed to the output, which used to be a buffer's
+ * worth ahead of what was coming out of it - so a jump landed about a tenth of
+ * a second from where it was asked for. The queue is now dropped along with
+ * the jump, which makes the two the same place.
  */
-static void seek_by(wav_reader *wav, double seconds, int *moved)
+static void seek_by(aud_monitor *mon, wav_reader *wav, double seconds, int *moved)
 {
   double target = (double)wav->position / wav->rate + seconds;
 
@@ -160,6 +159,7 @@ static void seek_by(wav_reader *wav, double seconds, int *moved)
 
   if (wav_read_seek(wav, (uint64_t)(target * wav->rate + 0.5)) == 0)
   {
+    aud_monitor_flush(mon);
     *moved = 1;
   }
 }
@@ -172,7 +172,8 @@ static void seek_by(wav_reader *wav, double seconds, int *moved)
  * redraws on that, because a line still describing the moment before the key
  * was pressed is worse than no line at all.
  */
-static play_result apply_keys(aud_keys *keys, wav_reader *wav, int *paused, int *moved)
+static play_result apply_keys(aud_keys *keys, aud_monitor *mon, wav_reader *wav,
+                              int *paused, int *moved)
 {
   aud_key key;
 
@@ -182,34 +183,50 @@ static play_result apply_keys(aud_keys *keys, wav_reader *wav, int *paused, int 
     {
     case AUD_KEY_SPACE:
       *paused = !*paused;
+      /*
+       * Pausing drops the queue for the same reason a seek does: otherwise
+       * "stop" is followed by the buffer's worth still in flight. Resuming
+       * carries on from where the file is, which is where the display has
+       * been saying it was all along.
+       */
+      if (*paused)
+      {
+        aud_monitor_flush(mon);
+      }
       *moved = 1;
       break;
     case AUD_KEY_LEFT:
-      seek_by(wav, -PLAY_SEEK_NUDGE, moved);
+      seek_by(mon, wav, -PLAY_SEEK_NUDGE, moved);
       break;
     case AUD_KEY_RIGHT:
-      seek_by(wav, PLAY_SEEK_NUDGE, moved);
+      seek_by(mon, wav, PLAY_SEEK_NUDGE, moved);
       break;
     case AUD_KEY_DOWN:
-      seek_by(wav, -PLAY_SEEK_STRIDE, moved);
+      seek_by(mon, wav, -PLAY_SEEK_STRIDE, moved);
       break;
     case AUD_KEY_UP:
-      seek_by(wav, PLAY_SEEK_STRIDE, moved);
+      seek_by(mon, wav, PLAY_SEEK_STRIDE, moved);
       break;
     case AUD_KEY_HOME:
       if (wav_read_seek(wav, 0) == 0)
       {
+        aud_monitor_flush(mon);
         *moved = 1;
       }
       break;
     /*
-     * Seeked to rather than returned from, so the tail is drained and the file
-     * ends the way it would have ended on its own. 'n' is the key for leaving
-     * one early.
+     * Seeked to rather than returned from, so the file finishes the way it
+     * would have on its own - the run reports what was played and moves on
+     * rather than abandoning the pass. 'n' is the key for leaving one early.
+     *
+     * The queue still goes, like any other jump: what is in it is audio from
+     * before the end, and hearing a tenth of a second of it after pressing End
+     * is the thing this whole set of flushes is here to stop.
      */
     case AUD_KEY_END:
       if (wav_read_seek(wav, wav->frames) == 0)
       {
+        aud_monitor_flush(mon);
         *moved = 1;
       }
       break;
@@ -349,7 +366,7 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
     size_t want;
     double elapsed;
     int moved = 0;
-    play_result asked = apply_keys(keys, &wav, &paused, &moved);
+    play_result asked = apply_keys(keys, mon, &wav, &paused, &moved);
 
     if (asked != PLAY_CONTINUE)
     {

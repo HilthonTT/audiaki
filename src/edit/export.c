@@ -151,8 +151,13 @@ int aud_export_wav(const aud_doc *d, const aud_export_options *opts, const char 
     goto out;
   }
 
-  if (wav_open(&w, opts->path, d->rate, (uint16_t)channels, (uint16_t)bits,
-               opts->overwrite) != 0)
+  /*
+   * Large, because a mixdown is the one file that can be longer than anything
+   * that went into it: a session of overlaid takes exports as one continuous
+   * stretch, and 4 GB is only three and a half hours of it.
+   */
+  if (wav_open_ex(&w, opts->path, d->rate, (uint16_t)channels, (uint16_t)bits,
+                  opts->overwrite, NULL, WAV_OPEN_LARGE) != 0)
   {
     say(why, errno == EEXIST ? "a file of that name is already there"
                              : "that file could not be created");

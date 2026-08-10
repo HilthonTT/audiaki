@@ -20,6 +20,20 @@
  * is exactly half a beat from its neighbours rather than wherever an
  * accumulator drifted to.
  *
+ * -- being heard on the beat, rather than generated on it --
+ *
+ * Generating a beat at frame N is not the same as anybody hearing it at frame
+ * N. Between the two sits the output buffer, and between what they play in
+ * response and the file sits the input buffer: the same round trip an overdub
+ * is placed by, and for the same reason. Left alone, a take played perfectly
+ * in time lands that whole round trip behind the grid the clicks were counted
+ * on.
+ *
+ * `lead_frames` is the correction - strike that much earlier, so the beat
+ * arrives at the ears where the grid says it should be and what is played in
+ * response lands on it. The grid itself does not move: beat n is still frame
+ * n * spacing of the file. Only when the sound is made moves.
+ *
  * Free of any audio system and of the clock, so it builds and is tested
  * anywhere - see the layout rule in DESIGN.md.
  */
@@ -65,6 +79,15 @@ typedef struct
   unsigned subdiv;        /* ticks to a beat; 0 and 1 both mean beats alone */
   unsigned rate;          /* the capture rate; the grid is counted in its frames */
   float gain;             /* peak amplitude of a beat, before the accent */
+  /*
+   * How far ahead of the grid to strike, in capture frames, so that a beat is
+   * *heard* on the grid rather than generated on it. See the note on latency
+   * in the header comment; take/latency.h works the number out.
+   *
+   * Zero leaves the click where it always was: generated on the beat and heard
+   * a round trip after it.
+   */
+  uint64_t lead_frames;
 } aud_click_config;
 
 /* Opaque in practice: built by aud_click_init(), advanced by aud_click_mix(). */
@@ -81,7 +104,8 @@ typedef struct
   unsigned burst_frames;
   float gain;
   float subdiv_gain; /* what an off-beat tick is scaled by */
-  uint64_t frame;    /* absolute index of the next frame to be mixed */
+  uint64_t lead;     /* frames struck ahead of the grid; see above */
+  uint64_t frame;    /* absolute index of the next frame to be mixed, plus lead */
   uint64_t tick;     /* the tick whose burst is current, or the next one due */
 } aud_click;
 

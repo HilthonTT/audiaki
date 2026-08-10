@@ -456,6 +456,103 @@ TEST(an_out_of_range_subdivision_is_clamped_rather_than_refused)
   CHECK(c.burst_frames <= (unsigned)c.tick_spacing);
 }
 
+TEST(a_lead_strikes_early_without_moving_the_grid)
+{
+  aud_click c;
+  aud_click_config cfg;
+  const unsigned lead = 1200u; /* 25 ms at 48 kHz, a plausible round trip */
+
+  aud_click_config_defaults(&cfg, 120.0, RATE);
+  cfg.beats_per_bar = 4u;
+  cfg.gain = 1.0f;
+  cfg.lead_frames = lead;
+  CHECK_EQ_INT(aud_click_init(&c, &cfg), 0);
+
+  render(&c, g_buf, 96000u, 1024u);
+
+  /*
+   * Beat n is still at frame n * 24000 of the grid - what moved is when the
+   * sound is made, which is `lead` frames before that, so it comes out of the
+   * output buffer as the grid reaches the beat.
+   */
+  for (unsigned n = 1; n < 4u; n++)
+  {
+    size_t onset = (size_t)n * 24000u - lead;
+
+    /*
+     * Silence up to the frame before, sin(0) on it, and sound after: which
+     * between them put the strike on exactly this frame rather than somewhere
+     * around it.
+     */
+    CHECK_EQ_DBL(g_buf[onset - 1u], 0.0, 0.0);
+    CHECK_EQ_DBL(g_buf[onset], 0.0, 0.0);
+    CHECK(g_buf[onset + 1u] != 0.0f);
+  }
+
+  /*
+   * And the uncorrected position is not where a strike begins. Not tested as
+   * silence: the burst that started `lead` frames earlier is 50 ms long, so it
+   * is still ringing through here. What it is not is the start of one.
+   */
+  CHECK(g_buf[24000u - 1u] != 0.0f || g_buf[24000u + 1u] != 0.0f);
+}
+
+TEST(a_lead_survives_a_seek)
+{
+  aud_click straight;
+  aud_click sought;
+  aud_click_config cfg;
+  size_t at;
+
+  aud_click_config_defaults(&cfg, 137.0, RATE);
+  cfg.beats_per_bar = 4u;
+  cfg.gain = 1.0f;
+  cfg.lead_frames = 900u;
+
+  CHECK_EQ_INT(aud_click_init(&straight, &cfg), 0);
+  CHECK_EQ_INT(aud_click_init(&sought, &cfg), 0);
+
+  render(&straight, g_buf, 96000u, 4096u);
+
+  /*
+   * A transport that jumps has to land on the same led-forward grid, or the
+   * correction would come and go with every loop wrap.
+   */
+  memset(g_alt, 0, sizeof(g_alt));
+  for (at = 0; at < 96000u; at += 4096u)
+  {
+    aud_click_seek(&sought, at);
+    aud_click_mix(&sought, g_alt + at, 4096u, 1u);
+  }
+
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-6);
+  }
+}
+
+TEST(no_lead_is_the_click_where_it_always_was)
+{
+  aud_click plain;
+  aud_click zero;
+  aud_click_config cfg;
+
+  start(&plain, 120.0, 4u, 1.0f);
+  render(&plain, g_buf, 96000u, 1024u);
+
+  aud_click_config_defaults(&cfg, 120.0, RATE);
+  cfg.beats_per_bar = 4u;
+  cfg.gain = 1.0f;
+  cfg.lead_frames = 0u;
+  CHECK_EQ_INT(aud_click_init(&zero, &cfg), 0);
+  render(&zero, g_alt, 96000u, 1024u);
+
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-9);
+  }
+}
+
 int main(void)
 {
   RUN(beats_land_on_the_frame_the_tempo_says);
@@ -474,5 +571,8 @@ int main(void)
   RUN(a_subdivision_of_one_is_the_undivided_beat);
   RUN(a_divided_grid_survives_a_seek);
   RUN(an_out_of_range_subdivision_is_clamped_rather_than_refused);
+  RUN(a_lead_strikes_early_without_moving_the_grid);
+  RUN(a_lead_survives_a_seek);
+  RUN(no_lead_is_the_click_where_it_always_was);
   return TEST_RESULT();
 }

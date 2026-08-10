@@ -119,3 +119,13 @@ void aud_monitor_drain(aud_monitor *m)
 
   m->ops->drain(m->impl);
 }
+
+void aud_monitor_flush(aud_monitor *m)
+{
+  if (m == NULL || m->ops->flush == NULL)
+  {
+    return;
+  }
+
+  m->ops->flush(m->impl);
+}

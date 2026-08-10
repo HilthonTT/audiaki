@@ -113,7 +113,8 @@ _audiaki()
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
         --tune-min | --tune-max | \
-        --preroll | --pre-roll | --monitor-gain | --click | --click-beats | --click-gain)
+        --preroll | --pre-roll | --monitor-gain | --click | --click-beats | \
+        --click-gain | --latency)
             return
             ;;
         --click-subdiv)
@@ -130,7 +131,7 @@ _audiaki()
               --preroll --note --no-metadata
               --spectrum --no-meter
               --monitor --monitor-device --monitor-gain
-              --click --click-beats --click-subdiv --click-gain
+              --click --click-beats --click-subdiv --click-gain --latency
               --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
               --info --play --shuffle --repeat --repeat-one --json
               --render --bits

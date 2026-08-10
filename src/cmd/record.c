@@ -60,6 +60,7 @@ typedef struct
   unsigned click_beats;
   unsigned click_subdiv;
   float click_gain;
+  double latency_ms; /* what the click leads the grid by; see click.h */
   /*
    * Stamp the take with what made it, when, and from what device - see meta.h.
    * On by default; clearing it writes the plain 44 byte header instead, for
@@ -262,8 +263,12 @@ static int arm_and_wait(aud_device *dev, const recorder_shape *shape,
      * Audible while armed too: the level is set before the take, not during
      * it, and a metronome that only started at the keypress would be a count-in
      * nobody got to hear.
+     *
+     * The shaped period rather than the raw one, for the same reason the meter
+     * reads it: what is worth hearing while setting a level is what is going to
+     * be recorded.
      */
-    aud_playback_feed(pb, hw_buf, (size_t)got, dev);
+    aud_playback_feed(pb, analysis, (size_t)got, dev);
 
     seen += (uint64_t)got;
     captured = (double)seen / dev->rate;
@@ -505,10 +510,12 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     pb_cfg.input = opts->monitor;
     pb_cfg.device = opts->monitor_device;
     pb_cfg.gain = opts->monitor_gain;
+    pb_cfg.channels = shape.out_channels;
     pb_cfg.click_bpm = opts->click_bpm;
     pb_cfg.click_beats = opts->click_beats;
     pb_cfg.click_subdiv = opts->click_subdiv;
     pb_cfg.click_gain = opts->click_gain;
+    pb_cfg.latency_ms = opts->latency_ms;
     aud_playback_start(&pb, dev, &pb_cfg);
   }
 
@@ -660,7 +667,14 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     if (wav_would_overflow(&wav, nbytes))
     {
       meter_clear(&meter);
-      aud_warn("reached the 4 GB WAV size limit, stopping");
+      /*
+       * Only reachable with --no-metadata now: a stamped take reserves the
+       * ds64 slot and becomes an RF64 file rather than stopping here.
+       */
+      aud_warn(opts->metadata ? "reached the largest WAV this can write, stopping"
+                              : "reached the 4 GB limit a plain WAV header can "
+                                "describe, stopping - drop --no-metadata to go "
+                                "past it");
       break;
     }
 
@@ -682,8 +696,8 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
                             dev->format);
     }
 
-    /* the device as delivered: --channel decides the file, not what you hear */
-    aud_playback_feed(&pb, hw_buf, (size_t)got, dev);
+    /* what is going in the file, so --channel decides what you hear as well */
+    aud_playback_feed(&pb, analysis, (size_t)got, dev);
 
     frames_written += (uint64_t)got;
     recorded += (uint64_t)got;
@@ -997,6 +1011,7 @@ int aud_cmd_record(const aud_options *opts)
   rec.click_beats = opts->click_beats;
   rec.click_subdiv = opts->click_subdiv;
   rec.click_gain = (float)opts->click_gain;
+  rec.latency_ms = opts->latency_ms;
   rec.metadata = opts->metadata;
   rec.note = opts->note;
 

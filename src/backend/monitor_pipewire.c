@@ -505,6 +505,31 @@ static void pw_monitor_drain(void *impl)
   sleep_ms(PW_MONITOR_DRAIN_TAIL_MS);
 }
 
+static void pw_monitor_flush(void *impl)
+{
+  pw_monitor *m = impl;
+
+  if (m == NULL)
+  {
+    return;
+  }
+
+  /*
+   * Emptying the FIFO is the whole of it here: the server holds a quantum or
+   * so beyond this, which is a millisecond or two rather than the tenth of a
+   * second the FIFO is worth, and it is not worth tearing the stream down to
+   * reclaim.
+   *
+   * Not counted as dropped. Those are frames the output could not keep up
+   * with, which is a problem worth reporting; these were thrown away on
+   * purpose because somebody pressed a key.
+   */
+  pthread_mutex_lock(&m->lock);
+  m->head = 0;
+  m->fill = 0;
+  pthread_mutex_unlock(&m->lock);
+}
+
 const aud_monitor_ops aud_monitor_ops_pipewire = {
     .name = "pipewire",
     .open = pw_monitor_open,
@@ -513,4 +538,5 @@ const aud_monitor_ops aud_monitor_ops_pipewire = {
     .dropped = pw_monitor_dropped,
     .space = pw_monitor_space,
     .drain = pw_monitor_drain,
+    .flush = pw_monitor_flush,
 };

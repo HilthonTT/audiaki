@@ -662,6 +662,7 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
       a->interrupted.lost_at = GetTime();
       a->interrupted.rate = aud_engine_rate(a->engine);
       a->interrupted.channels = aud_engine_channels(a->engine);
+      snprintf(a->interrupted.path, sizeof(a->interrupted.path), "%s", take);
     }
   }
 
@@ -706,10 +707,16 @@ static void app_check_capture_loss(app *a)
  * nobody is waiting. Declining costs nothing - what was captured is a clip and
  * a WAV either way, and Record starts the next take wherever the cursor is.
  *
- * The second half is a take of its own, in a file of its own, laid on the same
- * lane where the first one stopped. Splicing them into one file would mean
- * rewriting a header on a recording that is already safe on disk, to make a
- * file whose middle is a moment the interface was not running.
+ * The rest of the take goes on the end of the same file. Nothing already
+ * written is rewritten to do it - the frames go after the ones that are there
+ * and the header is patched when the take finally stops, so a crash part way
+ * through leaves the file exactly as long as it was, which is the same amount
+ * lost as a second file that never got created. See wav_open_append().
+ *
+ * A file that will not take them - one an editor has been at, or a device back
+ * at another rate - falls back to what this used to always do, which is a
+ * second take on the same lane. Two files is worse than one and much better
+ * than losing the second half.
  */
 static void app_resume_take(app *a)
 {
@@ -751,12 +758,42 @@ static void app_resume_take(app *a)
     return;
   }
 
+  t = &a->doc.tracks[a->interrupted.track];
+
+  /*
+   * The rest of the take on the end of the same file and the same clip, when
+   * the file will take it. Both have to succeed together: one clip over two
+   * files, or two clips over one file, would each be a lane that plays back
+   * wrong once the project is saved and reloaded.
+   */
+  if (a->interrupted.path[0] != '\0' &&
+      aud_track_record_continue(t, a->interrupted.at) == 0)
+  {
+    if (aud_engine_continue(a->engine, a->interrupted.path) == 0)
+    {
+      a->record_track = a->interrupted.track;
+      a->record_at = a->interrupted.at;
+      a->record_skip = 0;
+      a->render_note[0] = '\0';
+      app_set_status(a, "'%.30s' is back - carrying on in %.40s", a->active_device,
+                     aud_path_basename(a->interrupted.path));
+      return;
+    }
+    /* the file would not take it; put the clip back and fall through */
+    aud_track_record_end(t);
+  }
+
+  /*
+   * A second take on the same lane, which is what this always used to do. The
+   * file could not be carried on - an editor has been at it, or the rate is
+   * not what it was - and the half that is coming is worth more than the tidy
+   * arrangement.
+   */
   if (aud_take_next(path, sizeof(path), a->prefix) != 0)
   {
     return;
   }
 
-  t = &a->doc.tracks[a->interrupted.track];
   if (aud_track_record_begin(t, a->interrupted.at,
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {

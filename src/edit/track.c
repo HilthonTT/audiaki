@@ -906,6 +906,40 @@ size_t aud_track_record_push(aud_track *t, const float *interleaved, size_t fram
   return frames;
 }
 
+int aud_track_record_continue(aud_track *t, uint64_t at)
+{
+  aud_clip *last;
+
+  if (t == NULL || t->recording >= 0 || t->count == 0)
+  {
+    return -1;
+  }
+
+  last = &t->clips[t->count - 1u];
+  if (last->start + last->frames != at)
+  {
+    return -1; /* something was edited in the gap; this is not the same tail */
+  }
+
+  /*
+   * A block anything else is reading cannot be grown: a split or a copy leaves
+   * two clips over one block, and appending would change what the other one
+   * plays. One reference means this clip is the only owner.
+   */
+  if (last->audio == NULL || last->audio->refs != 1)
+  {
+    return -1;
+  }
+
+  /*
+   * The tail bucket was indexed when the take stopped and is about to be
+   * short again; aud_track_record_end() indexes it a second time, which is
+   * what it does after any take.
+   */
+  t->recording = (long)(t->count - 1u);
+  return 0;
+}
+
 void aud_track_record_end(aud_track *t)
 {
   aud_clip *c;

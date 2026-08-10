@@ -101,6 +101,7 @@ int aud_click_init(aud_click *c, const aud_click_config *cfg)
   c->tick_spacing = spacing / (double)c->subdiv;
   c->gain = (float)clamp_gain((double)cfg->gain);
   c->subdiv_gain = (float)(c->gain * CLICK_SUBDIV_GAIN);
+  c->lead = cfg->lead_frames;
 
   c->burst_frames = (unsigned)(CLICK_BURST_SECONDS * (double)cfg->rate);
   if (c->burst_frames == 0)
@@ -123,6 +124,13 @@ int aud_click_init(aud_click *c, const aud_click_config *cfg)
     }
   }
 
+  /*
+   * Through reset() rather than by leaving the memset's zeros in place, so the
+   * lead is applied from the first frame mixed. A caller that never seeks -
+   * which is what recording straight through does - would otherwise get an
+   * uncorrected click.
+   */
+  aud_click_reset(c);
   return 0;
 }
 
@@ -130,8 +138,7 @@ void aud_click_reset(aud_click *c)
 {
   if (c != NULL)
   {
-    c->frame = 0;
-    c->tick = 0;
+    aud_click_seek(c, 0);
   }
 }
 
@@ -142,7 +149,13 @@ void aud_click_seek(aud_click *c, uint64_t frame)
     return;
   }
 
-  c->frame = frame;
+  /*
+   * The lead runs the generator ahead of the frame being mixed, so what comes
+   * out of the buffer a round trip later is the beat this frame was meant to
+   * carry. Everything below counts in the led-forward frame; the caller only
+   * ever sees the grid it asked for.
+   */
+  c->frame = frame + c->lead;
 
   if (!(c->tick_spacing > 0.0))
   {
@@ -157,7 +170,7 @@ void aud_click_seek(aud_click *c, uint64_t frame)
    * the frame being mixed, and a tick not yet due is simply silence until it
    * is - which is what makes this safe to call before every pass.
    */
-  c->tick = (uint64_t)((double)frame / c->tick_spacing);
+  c->tick = (uint64_t)((double)c->frame / c->tick_spacing);
 }
 
 /*

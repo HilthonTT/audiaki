@@ -2,6 +2,7 @@
 #include "cmd/playback.h"
 
 #include "audio/format.h"
+#include "take/latency.h"
 #include "util/log.h"
 
 #include <stdio.h>
@@ -27,7 +28,24 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
   memset(pb, 0, sizeof(*pb));
   pb->input = cfg->input;
   pb->gain = cfg->gain;
+  pb->channels = cfg->channels > 0 ? cfg->channels : dev->channels;
   bars[0] = '\0';
+
+  /*
+   * Opened for what will be handed over rather than for what the device
+   * delivers, so a take reduced to one channel is monitored as one channel -
+   * you hear the take being made, not the pair it was taken out of.
+   *
+   * Worked out before the click rather than after, because the click needs to
+   * know how long the output queue is in order to strike ahead of it. Reading
+   * it from the same defaults aud_monitor_open() will use, rather than opening
+   * first, keeps one description of the buffer instead of two.
+   */
+  aud_monitor_config_defaults(&mon_cfg, dev->rate, pb->channels);
+  if (cfg->device != NULL)
+  {
+    mon_cfg.name = cfg->device;
+  }
 
   if (cfg->click_bpm > 0.0)
   {
@@ -42,6 +60,14 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
     click_cfg.beats_per_bar = cfg->click_beats;
     click_cfg.subdiv = cfg->click_subdiv;
     click_cfg.gain = cfg->click_gain;
+    /*
+     * Struck a round trip early, so it is heard on the beat rather than a
+     * buffer after it - the same correction, from the same arithmetic, that
+     * places an overdub. See click.h and take/latency.h.
+     */
+    click_cfg.lead_frames =
+        aud_latency_frames(cfg->latency_ms, dev->rate, dev->period_frames,
+                           (unsigned long)mon_cfg.period_frames * mon_cfg.periods);
 
     if (aud_click_init(&pb->click, &click_cfg) == 0)
     {
@@ -69,7 +95,7 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
     return;
   }
 
-  pb->buf = malloc((size_t)dev->period_frames * dev->channels * sizeof(*pb->buf));
+  pb->buf = malloc((size_t)dev->period_frames * pb->channels * sizeof(*pb->buf));
   if (pb->buf == NULL)
   {
     aud_warn("cannot allocate a playback buffer, recording without %s",
@@ -77,12 +103,6 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
     pb->input = 0;
     pb->clicking = 0;
     return;
-  }
-
-  aud_monitor_config_defaults(&mon_cfg, dev->rate, dev->channels);
-  if (cfg->device != NULL)
-  {
-    mon_cfg.name = cfg->device;
   }
 
   pb->mon = aud_monitor_open(&mon_cfg);
@@ -141,10 +161,10 @@ void aud_playback_stop(aud_playback *pb)
  * does: that is what the device delivered, and the two may be the same buffer
  * anyway.
  */
-void aud_playback_feed(aud_playback *pb, const unsigned char *hw_buf, size_t frames,
+void aud_playback_feed(aud_playback *pb, const unsigned char *buf, size_t frames,
                        const aud_device *dev)
 {
-  size_t samples = frames * dev->channels;
+  size_t samples = frames * pb->channels;
 
   if (pb->mon == NULL)
   {
@@ -153,7 +173,7 @@ void aud_playback_feed(aud_playback *pb, const unsigned char *hw_buf, size_t fra
 
   if (pb->input)
   {
-    aud_format_to_float(pb->buf, hw_buf, frames, dev->channels, dev->format);
+    aud_format_to_float(pb->buf, buf, frames, pb->channels, dev->format);
 
     /*
      * Applied here rather than passed to aud_monitor_write(), which would
@@ -176,7 +196,7 @@ void aud_playback_feed(aud_playback *pb, const unsigned char *hw_buf, size_t fra
 
   if (pb->clicking)
   {
-    aud_click_mix(&pb->click, pb->buf, frames, dev->channels);
+    aud_click_mix(&pb->click, pb->buf, frames, pb->channels);
   }
 
   /* the sum is clipped inside the write, which is where every path is clipped */

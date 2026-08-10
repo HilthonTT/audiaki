@@ -120,17 +120,28 @@ TEST(metadata_sits_between_fmt_and_data)
   CHECK_EQ_INT(wav_close(&w), 0);
 
   size = slurp(g_path, file, sizeof(file));
-  CHECK_EQ_INT(size, (long)(WAV_HEADER_BYTES + meta_bytes + sizeof(pcm)));
+  /*
+   * A stamped take also reserves the ds64 slot, so everything after the RIFF
+   * header sits WAV_DS64_CHUNK_BYTES further in than it does in a plain file.
+   */
+  CHECK_EQ_INT(w.head_bytes,
+               (long)(WAV_HEADER_BYTES + meta_bytes + WAV_DS64_CHUNK_BYTES));
+  CHECK_EQ_INT(size, (long)(w.head_bytes + sizeof(pcm)));
 
-  /* fmt where it always was, the chunks after it, then data */
-  CHECK(memcmp(file + 12, "fmt ", 4) == 0);
-  CHECK(memcmp(file + 36, "LIST", 4) == 0);
-  CHECK(memcmp(file + 36 + meta_bytes, "data", 4) == 0);
+  /* the reserved slot, then fmt, then the chunks, then data */
+  CHECK(memcmp(file + 12, "JUNK", 4) == 0);
+  CHECK_EQ_INT(read_u32(file + 16), WAV_DS64_BODY_BYTES);
+  CHECK(memcmp(file + 48, "fmt ", 4) == 0);
+  CHECK(memcmp(file + 72, "LIST", 4) == 0);
+  CHECK(memcmp(file + 72 + meta_bytes, "data", 4) == 0);
+
+  /* it is still a plain RIFF file: the slot was not needed and was not used */
+  CHECK(memcmp(file + 0, "RIFF", 4) == 0);
 
   /* both sizes account for what is between them */
-  CHECK_EQ_INT(read_u32(file + 4), 36 + (long)meta_bytes + (long)sizeof(pcm));
-  CHECK_EQ_INT(read_u32(file + 36 + meta_bytes + 4), (long)sizeof(pcm));
-  CHECK(memcmp(file + 44 + meta_bytes, pcm, sizeof(pcm)) == 0);
+  CHECK_EQ_INT(read_u32(file + 4), (long)(w.head_bytes - 8u + sizeof(pcm)));
+  CHECK_EQ_INT(read_u32(file + 72 + meta_bytes + 4), (long)sizeof(pcm));
+  CHECK(memcmp(file + w.head_bytes, pcm, sizeof(pcm)) == 0);
 
   /* and the reader finds the audio and the description of it */
   CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
@@ -142,6 +153,340 @@ TEST(metadata_sits_between_fmt_and_data)
   CHECK_EQ_STR(r.meta.device, "hw:CARD=Box,DEV=0");
   CHECK_EQ_STR(r.meta.recorded, "2026-08-08 00:00:00");
   wav_read_close(&r);
+
+  remove(g_path);
+}
+
+TEST(a_plain_file_keeps_the_44_byte_header_and_the_4_gb_cap)
+{
+  wav_writer w;
+  unsigned char file[128];
+  const unsigned char pcm[4] = {1, 2, 3, 4};
+
+  /*
+   * --no-metadata asks for the canonical header and gets exactly that: no
+   * reserved slot, and therefore no way past 4 GB, because a plain header has
+   * nowhere to put a 64-bit size.
+   */
+  CHECK_EQ_INT(wav_open(&w, g_path, 44100, 1, 16, 1), 0);
+  CHECK_EQ_INT(w.large, 0);
+  CHECK_EQ_INT(w.head_bytes, WAV_HEADER_BYTES);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(slurp(g_path, file, sizeof(file)), (long)(WAV_HEADER_BYTES + sizeof(pcm)));
+  CHECK(memcmp(file + 12, "fmt ", 4) == 0);
+  CHECK(memcmp(file + 36, "data", 4) == 0);
+
+  remove(g_path);
+}
+
+TEST(a_take_that_outgrows_riff_is_promoted_to_rf64)
+{
+  wav_writer w;
+  unsigned char file[256];
+  const unsigned char pcm[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  uint64_t huge = 5ull * 1024ull * 1024ull * 1024ull; /* 5 GB, comfortably over */
+  uint32_t head;
+
+  CHECK_EQ_INT(wav_open_ex(&w, g_path, 48000, 2, 16, 1, NULL, WAV_OPEN_LARGE), 0);
+  CHECK_EQ_INT(w.large, 1);
+  head = w.head_bytes;
+  CHECK_EQ_INT(head, WAV_HEADER_BYTES + WAV_DS64_CHUNK_BYTES);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+
+  /*
+   * The payload is claimed rather than written. Actually recording five
+   * gigabytes to check the header arithmetic would take minutes and a spare
+   * disk; what is under test is what wav_close() writes into the reserved slot,
+   * and that is a pure function of this number.
+   */
+  w.data_bytes = huge;
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK(slurp(g_path, file, sizeof(file)) > 0);
+
+  /* the magic changed, and both 32-bit sizes now point at ds64 */
+  CHECK(memcmp(file + 0, "RF64", 4) == 0);
+  CHECK_EQ_INT(read_u32(file + 4), 0xFFFFFFFF);
+  CHECK(memcmp(file + 12, "ds64", 4) == 0);
+  CHECK_EQ_INT(read_u32(file + 16), WAV_DS64_BODY_BYTES);
+  CHECK(memcmp(file + head - 8, "data", 4) == 0);
+  CHECK_EQ_INT(read_u32(file + head - 4), 0xFFFFFFFF);
+
+  /* and the real sizes are in the slot, in 64 bits, low word first */
+  CHECK_EQ_INT(read_u32(file + 20), (long)((head - 8u + huge) & 0xFFFFFFFFu));
+  CHECK_EQ_INT(read_u32(file + 24), (long)((head - 8u + huge) >> 32));
+  CHECK_EQ_INT(read_u32(file + 28), (long)(huge & 0xFFFFFFFFu));
+  CHECK_EQ_INT(read_u32(file + 32), (long)(huge >> 32));
+  /* the frame count: 5 GB of 16-bit stereo */
+  CHECK_EQ_INT(read_u32(file + 36), (long)((huge / 4u) & 0xFFFFFFFFu));
+  CHECK_EQ_INT(read_u32(file + 40), (long)((huge / 4u) >> 32));
+  /* no table, because the data chunk is the only one that got big */
+  CHECK_EQ_INT(read_u32(file + 44), 0);
+
+  remove(g_path);
+}
+
+TEST(a_take_that_stayed_small_keeps_its_slot_as_junk)
+{
+  wav_writer w;
+  wav_reader r;
+  unsigned char file[256];
+  const unsigned char pcm[8] = {0, 0, 0, 0x40, 0, 0, 0, 0xC0};
+
+  CHECK_EQ_INT(wav_open_ex(&w, g_path, 48000, 2, 16, 1, NULL, WAV_OPEN_LARGE), 0);
+  CHECK_EQ_INT(wav_write(&w, pcm, sizeof(pcm)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK(slurp(g_path, file, sizeof(file)) > 0);
+
+  /*
+   * The whole point of reserving rather than promoting eagerly: a file that
+   * did not need the room is an ordinary RIFF/WAVE with one chunk in it that
+   * every reader of the format already skips.
+   */
+  CHECK(memcmp(file + 0, "RIFF", 4) == 0);
+  CHECK(memcmp(file + 12, "JUNK", 4) == 0);
+  CHECK_EQ_INT(read_u32(file + 4), (long)(w.head_bytes - 8u + sizeof(pcm)));
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.rate, 48000);
+  CHECK_EQ_INT(r.frames, 2);
+  wav_read_close(&r);
+
+  remove(g_path);
+}
+
+TEST(the_reader_takes_rf64_and_bw64)
+{
+  /*
+   * Hand-built, because the sizes that matter are the ones a 4 GB file would
+   * have and this has to stay a test. RF64 does not require the real length to
+   * be large - 0xFFFFFFFF only means "read it from ds64" - so a short file with
+   * the full layout exercises every branch the big one would.
+   */
+  static const unsigned char base[] = {
+      'R',  'F',  '6',  '4',  0xFF, 0xFF, 0xFF, 0xFF, 'W',  'A',
+      'V',  'E',  'd',  's',  '6',  '4',  0x1C, 0x00, 0x00, 0x00, /* ds64, 28 */
+      0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* riffSize */
+      0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* dataSize */
+      0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* frames   */
+      0x00, 0x00, 0x00, 0x00,                                     /* no table */
+      'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x01, 0x00, /* PCM */
+      0x01, 0x00,                                                 /* mono */
+      0x44, 0xAC, 0x00, 0x00,                                     /* 44100 */
+      0x88, 0x58, 0x01, 0x00,                                     /* byte rate */
+      0x02, 0x00,                                                 /* align */
+      0x10, 0x00,                                                 /* 16 bit */
+      'd',  'a',  't',  'a',  0xFF, 0xFF, 0xFF, 0xFF,             /* size from ds64 */
+      0x00, 0x40, 0x00, 0xC0,
+  };
+  unsigned char file[sizeof(base)];
+  wav_reader r;
+  float mono[2];
+
+  for (int variant = 0; variant < 2; variant++)
+  {
+    FILE *f;
+
+    memcpy(file, base, sizeof(base));
+    if (variant == 1)
+    {
+      memcpy(file, "BW64", 4); /* the ITU's name for the same layout */
+    }
+
+    f = fopen(g_path, "wb");
+    CHECK(f != NULL);
+    if (f == NULL)
+    {
+      return;
+    }
+    CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
+    fclose(f);
+
+    CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+    CHECK_EQ_INT(r.rate, 44100);
+    CHECK_EQ_INT(r.channels, 1);
+    /* four bytes of payload, from ds64 rather than from the 0xFFFFFFFF */
+    CHECK_EQ_INT(r.frames, 2);
+    CHECK_EQ_INT(wav_read_mono(&r, mono, 2), 2);
+    CHECK_EQ_DBL(mono[0], 0.5, 1e-4);
+    CHECK_EQ_DBL(mono[1], -0.5, 1e-4);
+    wav_read_close(&r);
+  }
+
+  remove(g_path);
+}
+
+TEST(an_rf64_file_with_no_ds64_is_refused)
+{
+  static const unsigned char file[] = {
+      'R',  'F',  '6',  '4',  0xFF, 0xFF, 0xFF, 0xFF, 'W',  'A',  'V',  'E',
+      'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
+      0x44, 0xAC, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00,
+      'd',  'a',  't',  'a',  0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x40, 0x00, 0xC0,
+  };
+  wav_reader r;
+  FILE *f = fopen(g_path, "wb");
+
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
+  fclose(f);
+
+  /* there is no length to be had, and guessing one would invent audio */
+  CHECK_EQ_INT(wav_read_open(&r, g_path), -1);
+  CHECK(r.error != NULL);
+
+  remove(g_path);
+}
+
+TEST(a_take_can_be_carried_on_in_the_same_file)
+{
+  wav_writer w;
+  wav_reader r;
+  const unsigned char first[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  const unsigned char second[8] = {9, 10, 11, 12, 13, 14, 15, 16};
+  unsigned char file[4096]; /* the metadata alone is most of a kilobyte */
+  aud_meta meta;
+  uint32_t head;
+
+  aud_meta_defaults(&meta);
+  meta.device = "hw:CARD=Box,DEV=0";
+  meta.rate = 48000;
+  meta.channels = 2;
+  meta.bits = 16;
+
+  /* the take as it was when the device went: closed, patched, complete */
+  CHECK_EQ_INT(wav_open_meta(&w, g_path, 48000, 2, 16, 1, &meta), 0);
+  head = w.head_bytes;
+  CHECK_EQ_INT(wav_write(&w, first, sizeof(first)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.frames, 2);
+  CHECK_EQ_INT(r.has_ds64_slot, 1);
+  wav_read_close(&r);
+
+  /* the device came back, and the rest of the take goes on the end of it */
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 48000, 2, 16), 0);
+  CHECK_EQ_INT((long long)w.data_bytes, (long long)sizeof(first));
+  CHECK_EQ_INT(w.head_bytes, (long)head);
+  CHECK_EQ_INT(w.large, 1); /* the reserved slot came back with it */
+  CHECK_EQ_INT(wav_write(&w, second, sizeof(second)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  /* one file, both halves, in order, and the metadata still in front of them */
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.frames, 4);
+  CHECK(r.meta.present);
+  CHECK_EQ_STR(r.meta.device, "hw:CARD=Box,DEV=0");
+  wav_read_close(&r);
+
+  CHECK(slurp(g_path, file, sizeof(file)) > 0);
+  CHECK(memcmp(file + head, first, sizeof(first)) == 0);
+  CHECK(memcmp(file + head + sizeof(first), second, sizeof(second)) == 0);
+
+  remove(g_path);
+}
+
+TEST(carrying_on_refuses_a_stream_that_does_not_match)
+{
+  wav_writer w;
+
+  CHECK_EQ_INT(wav_open(&w, g_path, 48000, 2, 16, 1), 0);
+  CHECK_EQ_INT(wav_write(&w, "abcd", 4), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  /*
+   * A device that comes back at another rate, or another width, is a different
+   * recording - laying it on the end of this one would make a file that lies
+   * about what is in it.
+   */
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 44100, 2, 16), -1);
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 48000, 1, 16), -1);
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 48000, 2, 24), -1);
+
+  /* and a file that is not there at all */
+  CHECK_EQ_INT(wav_open_append(&w, "audiaki-no-such-take.wav", 48000, 2, 16), -1);
+
+  /* the matching one still works, so the refusals above were about the stream */
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 48000, 2, 16), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  remove(g_path);
+}
+
+TEST(carrying_on_writes_over_the_pad_byte)
+{
+  wav_writer w;
+  wav_reader r;
+  const unsigned char odd[3] = {1, 2, 3}; /* 3 frames of 8-bit mono */
+  const unsigned char more[2] = {7, 8};
+
+  /*
+   * An odd payload is followed by a pad byte that RIFF counts and the audio
+   * does not. Carrying on has to put the next frame over it rather than after
+   * it, or the pad would end up inside the take as a click.
+   *
+   * Mono, so that an odd number of bytes is still a whole number of frames -
+   * which is the only kind of file this is meant to reopen.
+   */
+  CHECK_EQ_INT(wav_open(&w, g_path, 8000, 1, 8, 1), 0);
+  CHECK_EQ_INT(wav_write(&w, odd, sizeof(odd)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 8000, 1, 8), 0);
+  CHECK_EQ_INT((long long)w.data_bytes, 3);
+  CHECK_EQ_INT(wav_write(&w, more, sizeof(more)), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  /* five frames, not six: the pad was written over rather than kept */
+  CHECK_EQ_INT(r.frames, 5);
+  wav_read_close(&r);
+
+  {
+    unsigned char file[128];
+    long size = slurp(g_path, file, sizeof(file));
+
+    CHECK_EQ_INT(size, WAV_HEADER_BYTES + 6); /* 5 of payload, and a new pad */
+    CHECK_EQ_INT(file[WAV_HEADER_BYTES + 3], 7);
+    CHECK_EQ_INT(file[WAV_HEADER_BYTES + 4], 8);
+  }
+
+  remove(g_path);
+}
+
+TEST(carrying_on_refuses_a_file_with_something_after_the_audio)
+{
+  wav_writer w;
+  FILE *f;
+
+  CHECK_EQ_INT(wav_open(&w, g_path, 48000, 2, 16, 1), 0);
+  CHECK_EQ_INT(wav_write(&w, "abcd", 4), 0);
+  CHECK_EQ_INT(wav_close(&w), 0);
+
+  /* what an editor that retags a file in place leaves behind */
+  f = fopen(g_path, "ab");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  fwrite("LIST\004\000\000\000INFO", 1, 12, f);
+  fclose(f);
+
+  /*
+   * Appending here would write the next frame over somebody's tags. Refused,
+   * so the take carries on in a second file instead - which is worse than one
+   * file and much better than a damaged one.
+   */
+  CHECK_EQ_INT(wav_open_append(&w, g_path, 48000, 2, 16), -1);
 
   remove(g_path);
 }
@@ -741,6 +1086,15 @@ int main(void)
   RUN(header_counts_pad_byte_in_riff_size);
   RUN(write_and_finalise);
   RUN(metadata_sits_between_fmt_and_data);
+  RUN(a_plain_file_keeps_the_44_byte_header_and_the_4_gb_cap);
+  RUN(a_take_that_outgrows_riff_is_promoted_to_rf64);
+  RUN(a_take_that_stayed_small_keeps_its_slot_as_junk);
+  RUN(the_reader_takes_rf64_and_bw64);
+  RUN(an_rf64_file_with_no_ds64_is_refused);
+  RUN(a_take_can_be_carried_on_in_the_same_file);
+  RUN(carrying_on_refuses_a_stream_that_does_not_match);
+  RUN(carrying_on_writes_over_the_pad_byte);
+  RUN(carrying_on_refuses_a_file_with_something_after_the_audio);
   RUN(a_file_without_metadata_reads_back_empty);
   RUN(odd_payload_gets_pad_byte);
   RUN(refuses_to_clobber_without_force);

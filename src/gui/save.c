@@ -22,6 +22,7 @@
  */
 #include "gui/app.h"
 
+#include "gui/chooser.h"
 #include "gui/ui.h"
 
 #include "edit/project.h"
@@ -44,6 +45,9 @@
 
 /* The row that goes up a level, which is always offered first. */
 #define SAVE_PARENT ".."
+
+/* The dialog's own title, which the system chooser is given as well. */
+static const char *save_title(app_save_mode mode);
 
 static int compare_rows(const void *a, const void *b)
 {
@@ -425,6 +429,127 @@ void app_open_project_dialog(app *a)
   relist(s);
 }
 
+/* What the system chooser should be asking, and about what kind of file. */
+static aud_chooser_mode chooser_mode_of(app_save_mode mode)
+{
+  switch (mode)
+  {
+  case APP_SAVE_MODE_KEEP:
+  case APP_SAVE_MODE_EXPORT:
+  case APP_SAVE_MODE_PROJECT_SAVE:
+    return AUD_CHOOSER_SAVE;
+  case APP_SAVE_MODE_OPEN:
+  case APP_SAVE_MODE_PROJECT_OPEN:
+  default:
+    return AUD_CHOOSER_OPEN;
+  }
+}
+
+static const char *chooser_filter_of(app_save_mode mode)
+{
+  return (mode == APP_SAVE_MODE_PROJECT_OPEN || mode == APP_SAVE_MODE_PROJECT_SAVE)
+             ? "*" AUD_PROJECT_EXT
+             : "*.wav";
+}
+
+/*
+ * Hand the question to the desktop's own chooser, if it has one. The dialog
+ * stays open behind it: this is not a different way of answering, it is the
+ * same question asked somewhere with bookmarks and a search box, and whatever
+ * comes back lands in the two fields as though it had been typed.
+ */
+static void chooser_begin(app *a)
+{
+  app_save *s = &a->save;
+  char folder[AUD_PATH_MAX];
+
+  if (s->chooser != NULL)
+  {
+    return; /* one at a time; the button is disabled while one is up */
+  }
+
+  if (aud_path_expand(folder, sizeof(folder), s->folder) != 0)
+  {
+    snprintf(folder, sizeof(folder), "%s", s->folder);
+  }
+
+  s->chooser = aud_chooser_start(chooser_mode_of(s->mode), save_title(s->mode), folder,
+                                 s->name, chooser_filter_of(s->mode));
+  if (s->chooser == NULL)
+  {
+    snprintf(s->note, sizeof(s->note), "no system file chooser is installed");
+  }
+}
+
+/*
+ * Take the answer, if there is one yet. Called once a frame while a chooser is
+ * up, which is what keeps the window drawing while somebody browses.
+ */
+static void chooser_step(app *a)
+{
+  app_save *s = &a->save;
+  char picked[AUD_PATH_MAX];
+  int rc;
+
+  if (s->chooser == NULL)
+  {
+    return;
+  }
+
+  rc = aud_chooser_poll(s->chooser, picked, sizeof(picked));
+  if (rc == 0)
+  {
+    return;
+  }
+
+  aud_chooser_close(s->chooser);
+  s->chooser = NULL;
+
+  /* cancelled: the dialog is still open and still says what it said before */
+  if (rc < 0)
+  {
+    return;
+  }
+
+  /*
+   * Split into the two fields rather than acted on directly, so the answer is
+   * something that can still be looked at and corrected before either button
+   * is pressed. A chooser that saved on the spot would be a second Save with
+   * different rules.
+   */
+  {
+    const char *slash = strrchr(picked, '/');
+    const char *base = slash != NULL ? slash + 1 : picked;
+    size_t dir_len = slash != NULL ? (size_t)(slash - picked) : 0;
+
+    /*
+     * A name that will not fit is refused rather than truncated. Silently
+     * shortening it would file the take under a name nobody chose, and the
+     * chooser is still there to pick another one with.
+     */
+    if (strlen(base) >= sizeof(s->name) || dir_len >= sizeof(s->folder))
+    {
+      snprintf(s->note, sizeof(s->note), "that path is too long to use");
+      return;
+    }
+
+    if (slash != NULL)
+    {
+      if (dir_len == 0)
+      {
+        dir_len = 1; /* a file in the root: the folder is "/" */
+      }
+      memcpy(s->folder, picked, dir_len);
+      s->folder[dir_len] = '\0';
+    }
+    memcpy(s->name, base, strlen(base) + 1u);
+  }
+
+  s->note[0] = '\0';
+  s->confirmed = 0;
+  relist(s);
+}
+
 void app_save_dismiss(app *a)
 {
   app_save *s = &a->save;
@@ -434,6 +559,10 @@ void app_save_dismiss(app *a)
   {
     return;
   }
+
+  /* the chooser is asking about a dialog that is going away; take it with it */
+  aud_chooser_close(s->chooser);
+  s->chooser = NULL;
 
   snprintf(take, sizeof(take), "%s", s->take);
   s->open = 0;
@@ -809,6 +938,12 @@ void app_save_draw(app *a)
     return;
   }
 
+  /*
+   * Once a frame, so the window keeps drawing while the desktop's chooser is
+   * up. A no-op unless one is - see gui/chooser.h.
+   */
+  chooser_step(a);
+
   /* the window dimmed rather than replaced: the take that was just played is
    * still on the meters behind this, and that is worth seeing */
   DrawRectangleRec(screen, Fade(BLACK, 0.72f));
@@ -904,6 +1039,28 @@ void app_save_draw(app *a)
     relist(s);
   }
   aud_ui_tooltip(tools, "list dot files and dot folders too");
+
+  /*
+   * The way out of this browser and into the desktop's own, which has the
+   * bookmarks, the recent places and the search this one will never have.
+   * Only offered when there is one to open - a button that did nothing would
+   * be worse than the browser it is apologising for.
+   */
+  if (aud_chooser_available())
+  {
+    Rectangle browse = tools;
+    int up = s->chooser != NULL;
+
+    browse.x = tools.x + tools.width + 10.0f;
+    browse.width = 108.0f;
+
+    if (aud_ui_button(browse, up ? "Browsing..." : "Browse...", AUD_UI_MUTED, !up) && !up)
+    {
+      chooser_begin(a);
+    }
+    aud_ui_tooltip(browse, up ? "the desktop's file chooser is open"
+                              : "pick it in the desktop's own file chooser");
+  }
 
   if (!APP_SAVE_IS_PROJECT(s->mode))
   {

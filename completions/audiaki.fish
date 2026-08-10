@@ -44,6 +44,7 @@ complete -c audiaki -l click -d 'Play a metronome at BPM while recording (heard,
 complete -c audiaki -l click-beats -d 'Beats to a bar, accenting the first' -x
 complete -c audiaki -l click-subdiv -d 'Ticks to a beat, struck softer than the beat' -x -a '1 2 3 4 6 8'
 complete -c audiaki -l click-gain -d 'How loud the click is, 0.0 to 2.0' -x
+complete -c audiaki -l latency -d 'Round trip to strike the click ahead of the beat by, in ms' -x
 
 complete -c audiaki -l visualize -d 'Render a WAV to a video and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -s o -l output -d 'Output file' -r
