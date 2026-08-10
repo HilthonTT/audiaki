@@ -560,6 +560,18 @@ int aud_track_split(aud_track *t, uint64_t frame)
   }
   left = &t->clips[i];
 
+  /*
+   * A take still arriving grows the block at its end, so the half that owns
+   * that end is the half the frames belong to. Leaving the take on the left
+   * half would have the next captured period stretch it back over the right
+   * one, and the sorted, non-overlapping list everything else here assumes
+   * would stop being either.
+   */
+  if (t->recording == (long)i)
+  {
+    t->recording = (long)i + 1;
+  }
+
   right->audio = aud_samples_retain(left->audio);
   right->offset = left->offset + before;
   right->frames = left->frames - before;
@@ -902,7 +914,9 @@ size_t aud_track_record_push(aud_track *t, const float *interleaved, size_t fram
 
   memcpy(aud_samples_tail(c->audio), interleaved, frames * t->channels * sizeof(float));
   aud_samples_advance(c->audio, frames);
-  c->frames = c->audio->frames;
+  /* the clip is the window [offset, end) of the block, which a split moves off
+   * zero - so its length is what is past the offset, not the whole block */
+  c->frames = c->audio->frames - c->offset;
   return frames;
 }
 

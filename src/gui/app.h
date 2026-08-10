@@ -554,8 +554,11 @@ void app_open_project_dialog(app *a);
  */
 void app_save_draw(app *a);
 
-/* Answer it as if "Keep here" had been pressed. Escape, and closing the window. */
+/* Answer it as if "Keep here" had been pressed. Escape, and the Cancel button. */
 void app_save_dismiss(app *a);
+
+/* Drop the dialog without answering it, for the way out of the program. */
+void app_save_shutdown(app *a);
 
 /* -- screen.c -------------------------------------------------------------- */
 

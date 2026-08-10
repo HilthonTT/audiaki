@@ -458,6 +458,49 @@ TEST(an_edit_ahead_of_a_take_leaves_the_take_where_it_is)
   aud_track_free(&t);
 }
 
+/*
+ * The same lane, but the cut lands inside the take rather than ahead of it.
+ *
+ * A block that is still being recorded into grows at its end, so the frames
+ * still to arrive belong to the half of the split that owns that end. The take
+ * has to move to it, and its length has to be measured from its own offset -
+ * otherwise the next captured period stretches the left half back over the
+ * right one and the list stops being sorted and non-overlapping.
+ */
+TEST(splitting_a_take_that_is_still_running_leaves_both_halves_whole)
+{
+  aud_track t;
+  float first[8] = {1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f};
+  float second[8] = {2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f, 2.0f};
+
+  aud_track_init(&t, "t", 1);
+
+  CHECK_EQ_INT(aud_track_record_begin(&t, 100, 64), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, first, 8), 8);
+
+  /* halfway through what has arrived so far */
+  CHECK_EQ_INT(aud_track_split(&t, 104), 0);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK(aud_track_recording(&t));
+
+  CHECK_EQ_INT((int)aud_track_record_push(&t, second, 8), 8);
+  aud_track_record_end(&t);
+
+  CHECK(well_formed(&t));
+  CHECK_EQ_INT(t.count, 2);
+  CHECK_EQ_INT((int)aud_track_end(&t), 116);
+
+  /* the first push either side of the cut, then the second after it */
+  CHECK(at(&t, 100) == 1.0f);
+  CHECK(at(&t, 103) == 1.0f);
+  CHECK(at(&t, 104) == 1.0f);
+  CHECK(at(&t, 107) == 1.0f);
+  CHECK(at(&t, 108) == 2.0f);
+  CHECK(at(&t, 115) == 2.0f);
+
+  aud_track_free(&t);
+}
+
 TEST(an_interrupted_take_carries_on_in_the_same_clip)
 {
   aud_track t;
@@ -806,6 +849,7 @@ int main(void)
   RUN(the_edges_of_a_track_are_where_its_clips_begin_and_end);
   RUN(a_split_adds_an_edge_to_step_to);
   RUN(an_empty_track_has_nowhere_to_step_to);
+  RUN(splitting_a_take_that_is_still_running_leaves_both_halves_whole);
   RUN(an_interrupted_take_carries_on_in_the_same_clip);
   RUN(carrying_a_take_on_is_refused_when_it_would_not_be_the_same_take);
   RUN(carrying_a_take_on_is_refused_when_the_audio_is_shared);

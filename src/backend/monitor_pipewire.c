@@ -154,8 +154,23 @@ static void monitor_on_param_changed(void *userdata, uint32_t id,
     return;
   }
 
+  /*
+   * The FIFO was allocated `channels` wide before any of this, and the caller
+   * hands over frames that wide as well - neither is resized afterwards. So a
+   * server that agrees a different shape, here or in a later renegotiation,
+   * ends the stream rather than having the process callback and the writer
+   * start striding both buffers by a width they were never built for.
+   */
+  if (info.info.raw.channels != m->channels)
+  {
+    aud_warn("monitor: the server offered %u channel(s), not the %u asked for",
+             info.info.raw.channels, m->channels);
+    m->failed = 1;
+    pw_thread_loop_signal(m->loop, false);
+    return;
+  }
+
   m->rate = info.info.raw.rate;
-  m->channels = info.info.raw.channels;
   m->negotiated = 1;
   pw_thread_loop_signal(m->loop, false);
 }

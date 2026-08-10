@@ -2122,6 +2122,9 @@ void aud_plug_shutdown(void)
    * half-written take is: closing the engine patches the WAV header.
    */
   app_cancel_render(a);
+  /* a desktop file chooser is a child process, and it outlives the window that
+   * asked for it unless it is taken down with it */
+  app_save_shutdown(a);
   aud_player_stop(&a->player);
   aud_preview_stop(&a->preview);
   app_close_engine(a);

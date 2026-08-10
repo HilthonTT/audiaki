@@ -550,6 +550,19 @@ static void chooser_step(app *a)
   relist(s);
 }
 
+/*
+ * The window is going away under the dialog. Not app_save_dismiss(): that
+ * answers the question - "keep it here", and a video render off the back of
+ * it - and nobody is left to see the answer. This only takes the desktop's
+ * chooser down, which is a child process and a pipe rather than a decision.
+ */
+void app_save_shutdown(app *a)
+{
+  aud_chooser_close(a->save.chooser);
+  a->save.chooser = NULL;
+  a->save.open = 0;
+}
+
 void app_save_dismiss(app *a)
 {
   app_save *s = &a->save;

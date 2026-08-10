@@ -502,13 +502,13 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
                                      e->dev.channels) != 0)
   {
     aud_error("cannot allocate the take ring");
-    goto fail_buffers;
+    goto fail_rings;
   }
 
   if (aud_ringbuf_init(&e->visual, visual_slots) != 0)
   {
     aud_error("cannot allocate the display buffer");
-    goto fail_buffers;
+    goto fail_rings;
   }
 
   if (cfg->preroll > 0.0)
