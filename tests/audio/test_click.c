@@ -36,6 +36,35 @@ static void start(aud_click *c, double bpm, unsigned beats_per_bar, float gain)
   CHECK_EQ_INT(aud_click_init(c, &cfg), 0);
 }
 
+static void start_divided(aud_click *c, double bpm, unsigned beats_per_bar,
+                          unsigned subdiv, float gain)
+{
+  aud_click_config cfg;
+
+  aud_click_config_defaults(&cfg, bpm, RATE);
+  cfg.beats_per_bar = beats_per_bar;
+  cfg.subdiv = subdiv;
+  cfg.gain = gain;
+  CHECK_EQ_INT(aud_click_init(c, &cfg), 0);
+}
+
+/* The largest absolute sample in [at, at + n), which is a strike's peak. */
+static double burst_peak(const float *buf, size_t at, size_t n)
+{
+  double worst = 0.0;
+
+  for (size_t i = at; i < at + n; i++)
+  {
+    double v = buf[i] < 0.0f ? -(double)buf[i] : (double)buf[i];
+
+    if (v > worst)
+    {
+      worst = v;
+    }
+  }
+  return worst;
+}
+
 TEST(beats_land_on_the_frame_the_tempo_says)
 {
   aud_click c;
@@ -308,7 +337,123 @@ TEST(seeking_backwards_and_forwards_costs_nothing_and_stays_on_the_beat)
 
   /* and a seek past the end of everything is still on the grid */
   aud_click_seek(&c, 24000u * 1000u);
-  CHECK_EQ_INT((long long)c.beat, 1000);
+  CHECK_EQ_INT((long long)c.tick, 1000);
+}
+
+TEST(a_subdivision_puts_a_tick_between_the_beats)
+{
+  aud_click c;
+
+  /* 120 BPM at 48 kHz is 24000 frames a beat, so eighths are 12000 apart */
+  start_divided(&c, 120.0, 4u, 2u, 1.0f);
+  CHECK_EQ_INT((long long)aud_click_beat_frames(&c), 24000);
+
+  render(&c, g_buf, 96000u, 1024u);
+
+  for (unsigned n = 0; n < 8u; n++)
+  {
+    size_t onset = (size_t)n * 12000u;
+
+    /* sin(0) opens every strike, beat or not, so the onset frame is silent */
+    CHECK_EQ_DBL(g_buf[onset], 0.0, 0.0);
+    CHECK(g_buf[onset + 1u] != 0.0f);
+  }
+
+  /* and nothing is struck a quarter of the way between two ticks */
+  CHECK_EQ_DBL(g_buf[6000], 0.0, 0.0);
+  CHECK_EQ_DBL(g_buf[18000], 0.0, 0.0);
+}
+
+TEST(subdivision_ticks_are_quieter_than_the_beats_around_them)
+{
+  aud_click c;
+  double downbeat;
+  double beat;
+  double tick;
+
+  start_divided(&c, 120.0, 4u, 2u, 1.0f);
+  render(&c, g_buf, 96000u, 1024u);
+
+  /* the burst is 50 ms, which is 2400 frames, and well clear of the next tick */
+  downbeat = burst_peak(g_buf, 0u, 2400u); /* bar one, beat one */
+  tick = burst_peak(g_buf, 12000u, 2400u); /* the off-beat after it */
+  beat = burst_peak(g_buf, 24000u, 2400u); /* beat two */
+
+  CHECK(downbeat > 0.0);
+  CHECK(beat > 0.0);
+  CHECK(tick > 0.0);
+
+  /*
+   * The order that makes the pulse readable: the bar starts loudest, the plain
+   * beats sit under it, and what falls between them is quieter still.
+   */
+  CHECK(tick < beat);
+  CHECK(beat <= downbeat);
+}
+
+TEST(a_subdivision_of_one_is_the_undivided_beat)
+{
+  aud_click plain;
+  aud_click divided;
+
+  start(&plain, 100.0, 3u, 0.8f);
+  render(&plain, g_buf, 96000u, 1024u);
+
+  /* 0 and 1 both mean "do not divide", so both have to match the plain grid */
+  start_divided(&divided, 100.0, 3u, 1u, 0.8f);
+  render(&divided, g_alt, 96000u, 1024u);
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-6);
+  }
+
+  start_divided(&divided, 100.0, 3u, 0u, 0.8f);
+  render(&divided, g_alt, 96000u, 1024u);
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-6);
+  }
+}
+
+TEST(a_divided_grid_survives_a_seek)
+{
+  aud_click c;
+  size_t at;
+
+  start_divided(&c, 120.0, 4u, 3u, 1.0f);
+  render(&c, g_buf, 96000u, 4096u);
+
+  /* the same chunks, each seeked to first - what a looping transport does */
+  memset(g_alt, 0, sizeof(g_alt));
+  for (at = 0; at < 96000u; at += 4096u)
+  {
+    aud_click_seek(&c, at);
+    aud_click_mix(&c, g_alt + at, 4096u, 1u);
+  }
+
+  for (size_t i = 0; i < 96000u; i++)
+  {
+    CHECK_EQ_DBL(g_alt[i], g_buf[i], 1e-6);
+  }
+}
+
+TEST(an_out_of_range_subdivision_is_clamped_rather_than_refused)
+{
+  aud_click c;
+  aud_click_config cfg;
+
+  /*
+   * The tempo is the thing worth refusing over - there is no sensible click at
+   * 5000 BPM. A subdivision past the ceiling still has an obvious reading, so
+   * it is brought back to the ceiling and the take goes ahead.
+   */
+  aud_click_config_defaults(&cfg, 120.0, RATE);
+  cfg.subdiv = AUD_CLICK_SUBDIV_MAX + 4u;
+  CHECK_EQ_INT(aud_click_init(&c, &cfg), 0);
+  CHECK_EQ_INT(c.subdiv, AUD_CLICK_SUBDIV_MAX);
+
+  /* and the burst was cut so two strikes never overlap at the tightest grid */
+  CHECK(c.burst_frames <= (unsigned)c.tick_spacing);
 }
 
 int main(void)
@@ -324,5 +469,10 @@ int main(void)
   RUN(seeking_lands_on_the_same_grid_as_playing_up_to_it);
   RUN(seeking_backwards_and_forwards_costs_nothing_and_stays_on_the_beat);
   RUN(unusable_tempos_are_refused);
+  RUN(a_subdivision_puts_a_tick_between_the_beats);
+  RUN(subdivision_ticks_are_quieter_than_the_beats_around_them);
+  RUN(a_subdivision_of_one_is_the_undivided_beat);
+  RUN(a_divided_grid_survives_a_seek);
+  RUN(an_out_of_range_subdivision_is_clamped_rather_than_refused);
   return TEST_RESULT();
 }

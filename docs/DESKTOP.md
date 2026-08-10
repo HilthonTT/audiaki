@@ -155,12 +155,24 @@ The tempo cluster at the end of the edit bar is the whole of it: **Click**,
   `shift` for ten. It can be nudged while something is playing, which is how
   anybody actually arrives at a tempo — against what they are already hearing.
 - **Grid**, or `G`, counts the ruler in bars instead of minutes and seconds,
-  draws the bar lines down the tracks, and puts the pointer on them: clicking,
-  scrubbing and dragging a selection all land on the nearest beat. Holding
-  `alt` steps off the grid for the one cut that has to go between two beats.
+  draws the lines down the tracks, and puts edits on them: clicking, scrubbing,
+  dragging a selection and the `←`/`→` keys all land on the nearest line.
+  Holding `alt` steps off the grid for the one cut that has to go between two
+  beats — for the keys as well as for the pointer.
+- `shift+G` divides the grid, cycling bars → beats → halves → thirds →
+  quarters. Bars are for arranging, thirds for anything shuffled, quarters for
+  placing a hit inside a beat; the status line says which you are on, and so
+  does the tooltip on the **Grid** button. It is saved with the session, and a
+  project written before this existed opens on beats.
 
-The grid thins itself out as you zoom away — beats give way to bars, and bars
-double until they are far enough apart to be lines rather than a wash.
+Dividing the grid changes where the *next* edit lands. It does not move audio
+that is already on the timeline, and neither does turning the grid on.
+
+The grid thins itself out as you zoom away — subdivisions give way to beats,
+beats to bars, and bars double until they are far enough apart to be lines
+rather than a wash. What is drawn is always something an edit can land on, and
+the three weights of line — bar, beat, and between beats — are the same on the
+ruler and down the tracks.
 
 The metronome and the ruler count the same grid, from the same tempo, both
 computed from the frame index rather than accumulated: beat 400 is where the
@@ -172,8 +184,12 @@ does not restart the bar wherever the loop happens to begin.
 recording to one places the take a round trip earlier for the same reason and
 by the same measurement. See [Overdubbing](#overdubbing).
 
-There is one tempo for the whole session. No tempo changes, no time signature
-beyond how many beats get counted to a bar, and no subdivisions.
+The click counts out whatever the grid is divided into, so a session snapping to
+thirds is counted in thirds and one snapping to bars is still counted in beats —
+a metronome that struck once a bar would not be one anybody could play to.
+
+There is one tempo for the whole session: no tempo changes, and no time
+signature beyond how many beats get counted to a bar.
 
 ## Editing
 
@@ -314,7 +330,7 @@ and stereo unless every track in it is mono.
 | **Open** / **Save** | Opens a session, or writes this one out |
 | **Click** | Plays a metronome at the session's tempo; heard, never recorded |
 | `− BPM +` | The tempo, a beat at a time; `shift` for ten |
-| **Grid** | Counts the ruler in bars, and puts the pointer on them |
+| **Grid** | Counts the ruler in bars, and puts edits on the grid |
 | **Overdub** | Plays the project while recording over it |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
@@ -330,11 +346,12 @@ and stereo unless every track in it is mono.
 | `L` | Loop what Play is given |
 | `C` | The metronome |
 | `G` | The bar grid; `alt` steps off it while it is on |
+| `shift+G` | Divides the grid: bars, beats, halves, thirds, quarters |
 | `-` / `+` | The tempo, a beat at a time; `shift` for ten |
 | `I` / `ctrl+E` | Import a WAV / export a mix |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
-| `←` / `→` | Move the cursor; `ctrl` steps clip edge to clip edge |
+| `←` / `→` | Move the cursor, one grid line at a time while the grid is on; `ctrl` steps clip edge to clip edge, `alt` steps off the grid |
 | `shift+←` / `→` | Extend the selection instead of moving the cursor |
 | `↑` / `↓` | Select the track above or below; `shift` adds it |
 | `home` / `end` | Cursor to the start or the end of the project |

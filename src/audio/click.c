@@ -16,6 +16,14 @@
 #define CLICK_BEAT_HZ 800.0
 
 /*
+ * A subdivision is the beat pitch struck softer rather than a third tone. Two
+ * pitches already carry the bar; a third competes with the accent for the same
+ * attention, and what the ear wants from an off-beat tick is to know it is not
+ * the beat, which quieter says on its own.
+ */
+#define CLICK_SUBDIV_GAIN 0.45
+
+/*
  * 50 ms of burst over an 8 ms decay, so the tail is down to about 0.2% of the
  * peak - some 54 dB - by the time it is cut off. Loud enough to hear, short
  * enough that the fastest tempo click.h accepts (300 BPM, 200 ms apart) never
@@ -50,6 +58,7 @@ void aud_click_config_defaults(aud_click_config *cfg, double bpm, unsigned rate)
   memset(cfg, 0, sizeof(*cfg));
   cfg->bpm = bpm;
   cfg->beats_per_bar = AUD_CLICK_DEFAULT_BEATS;
+  cfg->subdiv = AUD_CLICK_DEFAULT_SUBDIV;
   cfg->rate = rate;
   cfg->gain = (float)AUD_CLICK_DEFAULT_GAIN;
 }
@@ -83,7 +92,15 @@ int aud_click_init(aud_click *c, const aud_click_config *cfg)
   c->spacing = spacing;
   c->beats_per_bar =
       cfg->beats_per_bar > AUD_CLICK_BEATS_MAX ? AUD_CLICK_BEATS_MAX : cfg->beats_per_bar;
+  /* 0 and 1 are the same request - the beat undivided - so both become 1 */
+  c->subdiv = cfg->subdiv == 0u ? 1u : cfg->subdiv;
+  if (c->subdiv > AUD_CLICK_SUBDIV_MAX)
+  {
+    c->subdiv = AUD_CLICK_SUBDIV_MAX;
+  }
+  c->tick_spacing = spacing / (double)c->subdiv;
   c->gain = (float)clamp_gain((double)cfg->gain);
+  c->subdiv_gain = (float)(c->gain * CLICK_SUBDIV_GAIN);
 
   c->burst_frames = (unsigned)(CLICK_BURST_SECONDS * (double)cfg->rate);
   if (c->burst_frames == 0)
@@ -91,13 +108,15 @@ int aud_click_init(aud_click *c, const aud_click_config *cfg)
     c->burst_frames = 1;
   }
   /*
-   * Only reachable at rates far below what any device offers, but a burst that
-   * outlasts the gap between beats would break the one-beat-at-a-time walk
-   * below rather than merely sound wrong.
+   * A burst that outlasts the gap to the next strike would break the
+   * one-tick-at-a-time walk below rather than merely sound wrong. Undivided
+   * that only happens at rates far below what any device offers; divided it is
+   * reachable at the top of the tempo range, where eight ticks to a beat at
+   * 300 BPM are 25 ms apart and the 50 ms burst has to be cut to fit.
    */
-  if ((double)c->burst_frames > spacing)
+  if ((double)c->burst_frames > c->tick_spacing)
   {
-    c->burst_frames = (unsigned)spacing;
+    c->burst_frames = (unsigned)c->tick_spacing;
     if (c->burst_frames == 0)
     {
       c->burst_frames = 1;
@@ -112,7 +131,7 @@ void aud_click_reset(aud_click *c)
   if (c != NULL)
   {
     c->frame = 0;
-    c->beat = 0;
+    c->tick = 0;
   }
 }
 
@@ -125,30 +144,51 @@ void aud_click_seek(aud_click *c, uint64_t frame)
 
   c->frame = frame;
 
-  if (!(c->spacing > 0.0))
+  if (!(c->tick_spacing > 0.0))
   {
-    c->beat = 0; /* never initialised; the mix will find nothing to do anyway */
+    c->tick = 0; /* never initialised; the mix will find nothing to do anyway */
     return;
   }
 
   /*
    * Worked out rather than walked to, so seeking an hour in costs the same as
-   * seeking a bar in. Landing a beat either side of the right one is harmless:
-   * aud_click_mix() steps the beat forward until the burst it holds reaches
-   * the frame being mixed, and a beat not yet due is simply silence until it
+   * seeking a bar in. Landing a tick either side of the right one is harmless:
+   * aud_click_mix() steps the tick forward until the burst it holds reaches
+   * the frame being mixed, and a tick not yet due is simply silence until it
    * is - which is what makes this safe to call before every pass.
    */
-  c->beat = (uint64_t)((double)frame / c->spacing);
+  c->tick = (uint64_t)((double)frame / c->tick_spacing);
 }
 
 /*
- * Where beat `n` starts, computed from n rather than accumulated, so rounding
+ * Where tick `n` starts, computed from n rather than accumulated, so rounding
  * cannot build up: at 48 kHz the product stays exact in a double for longer
  * than a WAV file can be.
  */
-static uint64_t onset_of(const aud_click *c, uint64_t beat)
+static uint64_t onset_of(const aud_click *c, uint64_t tick)
 {
-  return (uint64_t)((double)beat * c->spacing + 0.5);
+  return (uint64_t)((double)tick * c->tick_spacing + 0.5);
+}
+
+/*
+ * What tick `n` sounds like: the bar's first beat is the accent, every other
+ * whole beat is the plain tone, and what falls between beats is that tone
+ * softened. Returns the amplitude and sets `*omega` to the pitch.
+ */
+static float strike_of(const aud_click *c, uint64_t tick, double *omega)
+{
+  uint64_t beat;
+
+  if ((tick % c->subdiv) != 0u)
+  {
+    *omega = c->omega_beat;
+    return c->subdiv_gain;
+  }
+
+  beat = tick / c->subdiv;
+  *omega = (c->beats_per_bar > 1u && (beat % c->beats_per_bar) == 0u) ? c->omega_accent
+                                                                      : c->omega_beat;
+  return c->gain;
 }
 
 void aud_click_mix(aud_click *c, float *interleaved, size_t frames, unsigned channels)
@@ -167,18 +207,19 @@ void aud_click_mix(aud_click *c, float *interleaved, size_t frames, unsigned cha
   while (i < frames)
   {
     uint64_t here = c->frame + i;
-    uint64_t onset = onset_of(c, c->beat);
+    uint64_t onset = onset_of(c, c->tick);
     uint64_t end = onset + c->burst_frames;
     double omega;
+    float strike;
     size_t stop;
 
     if (here >= end)
     {
-      c->beat++;
+      c->tick++;
       continue;
     }
 
-    /* silence up to the next beat: left as it was found, since this mixes */
+    /* silence up to the next tick: left as it was found, since this mixes */
     if (here < onset)
     {
       uint64_t gap = onset - here;
@@ -188,8 +229,7 @@ void aud_click_mix(aud_click *c, float *interleaved, size_t frames, unsigned cha
       continue;
     }
 
-    omega = (c->beats_per_bar > 1u && (c->beat % c->beats_per_bar) == 0) ? c->omega_accent
-                                                                         : c->omega_beat;
+    strike = strike_of(c, c->tick, &omega);
 
     stop = frames;
     if (end - c->frame < (uint64_t)stop)
@@ -200,7 +240,7 @@ void aud_click_mix(aud_click *c, float *interleaved, size_t frames, unsigned cha
     for (; i < stop; i++)
     {
       double k = (double)(c->frame + i - onset); /* frames since the strike */
-      float v = (float)(sin(omega * k) * exp(-c->decay * k)) * c->gain;
+      float v = (float)(sin(omega * k) * exp(-c->decay * k)) * strike;
 
       for (unsigned ch = 0; ch < channels; ch++)
       {

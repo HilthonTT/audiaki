@@ -37,12 +37,14 @@ static void arm_click(aud_player *p)
 
   aud_click_config_defaults(&cfg, p->click_bpm, p->rate);
   cfg.beats_per_bar = p->click_beats;
+  cfg.subdiv = p->click_subdiv;
   cfg.gain = p->click_gain;
 
   p->click_on = aud_click_init(&p->click, &cfg) == 0;
 }
 
-void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar, float gain)
+void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar,
+                          unsigned subdiv, float gain)
 {
   if (p == NULL)
   {
@@ -51,6 +53,7 @@ void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar, flo
 
   p->click_bpm = bpm;
   p->click_beats = beats_per_bar;
+  p->click_subdiv = subdiv;
   p->click_gain = gain;
 
   /*

@@ -249,6 +249,7 @@ int aud_project_save(const aud_doc *d, const char *path, const char **why)
   if (fprintf(f, "%s %d\n", AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION) < 0 ||
       fprintf(f, "rate %u\n", d->rate) < 0 ||
       fprintf(f, "tempo %.6f %u\n", d->tempo, d->beats_per_bar) < 0 ||
+      fprintf(f, "grid %u\n", d->grid_div) < 0 ||
       fprintf(f, "cursor %llu\n", (unsigned long long)d->cursor) < 0 ||
       fprintf(f, "selection %llu %llu\n", (unsigned long long)d->sel_start,
               (unsigned long long)d->sel_end) < 0 ||
@@ -647,6 +648,23 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
         }
         (void)take_u64(&rest, &beats);
         aud_doc_set_tempo(&built, bpm, (unsigned)beats);
+      }
+      continue;
+    }
+
+    if (strcmp(word, "grid") == 0)
+    {
+      uint64_t div = AUD_DOC_GRID_BEAT;
+      char *rest = args;
+
+      /*
+       * Absent in a project written before there was anything but beats to
+       * snap to, and aud_doc_init() has already put beats there - so an old
+       * project opens on the grid it was drawn with.
+       */
+      if (take_u64(&rest, &div) == 0)
+      {
+        aud_doc_set_grid(&built, (unsigned)div);
       }
       continue;
     }

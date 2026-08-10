@@ -106,12 +106,135 @@ TEST(a_tempo_that_does_not_divide_the_rate_still_snaps_to_whole_beats)
   aud_doc_free(&d);
 }
 
+TEST(the_grid_divides_into_bars_and_fractions_of_a_beat)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, RATE); /* 24000 frames to a beat, four to the bar */
+  CHECK_EQ_INT(d.grid_div, AUD_DOC_GRID_BEAT);
+  CHECK_EQ_DBL(aud_doc_grid_frames(&d), 24000.0, 1e-6);
+
+  aud_doc_set_grid(&d, AUD_DOC_GRID_BAR);
+  CHECK_EQ_DBL(aud_doc_grid_frames(&d), 96000.0, 1e-6);
+  CHECK_EQ_STR(aud_doc_grid_label(&d), "bars");
+
+  aud_doc_set_grid(&d, 2u);
+  CHECK_EQ_DBL(aud_doc_grid_frames(&d), 12000.0, 1e-6);
+  CHECK_EQ_STR(aud_doc_grid_label(&d), "1/2 beat");
+
+  aud_doc_set_grid(&d, 3u);
+  CHECK_EQ_DBL(aud_doc_grid_frames(&d), 8000.0, 1e-6);
+  CHECK_EQ_STR(aud_doc_grid_label(&d), "1/3 beat");
+
+  /* past the ceiling is clamped, the way an out-of-range tempo is */
+  aud_doc_set_grid(&d, AUD_DOC_GRID_MAX + 5u);
+  CHECK_EQ_INT(d.grid_div, AUD_DOC_GRID_MAX);
+
+  aud_doc_free(&d);
+}
+
+TEST(snapping_follows_the_division)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, RATE);
+
+  /* on bars, everything inside the first bar comes back to its start */
+  aud_doc_set_grid(&d, AUD_DOC_GRID_BAR);
+  CHECK_EQ_INT(aud_doc_snap(&d, 24000u), 0);
+  CHECK_EQ_INT(aud_doc_snap(&d, 47999u), 0);
+  CHECK_EQ_INT(aud_doc_snap(&d, 48000u), 96000);
+
+  /* on eighths, the halfway point is a place an edit can land */
+  aud_doc_set_grid(&d, 2u);
+  CHECK_EQ_INT(aud_doc_snap(&d, 12000u), 12000);
+  CHECK_EQ_INT(aud_doc_snap(&d, 11000u), 12000);
+  CHECK_EQ_INT(aud_doc_snap(&d, 5000u), 0);
+
+  /* on triplets, so does a third of one */
+  aud_doc_set_grid(&d, 3u);
+  CHECK_EQ_INT(aud_doc_snap(&d, 8000u), 8000);
+  CHECK_EQ_INT(aud_doc_snap(&d, 16000u), 16000);
+  CHECK_EQ_INT(aud_doc_snap(&d, 24000u), 24000);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_grid_step_always_moves)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, RATE);
+
+  /* from exactly on a line, forward and back land on the neighbouring ones */
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 24000u, 0), 48000);
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 24000u, 1), 0);
+
+  /* from between two lines, each direction lands on the one it is heading for */
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 30000u, 0), 48000);
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 30000u, 1), 24000);
+
+  /* the front of the timeline is a floor, not a wrap */
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 0u, 1), 0);
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 100u, 1), 0);
+
+  /* and it steps by whatever the grid is divided into */
+  aud_doc_set_grid(&d, 4u);
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 24000u, 0), 30000);
+  aud_doc_set_grid(&d, AUD_DOC_GRID_BAR);
+  CHECK_EQ_INT(aud_doc_grid_step(&d, 0u, 0), 96000);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_grid_step_does_not_stall_on_a_ragged_tempo)
+{
+  aud_doc d;
+
+  /*
+   * 44100 * 60 / 137 is not a whole number of frames, so a line's frame lands
+   * a fraction either side of the arithmetic. Walking the grid has to move
+   * every time regardless, or an arrow key would wedge on some of the lines.
+   */
+  aud_doc_init(&d, 44100u);
+  aud_doc_set_tempo(&d, 137.0, 4u);
+  aud_doc_set_grid(&d, 3u);
+
+  {
+    uint64_t at = 0;
+
+    for (int i = 0; i < 500; i++)
+    {
+      uint64_t next = aud_doc_grid_step(&d, at, 0);
+
+      CHECK(next > at);
+      at = next;
+    }
+
+    /* and all the way back down again, one line at a time */
+    for (int i = 0; i < 500; i++)
+    {
+      uint64_t prev = aud_doc_grid_step(&d, at, 1);
+
+      CHECK(prev < at);
+      at = prev;
+    }
+    CHECK_EQ_INT(at, 0);
+  }
+
+  aud_doc_free(&d);
+}
+
 TEST(the_api_tolerates_a_null_document)
 {
   aud_doc_set_tempo(NULL, 120.0, 4u);
+  aud_doc_set_grid(NULL, 2u);
   CHECK_EQ_DBL(aud_doc_beat_frames(NULL), 0.0, 1e-9);
   CHECK_EQ_DBL(aud_doc_bar_frames(NULL), 0.0, 1e-9);
+  CHECK_EQ_DBL(aud_doc_grid_frames(NULL), 0.0, 1e-9);
+  CHECK_EQ_STR(aud_doc_grid_label(NULL), "beats");
   CHECK_EQ_INT(aud_doc_snap(NULL, 99u), 99);
+  CHECK_EQ_INT(aud_doc_grid_step(NULL, 99u, 0), 99);
 }
 
 int main(void)
@@ -121,6 +244,10 @@ int main(void)
   RUN(a_project_with_no_rate_has_no_grid);
   RUN(snapping_goes_to_the_nearest_beat);
   RUN(a_tempo_that_does_not_divide_the_rate_still_snaps_to_whole_beats);
+  RUN(the_grid_divides_into_bars_and_fractions_of_a_beat);
+  RUN(snapping_follows_the_division);
+  RUN(a_grid_step_always_moves);
+  RUN(a_grid_step_does_not_stall_on_a_ragged_tempo);
   RUN(the_api_tolerates_a_null_document);
   return TEST_RESULT();
 }

@@ -9,6 +9,59 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--click-subdiv N` divides the beat: `2` for eighths, `3` for triplets, `4`
+  for sixteenths, up to 8. The ticks are the beat tone struck softer, so the
+  pulse still reads as the pulse. What a slow tempo usually wants - at 60 BPM
+  there is a second of nothing between beats to drift about in.
+
+  A take recorded to a click now says so. The tempo, the bar length and the
+  subdivision go into the take's `LIST`/`INFO` chunk under `ITMP`, and `--info`
+  prints them back as a `metronome:` line. The click is heard and never
+  recorded, which is exactly why the file has to carry the number: there is
+  nothing in the audio to work it out from afterwards. `ITMP` is audiaki's own -
+  RIFF/INFO has no registered tag for a tempo, and an unknown four-character id
+  is the one thing every reader of the format has to step over. An `acid` chunk
+  would have been the standard-ish alternative and also tells a DAW the file may
+  be stretched to the project's tempo, which is the last thing a raw take should
+  say about itself.
+
+- `--channel mix` averages every capture channel into one instead of dropping
+  all but one. For two inputs that both have something on them - a pair of room
+  mics, an instrument and a vocal - where `--channel 1` loses half the take.
+  Averaged rather than summed, so a mixdown cannot clip; that costs up to 3 dB
+  against a summed mix on material that is the same in every channel, which is
+  the right way round for a capture path where a clipped take cannot be undone.
+
+- `--shuffle`, `--repeat` and `--repeat-one` for `--play`. Shuffling picks a
+  fresh order each time through a repeating list rather than cycling one
+  permutation forever, and `n`/`p` still walk the list under any of them. A pass
+  over a playlist where every file failed to open stops rather than repeating
+  itself: an unreadable list would otherwise spin.
+
+- `--tune-min` and `--tune-max` set the range the tuner searches, and the
+  defaults moved: 30 Hz to 4500 Hz, from a five-string bass's low B (30.87 Hz)
+  up past a piccolo's top C (4186 Hz), where it used to be 40 Hz to 2 kHz and
+  reached neither.
+
+  The two ends do not cost the same, which is why only one of them moved far on
+  its own merits. The ceiling sets the shortest lag searched, so raising it is
+  nearly free. The floor sets the longest and the analysis is quadratic in it -
+  measured at 48 kHz, one reading takes about 3.5 ms with the floor at 40 Hz and
+  about 7.6 ms at 27.5 - so the default stops at the lowest note anyone actually
+  brings to a tuner rather than going down to a piano's A0 for the sake of it.
+
+- The desktop app's grid divides. `shift+G` cycles bars, beats, halves, thirds
+  and quarters of a beat; the ruler and the track lines draw whichever of those
+  there is room for, thinning from subdivisions to beats to doubled bars as you
+  zoom away, and every line drawn is somewhere an edit can land. The division is
+  saved with the session, and a project written before it existed opens on
+  beats.
+
+  The arrow keys snap too. `←` and `→` step from one grid line to the next
+  rather than by a fixed number of pixels, which is the only way a keyboard can
+  put an edit where the pointer would; `alt` drops the keys off the grid the
+  same way it already dropped the pointer.
+
 - `--play` has a transport, and takes more than one file. Space pauses, the
   cursor keys seek - five seconds sideways, thirty up and down - `home` and
   `end` jump to either end of the file, `n` and `p` move through the files
@@ -191,6 +244,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one being recorded is indexed as it arrives.
 
 ### Fixed
+
+- Host byte order no longer has to be little-endian. WAV and every format a
+  backend delivers are little-endian wherever they came from, and the decoders
+  were reading them with a `memcpy` into a native integer, which is only correct
+  because most hosts happen to agree. `src/util/bytes.h` reads and writes the
+  bytes one at a time instead; `media/wav.c`, `audio/format.c` and the RGBA
+  frames going down the `ffmpeg` pipe all go through it.
+
+  There is no conditional compilation in the audio paths on purpose - a compiler
+  folds a byte-at-a-time little-endian load back into the single instruction the
+  `memcpy` was, so the portable version costs nothing and there is only one path
+  to test. The framebuffer is the exception, where the per-pixel cost is real
+  enough to keep a whole-buffer write on hosts that are already in that order.
+
+  Verified by construction rather than on the hardware: `tests/util/test_bytes.c`
+  states what a given array of bytes means, and nothing in the helpers looks at
+  a host integer's layout. Actually running it on a big-endian machine still
+  wants one, or an emulator, that CI does not have.
+
+- Metadata appended after the audio is read. The chunk walk stopped at the
+  `data` chunk, so a file an editor had retagged in place - which usually means
+  appending - reported having no metadata at all. It now walks on past the
+  payload when it has not found any yet, seeking over the audio rather than
+  reading it, and stops early as before when the tags were where audiaki puts
+  them.
 
 - A heap use-after-free in **Copy to**: the new track's name was read out of the
   track list through a pointer the same call had just reallocated. Reachable

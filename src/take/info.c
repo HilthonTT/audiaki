@@ -304,6 +304,10 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   {
     fprintf(out, "software:    %s\n", r->meta.software);
   }
+  if (r->meta.tempo[0] != '\0')
+  {
+    fprintf(out, "metronome:   %s\n", r->meta.tempo);
+  }
   if (r->meta.note[0] != '\0')
   {
     fprintf(out, "note:        %s\n", r->meta.note);
@@ -440,6 +444,8 @@ void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
   aud_json_string(out, or_null(r->meta.software));
   fputs(",\n    \"note\": ", out);
   aud_json_string(out, or_null(r->meta.note));
+  fputs(",\n    \"metronome\": ", out);
+  aud_json_string(out, or_null(r->meta.tempo));
   fputs(",\n    \"coding_history\": ", out);
   aud_json_string(out, or_null(r->meta.coding_history));
   fputs("\n  }\n}\n", out);

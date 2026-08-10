@@ -188,9 +188,43 @@ static void format_coding_history(char *dst, size_t size, const aud_meta *m)
   }
 }
 
+/*
+ * The metronome as one readable line: "120 BPM, 4 to the bar, 2 per beat",
+ * with the parts that were not set left off. A bar length of 0 or 1 is a bare
+ * pulse with no bar to name, and one tick to a beat is the beat undivided.
+ *
+ * Not written as a time signature, because the click has no note value: it
+ * knows how many beats make a bar and nothing about what kind of beat, and
+ * "4/4" would be inventing the half of that it was never told.
+ */
+static void format_tempo(char *dst, size_t size, const aud_meta *m)
+{
+  size_t at;
+
+  at = (size_t)snprintf(dst, size, "%.4g BPM", m->click_bpm);
+  if (at >= size)
+  {
+    return;
+  }
+
+  if (m->click_beats > 1u)
+  {
+    at += (size_t)snprintf(dst + at, size - at, ", %u to the bar", m->click_beats);
+    if (at >= size)
+    {
+      return;
+    }
+  }
+  if (m->click_subdiv > 1u)
+  {
+    snprintf(dst + at, size - at, ", %u per beat", m->click_subdiv);
+  }
+}
+
 static void build_list_info(writer *w, const aud_meta *m)
 {
   char date[16];
+  char tempo[48];
   unsigned char *head;
   size_t body_start;
 
@@ -216,6 +250,18 @@ static void build_list_info(writer *w, const aud_meta *m)
    */
   put_info_tag(w, "ISRC", m->device, AUD_META_DEVICE_MAX);
   put_info_tag(w, "ICMT", m->note, AUD_META_NOTE_MAX);
+  /*
+   * ITMP is audiaki's own: RIFF/INFO has no registered tag for a tempo, and an
+   * unknown four character id is the one thing every reader of the format is
+   * required to step over. The alternative was an `acid` chunk, which does
+   * carry a tempo - and tells a DAW the file may be stretched to the project's,
+   * which is the last thing a raw take should be saying about itself.
+   */
+  if (m->click_bpm > 0.0)
+  {
+    format_tempo(tempo, sizeof(tempo), m);
+    put_info_tag(w, "ITMP", tempo, sizeof(tempo) - 1u);
+  }
 
   /* the form type counts towards the chunk body, the eight byte header does not */
   put_u32(head + 4, (uint32_t)(w->used - body_start + 4u));
@@ -411,6 +457,11 @@ void aud_meta_read_list(aud_meta_info *out, const unsigned char *body, size_t by
     else if (memcmp(id, "ICMT", 4) == 0)
     {
       take_field(out->note, sizeof(out->note), value, size);
+      out->present = 1;
+    }
+    else if (memcmp(id, "ITMP", 4) == 0)
+    {
+      take_field(out->tempo, sizeof(out->tempo), value, size);
       out->present = 1;
     }
     else if (memcmp(id, "ICRD", 4) == 0 && out->recorded[0] == '\0')

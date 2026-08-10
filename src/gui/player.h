@@ -79,6 +79,7 @@ typedef struct
    */
   double click_bpm; /* 0 when the metronome is off */
   unsigned click_beats;
+  unsigned click_subdiv;
   float click_gain;
 } aud_player;
 
@@ -89,10 +90,15 @@ void aud_player_init(aud_player *p);
  * zero turns it off; anything else is taken as read from the document, whose
  * tempo it is. Gain is peak amplitude, as click.h has it.
  *
+ * `subdiv` is ticks to a beat, and is the document's grid division: the lines
+ * on the ruler and the ticks in the headphones are the same grid, so a session
+ * snapping to thirds is counted out in thirds.
+ *
  * Settable while playing so a tempo can be found by ear against what is
  * already there, which is how anybody actually arrives at one.
  */
-void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar, float gain);
+void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar,
+                          unsigned subdiv, float gain);
 
 /* Whether the next pass, or this one, goes round rather than stopping. */
 void aud_player_set_loop(aud_player *p, int on);

@@ -6,9 +6,11 @@
  * around a hundred lines instead, keeps audiaki's dependency list at libasound
  * plus libm, and hands ffmpeg exactly the byte layout it wants.
  *
- * Pixels are uint32_t words holding 0xAABBGGRR, which on a little-endian host
- * lays out in memory as R, G, B, A - ffmpeg's "rgba" raw video format. Like
- * the rest of audiaki this assumes a little-endian host.
+ * Pixels are uint32_t words holding 0xAABBGGRR. On a little-endian host that
+ * lays out in memory as R, G, B, A - ffmpeg's "rgba" raw video format - so a
+ * frame is handed to the pipe as it stands; ffmpeg_send_frame() serialises the
+ * words itself where the host disagrees, and the layout here is the same either
+ * way.
  */
 #ifndef AUDIAKI_CANVAS_H
 #define AUDIAKI_CANVAS_H

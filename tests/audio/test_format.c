@@ -2,6 +2,7 @@
 #include "test_util.h"
 
 #include "audio/format.h"
+#include "util/bytes.h"
 
 #include <stdint.h>
 #include <string.h>
@@ -279,6 +280,107 @@ TEST(pick_channel_edge_cases)
   aud_format_pick_channel(out, src, 0, 2, 0, AUD_FORMAT_S16_LE);
 }
 
+TEST(mix_channels_averages_the_interleave)
+{
+  /* three frames of stereo s16: left at +0.5, right at -0.25 */
+  const unsigned char src[12] = {0x00, 0x40, 0x00, 0xE0, 0x00, 0x40,
+                                 0x00, 0xE0, 0x00, 0x40, 0x00, 0xE0};
+  unsigned char out[6];
+  float mixed[3];
+
+  aud_format_mix_channels(out, src, 3, 2, AUD_FORMAT_S16_LE);
+  aud_format_to_float(mixed, out, 3, 1, AUD_FORMAT_S16_LE);
+
+  /* (0.5 + -0.25) / 2 */
+  for (size_t i = 0; i < 3; i++)
+  {
+    CHECK_EQ_DBL(mixed[i], 0.125, 1e-4);
+  }
+}
+
+TEST(mix_channels_agrees_with_the_mono_decoder)
+{
+  /*
+   * aud_format_to_mono() already averages, for the spectrum. Mixing down for
+   * the file has to reach the same numbers, or a take would not sound like the
+   * meter that watched it being made.
+   */
+  const unsigned char src[24] = {0x00, 0x40, 0x00, 0x10, 0x00, 0x80, 0x00, 0x20,
+                                 0x00, 0xC0, 0x00, 0x30, 0x00, 0x00, 0x00, 0x40,
+                                 0x00, 0x50, 0x00, 0x60, 0x00, 0x70, 0x00, 0x08};
+  unsigned char one[12];
+  float direct[6];
+  float through_mix[6];
+
+  aud_format_to_mono(direct, src, 6, 2, AUD_FORMAT_S16_LE);
+  aud_format_mix_channels(one, src, 6, 2, AUD_FORMAT_S16_LE);
+  aud_format_to_float(through_mix, one, 6, 1, AUD_FORMAT_S16_LE);
+
+  /* one LSB of slack: the mix rounds in the integer domain, to_mono does not */
+  for (size_t i = 0; i < 6; i++)
+  {
+    CHECK_EQ_DBL(through_mix[i], direct[i], 1.0 / 32768.0);
+  }
+}
+
+TEST(a_mixdown_cannot_clip)
+{
+  /* every channel pinned to full scale, which a summed mix would overflow */
+  const unsigned char src[16] = {0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80,
+                                 0xFF, 0x7F, 0xFF, 0x7F, 0xFF, 0x7F, 0xFF, 0x7F};
+  unsigned char out[4];
+
+  aud_format_mix_channels(out, src, 2, 4, AUD_FORMAT_S16_LE);
+
+  /* the mean of a set is never further out than its furthest member */
+  CHECK_EQ_DBL(aud_format_peak(out, 2, 1, AUD_FORMAT_S16_LE), 1.0, 1e-6);
+  CHECK_EQ_INT(aud_rd_s16le(out), -32768);
+  CHECK_EQ_INT(aud_rd_s16le(out + 2), 32767);
+}
+
+TEST(mix_channels_keeps_the_24_bit_container)
+{
+  /*
+   * S24_LE goes out in its four byte container, because the recorder hands the
+   * result to the repack step exactly as it hands over a picked channel.
+   */
+  const unsigned char src[8] = {0x00, 0x00, 0x40, 0x00, 0x00, 0x00, 0x00, 0x00};
+  unsigned char out[4];
+  unsigned char packed[3];
+
+  aud_format_mix_channels(out, src, 1, 2, AUD_FORMAT_S24_LE);
+  /* half of 0x400000 and half of zero */
+  CHECK_EQ_INT(aud_rd_s24le(out), 0x200000);
+
+  aud_format_repack(packed, out, 1, AUD_FORMAT_S24_LE);
+  CHECK_EQ_INT(aud_rd_s24le(packed), 0x200000);
+}
+
+TEST(mix_channels_edge_cases)
+{
+  const unsigned char src[4] = {0x11, 0x22, 0x33, 0x44};
+  unsigned char out[4];
+
+  /* mono in, mono out: already its own mix, so this is a copy */
+  memset(out, 0xEE, sizeof(out));
+  aud_format_mix_channels(out, src, 2, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0x11);
+  CHECK_EQ_INT(out[3], 0x44);
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_mix_channels(out, src, 2, 0, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(out[0], 0xEE);
+
+  memset(out, 0xEE, sizeof(out));
+  aud_format_mix_channels(out, src, 2, 2, AUD_FORMAT_UNKNOWN);
+  CHECK_EQ_INT(out[0], 0xEE);
+
+  /* NULLs are survivable */
+  aud_format_mix_channels(NULL, src, 2, 2, AUD_FORMAT_S16_LE);
+  aud_format_mix_channels(out, NULL, 2, 2, AUD_FORMAT_S16_LE);
+  aud_format_mix_channels(out, src, 0, 2, AUD_FORMAT_S16_LE);
+}
+
 int main(void)
 {
   RUN(format_sizes);
@@ -297,5 +399,10 @@ int main(void)
   RUN(pick_channel_carries_the_whole_container);
   RUN(pick_channel_agrees_with_the_float_decoder);
   RUN(pick_channel_edge_cases);
+  RUN(mix_channels_averages_the_interleave);
+  RUN(mix_channels_agrees_with_the_mono_decoder);
+  RUN(a_mixdown_cannot_clip);
+  RUN(mix_channels_keeps_the_24_bit_container);
+  RUN(mix_channels_edge_cases);
   return TEST_RESULT();
 }

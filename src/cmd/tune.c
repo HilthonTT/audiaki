@@ -16,7 +16,10 @@
  */
 typedef struct
 {
-  double a4_hz;   /* what A above middle C is being called */
+  double a4_hz; /* what A above middle C is being called */
+  /* the pitch range to search, or 0.0 at either end for the tuner's default */
+  double min_hz;
+  double max_hz;
   int show_meter; /* draw the live needle at all */
 } aud_tune_options;
 
@@ -90,16 +93,37 @@ static int tune_run(aud_device *dev, const aud_tune_options *opts)
 
   aud_tuner_config_defaults(&cfg, dev->rate);
   cfg.a4_hz = opts->a4_hz;
+  if (opts->min_hz > 0.0)
+  {
+    cfg.min_hz = opts->min_hz;
+  }
+  if (opts->max_hz > 0.0)
+  {
+    cfg.max_hz = opts->max_hz;
+  }
+  /*
+   * Nothing above Nyquist exists to be found, and a device that settled on a
+   * lower rate than was asked for can put a range that was fine into that
+   * position. Trimmed rather than refused: the rest of the range still works.
+   */
+  if (cfg.max_hz > (double)dev->rate * 0.45)
+  {
+    aud_warn("--tune-max %.4g is above what a %u Hz stream can carry; looking up to "
+             "%.0f Hz instead",
+             cfg.max_hz, dev->rate, (double)dev->rate * 0.45);
+    cfg.max_hz = (double)dev->rate * 0.45;
+  }
 
   tuner = aud_tuner_create(&cfg);
   if (tuner == NULL)
   {
-    aud_error("cannot set up the tuner for a %u Hz stream", dev->rate);
+    aud_error("cannot set up the tuner for a %u Hz stream over %.4g to %.4g Hz",
+              dev->rate, cfg.min_hz, cfg.max_hz);
     goto out;
   }
 
-  aud_info("tuning from %s: %u Hz, %u ch, A4 = %.1f Hz", dev->name, dev->rate,
-           dev->channels, cfg.a4_hz);
+  aud_info("tuning from %s: %u Hz, %u ch, A4 = %.1f Hz, looking from %.4g to %.4g Hz",
+           dev->name, dev->rate, dev->channels, cfg.a4_hz, cfg.min_hz, cfg.max_hz);
   aud_debug("analysis window %zu frames (%.0f ms)", aud_tuner_window(tuner),
             1000.0 * (double)aud_tuner_window(tuner) / dev->rate);
   aud_info("press Ctrl+C to stop");
@@ -181,6 +205,8 @@ int aud_cmd_tune(const aud_options *opts)
   }
 
   tune.a4_hz = opts->a4_hz;
+  tune.min_hz = opts->tune_min_hz;
+  tune.max_hz = opts->tune_max_hz;
   tune.show_meter = opts->show_meter;
 
   rc = tune_run(&dev, &tune);

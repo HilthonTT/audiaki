@@ -76,13 +76,20 @@ typedef struct
   double bar;
   double step; /* seconds between the lines actually drawn */
   int per_bar;
-  int beats; /* non-zero when `step` is one beat rather than whole bars */
+  int beats;  /* non-zero when `step` is one beat rather than whole bars */
+  int subdiv; /* lines to a beat when `step` is finer than one; 1 otherwise */
 } tl_grid;
 
 /*
  * Work out what the grid looks like at this zoom, or say there is none. No
  * grid is the answer whenever the switch is off, the project has no usable
  * tempo, or the view is so far out that even doubled bars would not separate.
+ *
+ * The lines drawn follow the division the project snaps to, but only as far as
+ * there is room for: a sixteenth grid zoomed out to a whole session would be a
+ * grey wash, so the subdivisions drop away first, then the beats, then the bars
+ * double. What is drawn is always a multiple of what is snapped to, so a line
+ * on screen is always somewhere an edit can land.
  */
 static int grid_of(const aud_timeline *tl, const aud_doc *d, tl_grid *g)
 {
@@ -96,6 +103,27 @@ static int grid_of(const aud_timeline *tl, const aud_doc *d, tl_grid *g)
   g->per_bar = d->beats_per_bar < 2u ? 1 : (int)d->beats_per_bar;
   g->beat = frames / (double)d->rate;
   g->bar = g->beat * (double)g->per_bar;
+  g->subdiv = 1;
+
+  /*
+   * Finer than a beat, when the project asks for it and the pixels allow it.
+   * Halving down rather than straight to the division keeps every line drawn on
+   * the snap grid: a third of a beat drawn at every other line would put lines
+   * where nothing can land.
+   */
+  if (d->grid_div > AUD_DOC_GRID_BEAT)
+  {
+    for (int n = (int)d->grid_div; n > 1; n--)
+    {
+      if ((int)d->grid_div % n == 0 && g->beat / n * tl->zoom >= TL_GRID_BEAT_PX)
+      {
+        g->subdiv = n;
+        g->step = g->beat / n;
+        g->beats = 1;
+        return 1;
+      }
+    }
+  }
 
   if (g->beat * tl->zoom >= TL_GRID_BEAT_PX)
   {
@@ -119,7 +147,8 @@ static int grid_of(const aud_timeline *tl, const aud_doc *d, tl_grid *g)
 }
 
 /*
- * The beat a grid line falls on, counted from the start of the project.
+ * The beat a grid line falls on, counted from the start of the project, or -1
+ * when the line sits between two beats because the grid is subdivided.
  *
  * From the line's index rather than from an accumulated total, for the reason
  * click.h counts its beats the same way: a session is thousands of beats long,
@@ -128,6 +157,10 @@ static int grid_of(const aud_timeline *tl, const aud_doc *d, tl_grid *g)
  */
 static long grid_beat_at(const tl_grid *g, long line)
 {
+  if (g->subdiv > 1)
+  {
+    return (line % g->subdiv) == 0 ? line / g->subdiv : -1;
+  }
   return (long)floor((double)line * g->step / g->beat + 0.5);
 }
 
@@ -425,8 +458,9 @@ static void draw_ruler_bars(const aud_timeline *tl, const tl_grid *g, Rectangle 
     double t = (double)line * g->step;
     float x = strip.x + aud_timeline_x_of(tl, t);
     long beat = grid_beat_at(g, line);
-    int on_bar = (beat % g->per_bar) == 0;
+    int on_bar = beat >= 0 && (beat % g->per_bar) == 0;
     char text[48];
+    float tick;
 
     if (x > strip.x + strip.width)
     {
@@ -437,7 +471,9 @@ static void draw_ruler_bars(const aud_timeline *tl, const tl_grid *g, Rectangle 
       continue;
     }
 
-    DrawLine((int)x, (int)(ruler.y + ruler.height - (on_bar ? 9.0f : 4.0f)), (int)x,
+    /* three lengths for three kinds of line: bar, beat, and between beats */
+    tick = on_bar ? 9.0f : (beat >= 0 ? 4.0f : 2.0f);
+    DrawLine((int)x, (int)(ruler.y + ruler.height - tick), (int)x,
              (int)(ruler.y + ruler.height), on_bar ? AUD_UI_MUTED : AUD_UI_EDGE);
 
     /* bars and beats are counted from one, the way anybody playing counts them */
@@ -445,7 +481,7 @@ static void draw_ruler_bars(const aud_timeline *tl, const tl_grid *g, Rectangle 
     {
       snprintf(text, sizeof(text), "%ld", beat / g->per_bar + 1);
     }
-    else if (label_beats)
+    else if (label_beats && beat >= 0)
     {
       snprintf(text, sizeof(text), "%ld.%ld", beat / g->per_bar + 1,
                beat % g->per_bar + 1);
@@ -1089,7 +1125,8 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       {
         double t = (double)line * grid.step;
         float x = wave.x + aud_timeline_x_of(tl, t);
-        int on_bar = (grid_beat_at(&grid, line) % grid.per_bar) == 0;
+        long beat = grid_beat_at(&grid, line);
+        int on_bar = beat >= 0 && (beat % grid.per_bar) == 0;
 
         if (x > wave.x + wave.width)
         {
@@ -1099,8 +1136,9 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
         {
           continue;
         }
+        /* the same three weights the ruler draws, so the two agree at a glance */
         DrawLine((int)x, (int)rows.y, (int)x, (int)(rows.y + rows.height),
-                 Fade(AUD_UI_EDGE, on_bar ? 0.85f : 0.35f));
+                 Fade(AUD_UI_EDGE, on_bar ? 0.85f : (beat >= 0 ? 0.35f : 0.18f)));
       }
     }
   }

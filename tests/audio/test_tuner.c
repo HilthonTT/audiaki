@@ -13,8 +13,10 @@
 #define AUD_TEST_PI 3.14159265358979323846
 
 /* Concert pitches of the notes the tests reach for. */
+#define HZ_B0 30.8677 /* low B on a five-string bass: the bottom of the range */
 #define HZ_E2 82.4069
 #define HZ_A2 110.0
+#define HZ_C8 4186.01 /* a piccolo's top C: the top of it */
 #define HZ_A4 440.0
 #define HZ_C4 261.6256
 #define HZ_E4 329.6276
@@ -202,9 +204,12 @@ TEST(window_spans_the_lowest_note)
 {
   aud_tuner *t = make_tuner(440.0);
 
+  aud_tuner_config cfg;
+
   CHECK(t != NULL);
   /* three periods of the lowest pitch it looks for: two to compare, one to slide */
-  CHECK(aud_tuner_window(t) >= (size_t)(3.0 * TEST_RATE / 40.0));
+  aud_tuner_config_defaults(&cfg, TEST_RATE);
+  CHECK(aud_tuner_window(t) >= (size_t)(3.0 * TEST_RATE / cfg.min_hz));
   aud_tuner_destroy(t);
 }
 
@@ -267,6 +272,74 @@ TEST(detects_across_the_range)
     CHECK(fabs(r.cents) < 2.0);
     aud_tuner_destroy(t);
   }
+}
+
+TEST(the_default_range_reaches_the_instruments_it_claims)
+{
+  /*
+   * The two ends of what the defaults promise: a five-string bass's low B, and
+   * a piccolo's top C. Both used to be outside the range - the low end by three
+   * semitones, the high end by more than an octave.
+   */
+  static const struct
+  {
+    double hz;
+    double tolerance_cents;
+  } ends[] = {
+      {HZ_B0, 1.0},
+      /*
+       * Looser up here, and honestly so: at 44.1 kHz a 4186 Hz wave is about
+       * ten samples long, so the lag the detector works in is coarse and the
+       * parabolic interpolation between whole samples is doing the work. A few
+       * cents at the top of a piccolo is still well inside what anyone can
+       * hear, but it is not the hundredth of a cent the low end manages.
+       */
+      {HZ_C8, 5.0},
+  };
+
+  for (size_t i = 0; i < sizeof(ends) / sizeof(ends[0]); i++)
+  {
+    aud_tuner *t = make_tuner(440.0);
+    aud_tuner_reading r;
+
+    CHECK(t != NULL);
+    CHECK_EQ_DBL(detect_cents_error(t, ends[i].hz, &r), 0.0, ends[i].tolerance_cents);
+    CHECK(r.voiced);
+    aud_tuner_destroy(t);
+  }
+}
+
+TEST(the_range_can_be_narrowed_and_widened)
+{
+  aud_tuner_config cfg;
+  aud_tuner *t;
+  aud_tuner_reading r;
+
+  /*
+   * Asking for less than the default is what a caller does to buy back the
+   * cost: the analysis is quadratic in the lowest pitch searched, so a narrower
+   * low end makes the window shorter and every reading cheaper.
+   */
+  aud_tuner_config_defaults(&cfg, TEST_RATE);
+  cfg.min_hz = 80.0;
+  t = aud_tuner_create(&cfg);
+  CHECK(t != NULL);
+  if (t != NULL)
+  {
+    aud_tuner *wide = make_tuner(440.0);
+
+    CHECK(aud_tuner_window(t) < aud_tuner_window(wide));
+    /* and it still finds what is inside the narrowed range */
+    CHECK_EQ_DBL(detect_cents_error(t, HZ_A2, &r), 0.0, 2.0);
+    aud_tuner_destroy(wide);
+    aud_tuner_destroy(t);
+  }
+
+  /* an inverted range is refused rather than silently swapped */
+  aud_tuner_config_defaults(&cfg, TEST_RATE);
+  cfg.min_hz = 2000.0;
+  cfg.max_hz = 100.0;
+  CHECK(aud_tuner_create(&cfg) == NULL);
 }
 
 TEST(reads_a_detuned_string)
@@ -422,6 +495,8 @@ int main(void)
   RUN(window_spans_the_lowest_note);
   RUN(detects_a_plain_tone);
   RUN(detects_across_the_range);
+  RUN(the_default_range_reaches_the_instruments_it_claims);
+  RUN(the_range_can_be_narrowed_and_widened);
   RUN(reads_a_detuned_string);
   RUN(detects_a_missing_fundamental);
   RUN(silence_is_not_a_note);

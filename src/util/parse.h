@@ -20,6 +20,13 @@
 #define AUD_CHANNELS_MAX 64u
 
 /*
+ * --channel takes a channel number, and this instead of one to ask for every
+ * channel averaged down to one. Well past AUD_CHANNELS_MAX so it can never be
+ * mistaken for a channel that exists.
+ */
+#define AUD_CHANNEL_MIX 0xFFFFFFFFu
+
+/*
  * Parse a decimal unsigned integer in [min, max]. Returns 0 on success and
  * -1 on trailing garbage, a negative sign, an empty string or a range miss.
  */

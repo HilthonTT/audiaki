@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "audio/format.h"
 
+#include "util/bytes.h"
+
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -138,9 +140,8 @@ static double peak_s16(const unsigned char *p, size_t n)
   int32_t worst = 0;
   for (size_t i = 0; i < n; i++)
   {
-    int16_t s;
-    memcpy(&s, p + i * 2, 2);
-    int32_t v = (s < 0) ? -(int32_t)s : (int32_t)s;
+    int32_t s = aud_rd_s16le(p + i * 2);
+    int32_t v = (s < 0) ? -s : s;
     if (v > worst)
     {
       worst = v;
@@ -154,10 +155,7 @@ static double peak_s24_3(const unsigned char *p, size_t n)
   int32_t worst = 0;
   for (size_t i = 0; i < n; i++)
   {
-    uint32_t raw = (uint32_t)p[i * 3] | ((uint32_t)p[i * 3 + 1] << 8) |
-                   ((uint32_t)p[i * 3 + 2] << 16);
-    /* sign extend 24 -> 32 without relying on implementation defined shifts */
-    int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+    int32_t s = aud_rd_s24le(p + i * 3);
     int32_t v = (s < 0) ? -s : s;
     if (v > worst)
     {
@@ -172,10 +170,8 @@ static double peak_s24_4(const unsigned char *p, size_t n)
   int32_t worst = 0;
   for (size_t i = 0; i < n; i++)
   {
-    uint32_t raw;
-    memcpy(&raw, p + i * 4, 4);
-    raw &= 0x00FFFFFFu;
-    int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
+    /* the fourth byte is padding, so this is the three byte read again */
+    int32_t s = aud_rd_s24le(p + i * 4);
     int32_t v = (s < 0) ? -s : s;
     if (v > worst)
     {
@@ -190,10 +186,8 @@ static double peak_s32(const unsigned char *p, size_t n)
   double worst = 0.0;
   for (size_t i = 0; i < n; i++)
   {
-    int32_t s;
-    memcpy(&s, p + i * 4, 4);
     /* -INT32_MIN overflows, so widen before taking the absolute value */
-    double v = (double)s;
+    double v = (double)aud_rd_s32le(p + i * 4);
     if (v < 0.0)
     {
       v = -v;
@@ -226,6 +220,83 @@ void aud_format_pick_channel(void *dst, const void *src, size_t frames, unsigned
   {
     memcpy(out + i * bytes, in + i * stride, bytes);
   }
+}
+
+/*
+ * One frame's channels averaged, in and out of the capture layout. Written as
+ * one loop per format for the same reason the peak and decode helpers are: this
+ * runs on every captured period, and hoisting the switch out of the sample loop
+ * is worth the repetition.
+ */
+static void mix_frames(unsigned char *out, const unsigned char *in, size_t frames,
+                       unsigned ch, aud_format fmt)
+{
+  unsigned width = aud_format_hw_bytes(fmt);
+  size_t stride = (size_t)ch * width;
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    const unsigned char *p = in + f * stride;
+    int64_t sum = 0;
+
+    switch (fmt)
+    {
+    case AUD_FORMAT_S16_LE:
+      for (unsigned c = 0; c < ch; c++)
+      {
+        sum += aud_rd_s16le(p + (size_t)c * 2u);
+      }
+      aud_wr_s16le(out + f * 2u, (int32_t)(sum / (int64_t)ch));
+      break;
+    case AUD_FORMAT_S24_3LE:
+      for (unsigned c = 0; c < ch; c++)
+      {
+        sum += aud_rd_s24le(p + (size_t)c * 3u);
+      }
+      aud_wr_s24le(out + f * 3u, (int32_t)(sum / (int64_t)ch));
+      break;
+    case AUD_FORMAT_S24_LE:
+      for (unsigned c = 0; c < ch; c++)
+      {
+        sum += aud_rd_s24le(p + (size_t)c * 4u);
+      }
+      /* back into the four byte container the repack step expects to find */
+      aud_wr_s24le_padded(out + f * 4u, (int32_t)(sum / (int64_t)ch));
+      break;
+    case AUD_FORMAT_S32_LE:
+      for (unsigned c = 0; c < ch; c++)
+      {
+        sum += aud_rd_s32le(p + (size_t)c * 4u);
+      }
+      aud_wr_s32le(out + f * 4u, (int32_t)(sum / (int64_t)ch));
+      break;
+    case AUD_FORMAT_UNKNOWN:
+    default:
+      return;
+    }
+  }
+}
+
+void aud_format_mix_channels(void *dst, const void *src, size_t frames, unsigned channels,
+                             aud_format fmt)
+{
+  unsigned char *out = (unsigned char *)dst;
+  const unsigned char *in = (const unsigned char *)src;
+  unsigned bytes = aud_format_hw_bytes(fmt);
+
+  if (out == NULL || in == NULL || bytes == 0 || channels == 0)
+  {
+    return;
+  }
+
+  /* one channel is already the mix of itself, and copying beats decoding it */
+  if (channels == 1u)
+  {
+    memcpy(out, in, frames * bytes);
+    return;
+  }
+
+  mix_frames(out, in, frames, channels, fmt);
 }
 
 double aud_format_peak(const void *buf, size_t frames, unsigned channels, aud_format fmt)
@@ -274,9 +345,7 @@ static void mono_s16(float *dst, const unsigned char *p, size_t frames, unsigned
     double sum = 0.0;
     for (unsigned c = 0; c < ch; c++)
     {
-      int16_t s;
-      memcpy(&s, p + (f * ch + c) * 2, 2);
-      sum += (double)s / 32768.0;
+      sum += (double)aud_rd_s16le(p + (f * ch + c) * 2) / 32768.0;
     }
     dst[f] = (float)(sum / ch);
   }
@@ -289,10 +358,7 @@ static void mono_s24_3(float *dst, const unsigned char *p, size_t frames, unsign
     double sum = 0.0;
     for (unsigned c = 0; c < ch; c++)
     {
-      const unsigned char *q = p + (f * ch + c) * 3;
-      uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
-      int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-      sum += (double)s / 8388608.0;
+      sum += (double)aud_rd_s24le(p + (f * ch + c) * 3) / 8388608.0;
     }
     dst[f] = (float)(sum / ch);
   }
@@ -305,12 +371,7 @@ static void mono_s24_4(float *dst, const unsigned char *p, size_t frames, unsign
     double sum = 0.0;
     for (unsigned c = 0; c < ch; c++)
     {
-      uint32_t raw;
-      int32_t s;
-      memcpy(&raw, p + (f * ch + c) * 4, 4);
-      raw &= 0x00FFFFFFu;
-      s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-      sum += (double)s / 8388608.0;
+      sum += (double)aud_rd_s24le(p + (f * ch + c) * 4) / 8388608.0;
     }
     dst[f] = (float)(sum / ch);
   }
@@ -323,9 +384,7 @@ static void mono_s32(float *dst, const unsigned char *p, size_t frames, unsigned
     double sum = 0.0;
     for (unsigned c = 0; c < ch; c++)
     {
-      int32_t s;
-      memcpy(&s, p + (f * ch + c) * 4, 4);
-      sum += (double)s / 2147483648.0;
+      sum += (double)aud_rd_s32le(p + (f * ch + c) * 4) / 2147483648.0;
     }
     dst[f] = (float)(sum / ch);
   }
@@ -377,9 +436,7 @@ static void flt_s16(float *dst, const unsigned char *p, size_t n)
 {
   for (size_t i = 0; i < n; i++)
   {
-    int16_t s;
-    memcpy(&s, p + i * 2, 2);
-    dst[i] = (float)((double)s / 32768.0);
+    dst[i] = (float)((double)aud_rd_s16le(p + i * 2) / 32768.0);
   }
 }
 
@@ -387,10 +444,7 @@ static void flt_s24_3(float *dst, const unsigned char *p, size_t n)
 {
   for (size_t i = 0; i < n; i++)
   {
-    const unsigned char *q = p + i * 3;
-    uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
-    int32_t s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-    dst[i] = (float)((double)s / 8388608.0);
+    dst[i] = (float)((double)aud_rd_s24le(p + i * 3) / 8388608.0);
   }
 }
 
@@ -398,12 +452,7 @@ static void flt_s24_4(float *dst, const unsigned char *p, size_t n)
 {
   for (size_t i = 0; i < n; i++)
   {
-    uint32_t raw;
-    int32_t s;
-    memcpy(&raw, p + i * 4, 4);
-    raw &= 0x00FFFFFFu;
-    s = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-    dst[i] = (float)((double)s / 8388608.0);
+    dst[i] = (float)((double)aud_rd_s24le(p + i * 4) / 8388608.0);
   }
 }
 
@@ -411,9 +460,7 @@ static void flt_s32(float *dst, const unsigned char *p, size_t n)
 {
   for (size_t i = 0; i < n; i++)
   {
-    int32_t s;
-    memcpy(&s, p + i * 4, 4);
-    dst[i] = (float)((double)s / 2147483648.0);
+    dst[i] = (float)((double)aud_rd_s32le(p + i * 4) / 2147483648.0);
   }
 }
 

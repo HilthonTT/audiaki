@@ -49,7 +49,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--backend NAME` | `auto`, `pipewire` or `alsa` (default `auto`, or `$AUDIAKI_BACKEND`) |
 | `-r, --rate HZ` | Sample rate (default 44100) |
 | `-c, --channels N` | How many channels to capture (default 2) |
-| `--channel N` | Write only capture channel `N`, counting from 1, as a mono take |
+| `--channel N\|mix` | Write only capture channel `N`, counting from 1, as a mono take — or `mix` for every channel averaged into one |
 | `-f, --format NAME` | Force `s16_le`, `s24_3le`, `s24_le` or `s32_le` |
 | `-t, --duration SPEC` | Stop after `SS`, `MM:SS` or `HH:MM:SS` |
 | `-p, --period FRAMES` | Period size (default 1024) |
@@ -69,6 +69,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--monitor-gain X` | Scale what is monitored, 0.0 to 2.0 (default 1.0) |
 | `--click BPM` | Play a metronome at BPM (20 to 300) while recording |
 | `--click-beats N` | Beats to a bar, accenting the first (default 4; 0 or 1 for a bare pulse) |
+| `--click-subdiv N` | Ticks to a beat, struck softer than the beat: 2 for eighths, 3 for triplets, 4 for sixteenths (1 to 8, default 1) |
 | `--click-gain X` | How loud the click is, 0.0 to 2.0 (default 0.5) |
 | `--visualize FILE` | Render a WAV to a visualiser video and exit |
 | `-o, --output FILE` | Output file (video default: input with `.mp4`) |
@@ -78,8 +79,13 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--bars N` | Spectrum bar count (default 64) |
 | `--tune` | Show the pitch of what is being played, until Ctrl+C |
 | `--a4 HZ` | Tuner reference pitch (default 440) |
+| `--tune-min HZ` | Lowest pitch the tuner looks for (default 30, a five-string bass's low B) |
+| `--tune-max HZ` | Highest pitch the tuner looks for (default 4500, past a piccolo's top C) |
 | `--info FILE` | Report levels and clipping for a WAV and exit; more files may follow |
 | `--play FILE` | Play a WAV through the output and exit; more files may follow, and a terminal gets transport keys |
+| `--shuffle` | Play the files in a random order, picked afresh each time through a repeating list |
+| `--repeat` | Start the playlist again when it ends |
+| `--repeat-one` | Start the current file again when it ends; `n` still moves on |
 | `--json` | Machine-readable `--list`, `--probe` and `--info` |
 | `-q, --quiet` / `-v, --verbose` | Less / more diagnostic output |
 | `-l, --list` / `-P, --probe` | Inspect devices and exit |
@@ -172,6 +178,28 @@ audiaki: A2  +1 cents  110.1 Hz
 
 The detection is monophonic and uses YIN rather than the loudest frequency;
 [DESIGN.md](../DESIGN.md#pitch-detection) says why.
+
+By default it searches from 30 Hz to 4500 Hz, which runs from a five-string
+bass's low B up past a piccolo's top C. `--tune-min` and `--tune-max` move
+either end:
+
+```sh
+audiaki --tune --tune-min 27.5      # down to a piano's bottom A
+audiaki --tune --tune-min 70        # only a guitar, and cheaper for it
+```
+
+The two ends do not cost the same. The ceiling sets the shortest wave the
+detector looks for, so raising it is nearly free. The floor sets the longest,
+and the work is quadratic in it: at 48 kHz a reading takes about 3.5 ms with the
+floor at 40 Hz and about 7.6 ms at 27.5. That is still cheap twenty times a
+second, but it is why the default stops at a bass's low B rather than going down
+to a piano's for the sake of it — and why narrowing the range is worth doing if
+you are running the tuner beside something else.
+
+Accuracy is not flat across the range either. Down low it lands within a
+hundredth of a cent; at the very top a wave is only about ten samples long at
+44.1 kHz, so the detector is interpolating between whole samples and comes
+within a few cents. Inaudible, but not the same number.
 
 ## Numbering takes
 
@@ -268,7 +296,15 @@ nothing else:
 ```sh
 audiaki --channel 1 riff.wav      # the left input, as a mono file
 audiaki --channel 2 riff.wav      # the right one
+audiaki --channel mix riff.wav    # both of them averaged into one
 ```
+
+`mix` is for the other shape of the same problem: two inputs that both have
+something on them — a pair of room mics, or an instrument and a vocal going to
+one file — where dropping either one loses half the take. It averages rather
+than sums, so a mixdown can never clip; the cost is up to 3 dB against a summed
+mix when the channels carry the same signal, which is the right way round for a
+capture path where a clipped take cannot be undone.
 
 It does not change what the device is asked for. `-c` still decides how many
 channels are captured — the interface is opened as stereo either way, because
@@ -297,7 +333,8 @@ Numbering is from 1, matching what `--info` prints. Asking for a channel the
 device did not give is an error rather than a silent fallback, and it is checked
 against what the device actually negotiated: if a card was asked for four
 channels and settled on two, `--channel 3` stops rather than recording something
-you did not ask for.
+you did not ask for. `--channel mix` never has that problem — it takes whatever
+the device gave, however many that turned out to be.
 
 ## Pre-roll
 
@@ -387,6 +424,8 @@ audiaki -M --click 120 take01.wav              # play along, hearing yourself
 audiaki --click 96 take02.wav                  # just the click, not the input
 audiaki --click 140 --click-beats 3 waltz.wav  # three to the bar
 audiaki --click 120 --click-beats 0 take03.wav # a bare pulse, no accent
+audiaki --click 90 --click-subdiv 2 slow.wav   # eighths under a slow tempo
+audiaki --click 100 --click-subdiv 3 shuffle.wav     # triplets
 audiaki -M --click 120 --click-gain 0.8 take04.wav   # louder in the headphones
 audiaki --preroll 8 --click 120 --take riff    # count yourself in, then record
 ```
@@ -398,10 +437,28 @@ default, `3` for a waltz, `0` or `1` for a bare pulse with no accent at all.
 2.0 scale as `--monitor-gain`, and the two are independent: turning the monitor
 down does not take the click with it.
 
+`--click-subdiv` divides the beat: `2` puts an eighth between each pair of
+beats, `3` gives triplets, `4` sixteenths, up to 8. The ticks are the beat tone
+struck softer, so the pulse still reads as the pulse and the subdivisions sit
+under it. This is what a slow tempo usually wants — at 60 BPM there is a second
+of nothing between beats to drift about in, and eighths give you something to
+hold onto.
+
 **The click is never written to the take.** Like `--monitor-gain`, it changes
 what the person recording hears and nothing about the file — which is also why
 you want headphones. Played out of a speaker, the click is in the room, and the
 microphone will put it in the take after all.
+
+What *is* written is what the click was set to. A take recorded to one carries
+the tempo in its metadata, so `--info` can tell you a month later what a file
+was played against — which matters exactly because the click itself is not in
+the audio to be worked out from:
+
+```sh
+$ audiaki --click 96 --click-beats 3 --click-subdiv 2 -t 30 waltz.wav
+$ audiaki --info waltz.wav | grep metronome
+metronome:   96 BPM, 3 to the bar, 2 per beat
+```
 
 It does not need `-M`. Asking for a click opens the output on its own, so you
 can play to a metronome without also hearing yourself through it; add `-M` when
@@ -436,8 +493,17 @@ $ audiaki --info take01.wav
 recorded:    2026-08-08 12:13:23
 device:      hw:CARD=Box,DEV=0
 software:    audiaki 1.0.0
+metronome:   120 BPM, 4 to the bar
 note:        second chorus, clean tone
 ```
+
+The `metronome` line is there only when the take was recorded to a click, and
+it is written under `ITMP` — a tag of audiaki's own, because RIFF/INFO has no
+registered one for a tempo. An unknown four-character tag is the one thing every
+reader of the format has to step over, so a tool that does not know it ignores
+it. The alternative was an `acid` chunk, which does carry a tempo and also tells
+a DAW the file may be stretched to the project's — the last thing a raw take
+should be saying about itself.
 
 The stamp is two standard chunks written ahead of the audio: a `LIST`/`INFO`
 block, which is what taggers and players read, and a `bext` block — the
@@ -466,9 +532,11 @@ plain 44-byte header instead, for a tool that wants nothing between the `fmt`
 and `data` chunks. The desktop app stamps its takes the same way, minus the
 note, since there is nowhere in the window to type one.
 
-Metadata is read back from chunks that sit **before** the audio, which is where
-audiaki writes them and where the BWF specification requires `bext`. A file
-whose editor appended tags after the payload will read as having none.
+Metadata is written **before** the audio, which is where the BWF specification
+requires `bext` and what means an interrupted take still carries its stamp. It
+is read back from wherever it is, though: an editor that retags a file in place
+often appends its tags after the payload instead, and `--info` walks on past the
+audio to find them when there were none in front of it.
 
 ## Checking a take
 
@@ -516,6 +584,9 @@ audiaki --play take01.wav --spectrum       # ...watching the spectrum
 audiaki --play take01.wav -t 30            # ...the first 30 seconds only
 audiaki --play take01.wav -D plughw:CARD=Box,DEV=0   # ...through that output
 audiaki --play session-*.wav               # ...a whole session, in order
+audiaki --play session-*.wav --shuffle     # ...in some other order
+audiaki --play session-*.wav --repeat      # ...round and round
+audiaki --play riff.wav --repeat-one       # one take, over and over
 ```
 
 The meter is the recording meter with the clock showing a position rather than
@@ -530,6 +601,18 @@ Files named after the first are played after it, in the order given, so a shell
 glob is a playlist. `-t` applies to each of them rather than to the run, and a
 file that cannot be read is stepped over the way `--info` steps over one — the
 rest still plays, and the exit status still says something was wrong.
+
+`--shuffle` plays them in a random order instead, and picks a fresh one each
+time through a repeating list rather than cycling the same permutation forever.
+`--repeat` starts the list again when it ends; `--repeat-one` stays on the
+current file, which is what you want to play along to something. Neither runs
+away with itself when nothing can be played: a whole pass over the list with
+every file unreadable stops rather than spinning. `n` and `p` still move
+through the list under any of them, and `q` or Ctrl+C still ends the run.
+
+`--repeat` and `--repeat-one` are the last one typed rather than an error
+together, and both are refused outside `--play` — there is no other playlist for
+them to shape.
 
 ### The keys
 
@@ -663,12 +746,9 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 
 ## Limitations
 
-- Little-endian hosts only; WAV is little-endian and no byte swapping is done.
 - PCM WAV with a `LIST`/`INFO` and `bext` stamp ahead of the audio, so
   recordings stop at the 4 GB RIFF limit (about 3.5 hours of 24-bit stereo at
   48 kHz). `--no-metadata` gets the plain 44-byte header back.
-- Metadata is read only from chunks before the audio. A file whose tags were
-  appended after the payload reads as having none.
 - Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
@@ -689,24 +769,27 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 - `--click` reaches you down that same path, so a take played in time with it
   is late against the grid the clicks were generated on by however long the
   output buffer is. It keeps the tempo; it does not sample-align the take.
-- The click is one tempo for the whole take. No tempo changes, no subdivisions,
-  and nothing is written into the file to say what it was set to. The desktop
-  app saves its tempo in the session rather than in the take, and it is one
-  tempo there too.
-- `--channel` picks one channel of the capture; it does not mix several down
-  to one, and monitoring still plays every channel the device delivered.
+- The click is one tempo for the whole take: no tempo changes part way through.
+  It divides the beat (`--click-subdiv`) and it writes what it was set to into
+  the take's `LIST`/`INFO` chunk, which `--info` reads back — but the desktop
+  app still keeps its tempo in the session rather than in the take, and it is
+  one tempo there too.
+- The `metronome` stamp is written under `ITMP`, which is audiaki's own tag
+  rather than a registered one, so other tools ignore it rather than showing it.
+- `--channel N` picks one channel and `--channel mix` averages them all, but
+  monitoring still plays every channel the device delivered either way.
 - `--play` takes its keys from a terminal, so a pipe or a service manager gets
   the old behaviour of playing each file start to finish. Seeking and pausing
   act on what is being handed to the output rather than on what is coming out
   of it, so both land a buffer's worth of audio — around a tenth of a second —
-  from where they were asked for. The playlist is the order the files were
-  given: there is no shuffle and no repeat.
-- The tuner is monophonic: one pitch at a time, no chords, and it looks between
-  40 Hz and 2 kHz — a bass low B and a guitar's top fret are inside that, a
-  piccolo is not.
-- The desktop app's grid snaps to beats, not to bar lines or to subdivisions of
-  a beat, and it snaps the pointer rather than the arrow keys. A take already
-  recorded is not moved onto the grid by turning it on.
+  from where they were asked for.
+- The tuner is monophonic: one pitch at a time, and no chords. The range it
+  searches runs from a five-string bass's low B to a piccolo's top C, and
+  `--tune-min`/`--tune-max` move either end — but the low end is quadratic, so
+  reaching further down costs real work per reading.
+- The desktop app's grid does not move audio that is already on the timeline:
+  turning it on, or dividing it more finely, changes where the *next* edit
+  lands and leaves every existing clip where it was.
 - Rate and channels are fixed for the session in the desktop app; only the
   device can be changed from the window. A device that disappears mid-take ends
   that take where it stopped — what was written stays on disk and on the

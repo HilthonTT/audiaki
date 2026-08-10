@@ -72,6 +72,17 @@ typedef struct
   double tempo;
   unsigned beats_per_bar; /* 0 or 1 for a bare pulse with no bar to it */
 
+  /*
+   * How finely the grid is divided, which is what an edit lands on: 0 is whole
+   * bars, 1 is beats, and anything above is that many to a beat - 2 for
+   * eighths, 3 for triplets, 4 for sixteenths.
+   *
+   * A property of the session for the same reason the tempo is, and not part of
+   * an undo step for the same reason either: changing it moves no audio, it
+   * only changes where the next edit will land.
+   */
+  unsigned grid_div;
+
   aud_track *tracks;
   size_t count;
   size_t capacity;
@@ -140,10 +151,42 @@ double aud_doc_beat_frames(const aud_doc *d);
 double aud_doc_bar_frames(const aud_doc *d);
 
 /*
- * The nearest beat to `frame`, or `frame` itself when there is no grid. What
- * "snap to the grid" means, in the one place that decides it.
+ * What `grid_div` may be. The ceiling is the metronome's, so the grid can be
+ * divided exactly as finely as the click can count it out.
+ */
+#define AUD_DOC_GRID_BAR 0u
+#define AUD_DOC_GRID_BEAT 1u
+#define AUD_DOC_GRID_MAX AUD_CLICK_SUBDIV_MAX
+
+/* Set the division, clamped to AUD_DOC_GRID_MAX. */
+void aud_doc_set_grid(aud_doc *d, unsigned div);
+
+/*
+ * Frames between one grid line and the next, which is a bar, a beat or a
+ * fraction of one depending on `grid_div`. Zero when there is no usable tempo,
+ * which is the caller's cue that there is no grid.
+ */
+double aud_doc_grid_frames(const aud_doc *d);
+
+/*
+ * How to say the current division out loud, e.g. "bars", "beats" or
+ * "1/3 beat". Never NULL, and points at static storage.
+ */
+const char *aud_doc_grid_label(const aud_doc *d);
+
+/*
+ * The nearest grid line to `frame`, or `frame` itself when there is no grid.
+ * What "snap to the grid" means, in the one place that decides it.
  */
 uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame);
+
+/*
+ * The grid line one step before or after `frame`, for a key that walks the
+ * grid rather than pointing at it. Always moves: sitting exactly on a line
+ * steps off it rather than returning it again. `frame` itself when there is no
+ * grid, which the caller should read as "nothing to step to".
+ */
+uint64_t aud_doc_grid_step(const aud_doc *d, uint64_t frame, int back);
 
 /* -- selection ------------------------------------------------------------- */
 

@@ -68,11 +68,23 @@ typedef struct
 typedef struct aud_tuner aud_tuner;
 
 /*
- * Sensible defaults for a guitar or bass: 40 Hz to 2 kHz, which covers a
- * five-string bass's low B at the bottom and a guitar's 24th fret at the top,
- * with concert pitch A4 = 440 Hz.
+ * Sensible defaults: 30 Hz to 4.5 kHz, with concert pitch A4 = 440 Hz. That
+ * runs from a five-string bass's low B (30.87 Hz) up past a piccolo's top C
+ * (4186 Hz), so it covers the instruments people bring to a tuner rather than
+ * only the fretted ones.
+ *
+ * The two ends do not cost the same. See aud_tuner_analyse(): raising `max_hz`
+ * is nearly free, lowering `min_hz` is quadratic.
  */
 void aud_tuner_config_defaults(aud_tuner_config *cfg, unsigned rate);
+
+/*
+ * Bounds on what a caller may ask for. The floor is a piano's A0, which is the
+ * lowest note on a normal instrument; the ceiling is left to Nyquist, which
+ * aud_tuner_create() checks against the actual rate.
+ */
+#define AUD_TUNER_MIN_HZ_FLOOR 20.0
+#define AUD_TUNER_MAX_HZ_CEILING 12000.0
 
 /*
  * Allocate a tuner. Returns NULL on a bad configuration or when out of memory,
@@ -93,10 +105,15 @@ void aud_tuner_push_pcm(aud_tuner *t, const void *buf, size_t frames, unsigned c
  * Analyse the buffered window and advance the smoothing by `dt` seconds. Fills
  * `out` and returns non-zero when a pitch is being reported.
  *
- * Costs roughly 2 * (rate / min_hz)^2 multiply-adds, which is a few million at
- * 48 kHz - cheap at the twenty or so analyses a second a tuner needs, and much
+ * Costs roughly 2 * (rate / min_hz)^2 multiply-adds - a few million at 48 kHz,
+ * which is cheap at the twenty or so analyses a second a tuner needs and much
  * too expensive to call once per drawn frame. Callers should rate limit
  * themselves and pass the time that actually elapsed as `dt`.
+ *
+ * Note the square: it is the *low* end of the range that costs. At 48 kHz one
+ * call takes about 3.5 ms with min_hz at 40 and about 7.6 ms at 27.5, while
+ * moving max_hz makes almost no difference at all. A caller that does not need
+ * to reach the bottom of a bass should say so.
  */
 int aud_tuner_analyse(aud_tuner *t, double dt, aud_tuner_reading *out);
 

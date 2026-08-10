@@ -38,9 +38,11 @@ void cli_print_usage(FILE *out)
           "  -D, --device NAME     capture device (default: %s, $AUDIAKI_DEVICE)\n"
           "  -r, --rate HZ         sample rate (default: %u)\n"
           "  -c, --channels N      how many channels to capture (default: %u)\n"
-          "      --channel N       write only capture channel N, counting from\n"
+          "      --channel N|mix   write only capture channel N, counting from\n"
           "                        1, as a mono take - for an interface that\n"
-          "                        only offers stereo with one input in use\n"
+          "                        only offers stereo with one input in use.\n"
+          "                        \"mix\" averages every channel into one\n"
+          "                        instead of dropping all but one\n"
           "  -f, --format NAME     s16_le, s24_3le, s24_le or s32_le\n"
           "                        (default: best the device offers)\n"
           "  -t, --duration SPEC   stop after SS, MM:SS or HH:MM:SS\n"
@@ -73,11 +75,15 @@ void cli_print_usage(FILE *out)
           "                        take, so use headphones\n"
           "      --click-beats N   beats to a bar, accenting the first (default:\n"
           "                        %u; 0 or 1 for a bare pulse)\n"
+          "      --click-subdiv N  ticks to a beat, struck softer than the beat:\n"
+          "                        2 for eighths, 3 for triplets, 4 for\n"
+          "                        sixteenths (1 to 8, default: %u)\n"
           "      --click-gain X    how loud the click is, 0.0 to 2.0 (default: "
           "%.2g)\n",
           AUD_DEFAULT_DEVICE, AUD_DEFAULT_RATE, AUD_DEFAULT_CHANNELS,
           AUD_DEFAULT_PERIOD_FRAMES, AUD_DEFAULT_PERIODS, AUD_META_NOTE_MAX,
-          AUD_MONITOR_DEFAULT_DEVICE, AUD_CLICK_DEFAULT_BEATS, AUD_CLICK_DEFAULT_GAIN);
+          AUD_MONITOR_DEFAULT_DEVICE, AUD_CLICK_DEFAULT_BEATS, AUD_CLICK_DEFAULT_SUBDIV,
+          AUD_CLICK_DEFAULT_GAIN);
 
   /*
    * A second call rather than a longer string: C99 only guarantees 4095
@@ -104,12 +110,28 @@ void cli_print_usage(FILE *out)
           "                        at a terminal it takes keys as it runs: space\n"
           "                        pauses, left/right seek 5 s, up/down 30 s,\n"
           "                        home/end jump, n/p change file, q stops\n"
+          "      --shuffle         play them in a random order, picked afresh\n"
+          "                        each time through a repeating list\n"
+          "      --repeat          start the list again when it ends\n"
+          "      --repeat-one      start the current file again when it ends;\n"
+          "                        n still moves on\n",
+          AUD_VIZ_DEFAULT_WIDTH, AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS,
+          AUD_VIZ_DEFAULT_BARS);
+
+  /* and a third, for the same reason as the second */
+  fprintf(out,
           "\n"
           "Tuner options:\n"
           "      --tune            show the pitch of what is being played, and "
           "exit\n"
           "                        on Ctrl+C\n"
           "      --a4 HZ           reference pitch (default: %.0f)\n"
+          "      --tune-min HZ     lowest pitch to look for; the default reaches\n"
+          "                        a five-string bass's low B. Going lower costs\n"
+          "                        roughly the square: halving it quadruples the\n"
+          "                        work each reading takes\n"
+          "      --tune-max HZ     highest pitch to look for; the default clears\n"
+          "                        a piccolo's top C, and raising it is cheap\n"
           "\n"
           "Common options:\n"
           "      --backend NAME    auto, pipewire or alsa (default: auto,\n"
@@ -166,8 +188,7 @@ void cli_print_usage(FILE *out)
           "                        overdub by (default: from the buffers)\n"
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
-          AUD_VIZ_DEFAULT_WIDTH, AUD_VIZ_DEFAULT_HEIGHT, AUD_VIZ_DEFAULT_FPS,
-          AUD_VIZ_DEFAULT_BARS, AUD_TUNER_DEFAULT_A4);
+          AUD_TUNER_DEFAULT_A4);
 }
 
 void cli_print_version(FILE *out)

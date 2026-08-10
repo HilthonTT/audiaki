@@ -62,15 +62,21 @@ enum
   OPT_JSON,
   OPT_TUNE,
   OPT_A4,
+  OPT_TUNE_MIN,
+  OPT_TUNE_MAX,
   OPT_BACKEND,
   OPT_PREROLL,
   OPT_PLAY,
+  OPT_SHUFFLE,
+  OPT_REPEAT,
+  OPT_REPEAT_ONE,
   OPT_MONITOR_DEVICE,
   OPT_MONITOR_GAIN,
   OPT_NOTE,
   OPT_NO_METADATA,
   OPT_CLICK,
   OPT_CLICK_BEATS,
+  OPT_CLICK_SUBDIV,
   OPT_CLICK_GAIN,
   OPT_CHANNEL,
   OPT_DIR,
@@ -104,6 +110,7 @@ static const struct option long_options[] = {
     {"click", required_argument, NULL, OPT_CLICK},
     {"metronome", required_argument, NULL, OPT_CLICK},
     {"click-beats", required_argument, NULL, OPT_CLICK_BEATS},
+    {"click-subdiv", required_argument, NULL, OPT_CLICK_SUBDIV},
     {"click-gain", required_argument, NULL, OPT_CLICK_GAIN},
     {"no-meter", no_argument, NULL, OPT_NO_METER},
     {"spectrum", no_argument, NULL, OPT_SPECTRUM},
@@ -115,6 +122,9 @@ static const struct option long_options[] = {
     {"style", required_argument, NULL, OPT_STYLE},
     {"info", required_argument, NULL, OPT_INFO},
     {"play", required_argument, NULL, OPT_PLAY},
+    {"shuffle", no_argument, NULL, OPT_SHUFFLE},
+    {"repeat", no_argument, NULL, OPT_REPEAT},
+    {"repeat-one", no_argument, NULL, OPT_REPEAT_ONE},
     {"render", required_argument, NULL, OPT_RENDER},
     {"bits", required_argument, NULL, OPT_BITS},
     {"take", required_argument, NULL, OPT_TAKE},
@@ -122,6 +132,8 @@ static const struct option long_options[] = {
     {"pre-roll", required_argument, NULL, OPT_PREROLL},
     {"tune", no_argument, NULL, OPT_TUNE},
     {"a4", required_argument, NULL, OPT_A4},
+    {"tune-min", required_argument, NULL, OPT_TUNE_MIN},
+    {"tune-max", required_argument, NULL, OPT_TUNE_MAX},
     {"backend", required_argument, NULL, OPT_BACKEND},
     {"json", no_argument, NULL, OPT_JSON},
     {"list", no_argument, NULL, 'l'},
@@ -158,9 +170,12 @@ void cli_defaults(aud_options *opts)
   opts->monitor_gain = 1.0;
   opts->click_bpm = 0.0;
   opts->click_beats = AUD_CLICK_DEFAULT_BEATS;
+  opts->click_subdiv = AUD_CLICK_DEFAULT_SUBDIV;
   opts->click_gain = AUD_CLICK_DEFAULT_GAIN;
   opts->metadata = 1;
   opts->note = NULL;
+  opts->shuffle = 0;
+  opts->repeat = AUD_REPEAT_NONE;
   opts->extra_inputs = NULL;
   opts->extra_input_count = 0;
   opts->input_path = NULL;
@@ -171,6 +186,9 @@ void cli_defaults(aud_options *opts)
   opts->viz_bars = AUD_VIZ_DEFAULT_BARS;
   opts->viz_style = AUD_VIZ_STYLE_BARS;
   opts->a4_hz = AUD_TUNER_DEFAULT_A4;
+  /* zero at either end means "whatever the tuner's own default is" */
+  opts->tune_min_hz = 0.0;
+  opts->tune_max_hz = 0.0;
   opts->json = 0;
   opts->log_level = AUD_LOG_NORMAL;
 
@@ -249,9 +267,13 @@ int cli_parse(int argc, char **argv, aud_options *opts)
        * channel number. The real check is against the negotiated count, in
        * cmd/record.c, once there is something to check against.
        */
-      if (parse_uint(optarg, 1u, AUD_CHANNELS_MAX, &opts->channel) != 0)
+      if (strcmp(optarg, "mix") == 0)
       {
-        bad_value("--channel", optarg, "a channel number, counting from 1");
+        opts->channel = AUD_CHANNEL_MIX;
+      }
+      else if (parse_uint(optarg, 1u, AUD_CHANNELS_MAX, &opts->channel) != 0)
+      {
+        bad_value("--channel", optarg, "a channel number counting from 1, or \"mix\"");
         return CLI_EXIT_USAGE;
       }
       break;
@@ -371,6 +393,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       }
       click_shape = 1;
       break;
+    case OPT_CLICK_SUBDIV:
+      if (parse_uint(optarg, 1u, AUD_CLICK_SUBDIV_MAX, &opts->click_subdiv) != 0)
+      {
+        bad_value("--click-subdiv", optarg, "ticks to a beat, 1..8");
+        return CLI_EXIT_USAGE;
+      }
+      click_shape = 1;
+      break;
     case OPT_CLICK_GAIN:
       if (parse_double(optarg, AUD_CLICK_GAIN_MIN, AUD_CLICK_GAIN_MAX,
                        &opts->click_gain) != 0)
@@ -435,6 +465,20 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       opts->command = AUD_CMD_PLAY;
       opts->input_path = optarg;
       break;
+    case OPT_SHUFFLE:
+      opts->shuffle = 1;
+      break;
+    /*
+     * The last one typed wins rather than being an error: --repeat --repeat-one
+     * is somebody changing their mind on the command line, and there is only one
+     * reading of it.
+     */
+    case OPT_REPEAT:
+      opts->repeat = AUD_REPEAT_ALL;
+      break;
+    case OPT_REPEAT_ONE:
+      opts->repeat = AUD_REPEAT_ONE;
+      break;
     case OPT_RENDER:
       opts->command = AUD_CMD_RENDER;
       opts->input_path = optarg;
@@ -470,6 +514,22 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_double(optarg, AUD_TUNER_A4_MIN, AUD_TUNER_A4_MAX, &opts->a4_hz) != 0)
       {
         bad_value("--a4", optarg, "a reference pitch in Hz, 390 to 500");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_TUNE_MIN:
+      if (parse_double(optarg, AUD_TUNER_MIN_HZ_FLOOR, AUD_TUNER_MAX_HZ_CEILING,
+                       &opts->tune_min_hz) != 0)
+      {
+        bad_value("--tune-min", optarg, "the lowest pitch to look for, in Hz");
+        return CLI_EXIT_USAGE;
+      }
+      break;
+    case OPT_TUNE_MAX:
+      if (parse_double(optarg, AUD_TUNER_MIN_HZ_FLOOR, AUD_TUNER_MAX_HZ_CEILING,
+                       &opts->tune_max_hz) != 0)
+      {
+        bad_value("--tune-max", optarg, "the highest pitch to look for, in Hz");
         return CLI_EXIT_USAGE;
       }
       break;
@@ -604,10 +664,33 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     return CLI_EXIT_USAGE;
   }
 
+  /*
+   * Caught here rather than left to aud_tuner_create(), which would refuse an
+   * inverted range with nothing but EINVAL to say about it.
+   */
+  if (opts->tune_min_hz > 0.0 && opts->tune_max_hz > 0.0 &&
+      opts->tune_max_hz <= opts->tune_min_hz * 2.0)
+  {
+    aud_error("--tune-max %.4g must be at least an octave above --tune-min %.4g",
+              opts->tune_max_hz, opts->tune_min_hz);
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * Both shape a playlist, and only --play has one. Refused rather than
+   * ignored, because a run that quietly did not shuffle is worse than one that
+   * says why.
+   */
+  if ((opts->shuffle || opts->repeat != AUD_REPEAT_NONE) && opts->command != AUD_CMD_PLAY)
+  {
+    aud_error("--shuffle and --repeat shape a playlist; only --play has one");
+    return CLI_EXIT_USAGE;
+  }
+
   if (click_shape && opts->click_bpm <= 0.0)
   {
-    aud_error("--click-beats and --click-gain shape a metronome; --click sets its "
-              "tempo and turns it on");
+    aud_error("--click-beats, --click-subdiv and --click-gain shape a metronome; "
+              "--click sets its tempo and turns it on");
     return CLI_EXIT_USAGE;
   }
 

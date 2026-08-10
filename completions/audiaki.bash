@@ -82,7 +82,7 @@ _audiaki()
             return
             ;;
         --channel)
-            mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 5 6 7 8" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 5 6 7 8 mix" -- "$cur")
             return
             ;;
         --visualize | --visualise | --info | --play)
@@ -112,7 +112,12 @@ _audiaki()
             ;;
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
+        --tune-min | --tune-max | \
         --preroll | --pre-roll | --monitor-gain | --click | --click-beats | --click-gain)
+            return
+            ;;
+        --click-subdiv)
+            mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 6 8" -- "$cur")
             return
             ;;
     esac
@@ -125,8 +130,9 @@ _audiaki()
               --preroll --note --no-metadata
               --spectrum --no-meter
               --monitor --monitor-device --monitor-gain
-              --click --click-beats --click-gain
-              --visualize --style --size --fps --bars --tune --a4 --info --play --json
+              --click --click-beats --click-subdiv --click-gain
+              --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
+              --info --play --shuffle --repeat --repeat-one --json
               --render --bits
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

@@ -7,8 +7,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define TUNER_DEFAULT_MIN_HZ 40.0
-#define TUNER_DEFAULT_MAX_HZ 2000.0
+/*
+ * The default search range, and the two ends are not the same kind of choice.
+ *
+ * The ceiling is nearly free: it sets the shortest lag searched, so raising it
+ * adds a handful of cheap iterations. 4500 Hz clears a piccolo's top C (4186)
+ * and every whistle and violin harmonic below it, and costs almost nothing
+ * against the 2000 Hz this used to stop at.
+ *
+ * The floor is the expensive end. It sets the longest lag, and the analysis is
+ * quadratic in that - measured at 48 kHz, 40 Hz costs 3.5 ms a call and 27.5 Hz
+ * costs 7.6 ms. 30 Hz reaches a five-string bass's low B (30.87 Hz), which is
+ * the lowest note anyone actually brings to a tuner, and stops there rather
+ * than going down to a piano's A0 for the sake of it. --tune-min goes lower for
+ * anyone who needs it and is willing to pay the square.
+ */
+#define TUNER_DEFAULT_MIN_HZ 30.0
+#define TUNER_DEFAULT_MAX_HZ 4500.0
 #define TUNER_DEFAULT_THRESHOLD 0.20
 #define TUNER_DEFAULT_GATE_DB (-52.0)
 #define TUNER_DEFAULT_GLIDE 0.06

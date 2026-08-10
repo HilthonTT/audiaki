@@ -13,6 +13,13 @@
  * the frames counted are the frames captured, the beat grid is the capture
  * clock: at 120 BPM and 48 kHz, beat n is at frame n * 24000 of the file.
  *
+ * A beat can be divided. With a subdivision of two there is a tick halfway
+ * between each pair of beats, with three there are two, and so on; they are
+ * struck quieter than the beats they sit between so the pulse still reads as
+ * the pulse. The divisions fall on the same computed grid, so an eighth note
+ * is exactly half a beat from its neighbours rather than wherever an
+ * accumulator drifted to.
+ *
  * Free of any audio system and of the clock, so it builds and is tested
  * anywhere - see the layout rule in DESIGN.md.
  */
@@ -37,6 +44,14 @@
 #define AUD_CLICK_BEATS_MAX 32u
 #define AUD_CLICK_DEFAULT_BEATS 4u
 
+/*
+ * Ticks to a beat. 1 is the beat alone; 2 is eighths against a quarter note
+ * beat, 3 triplets, 4 sixteenths. The ceiling is what still separates into
+ * distinct strikes at the fastest tempo above rather than a buzz.
+ */
+#define AUD_CLICK_SUBDIV_MAX 8u
+#define AUD_CLICK_DEFAULT_SUBDIV 1u
+
 /* Silence to +6 dB, the range --monitor-gain covers, and half scale by default:
  * loud enough to hear over an instrument, quiet enough to leave room for one. */
 #define AUD_CLICK_GAIN_MIN 0.0
@@ -47,6 +62,7 @@ typedef struct
 {
   double bpm;
   unsigned beats_per_bar; /* the first beat of each bar is accented */
+  unsigned subdiv;        /* ticks to a beat; 0 and 1 both mean beats alone */
   unsigned rate;          /* the capture rate; the grid is counted in its frames */
   float gain;             /* peak amplitude of a beat, before the accent */
 } aud_click_config;
@@ -57,13 +73,16 @@ typedef struct
   double inv_rate;
   double omega_accent; /* radians per frame */
   double omega_beat;
-  double decay;   /* envelope exponent per frame */
-  double spacing; /* frames per beat, as a real number */
+  double decay;        /* envelope exponent per frame */
+  double spacing;      /* frames per beat, as a real number */
+  double tick_spacing; /* frames per tick: spacing / subdiv */
   unsigned beats_per_bar;
+  unsigned subdiv;
   unsigned burst_frames;
   float gain;
-  uint64_t frame; /* absolute index of the next frame to be mixed */
-  uint64_t beat;  /* the beat whose burst is current, or the next one due */
+  float subdiv_gain; /* what an off-beat tick is scaled by */
+  uint64_t frame;    /* absolute index of the next frame to be mixed */
+  uint64_t tick;     /* the tick whose burst is current, or the next one due */
 } aud_click;
 
 /* Fill `cfg` with the defaults for `bpm` at `rate`. */

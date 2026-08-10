@@ -72,6 +72,27 @@ void aud_format_pick_channel(void *dst, const void *src, size_t frames, unsigned
                              unsigned channel, aud_format fmt);
 
 /*
+ * Average every channel of an interleaved buffer down to one, leaving the
+ * samples in the capture layout.
+ *
+ * The counterpart to aud_format_pick_channel() and interchangeable with it:
+ * both turn an interleaved period into one channel's worth in the same layout,
+ * so everything downstream - the repack, the peak, the spectrum, the WAV
+ * writer - runs unchanged with a channel count of one either way.
+ *
+ * Averaged rather than summed, so a mixdown cannot clip: the mean of a set of
+ * samples is never further from silence than the furthest of them. That costs
+ * up to 3 dB against a summed mix on material that is the same in every
+ * channel, which is the right trade for a capture path where a clipped take
+ * cannot be undone.
+ *
+ * dst must hold frames * aud_format_hw_bytes(fmt) bytes. src must hold
+ * frames * channels * that. The buffers must not overlap.
+ */
+void aud_format_mix_channels(void *dst, const void *src, size_t frames, unsigned channels,
+                             aud_format fmt);
+
+/*
  * Absolute peak of an interleaved buffer, normalised to [0.0, 1.0].
  * Returns 0.0 for unknown formats or empty buffers.
  */

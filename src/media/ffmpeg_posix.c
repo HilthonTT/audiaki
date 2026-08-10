@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "media/ffmpeg.h"
 
+#include "util/bytes.h"
 #include "util/log.h"
 
 #include <errno.h>
@@ -231,6 +232,39 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
   return ffmpeg;
 }
 
+/*
+ * Hand `count` canvas words to ffmpeg as the R, G, B, A byte stream it was
+ * told to expect. On a little-endian host the words are already in that order
+ * in memory, so the buffer goes straight down the pipe; anywhere else they are
+ * serialised a bufferful at a time, which costs a copy per frame and is the
+ * only thing standing between the visualiser and a big-endian build.
+ */
+static int write_pixels(int fd, const uint32_t *words, size_t count)
+{
+#if AUD_HOST_LITTLE_ENDIAN
+  return write_all(fd, words, count * sizeof(*words));
+#else
+  unsigned char staged[1024u * 4u];
+
+  while (count > 0)
+  {
+    size_t batch = count < sizeof(staged) / 4u ? count : sizeof(staged) / 4u;
+
+    for (size_t i = 0; i < batch; i++)
+    {
+      aud_wr_u32le(staged + i * 4u, words[i]);
+    }
+    if (write_all(fd, staged, batch * 4u) != 0)
+    {
+      return -1;
+    }
+    words += batch;
+    count -= batch;
+  }
+  return 0;
+#endif
+}
+
 int ffmpeg_send_frame(FFMPEG *ffmpeg, const void *data, size_t width, size_t height)
 {
   if (ffmpeg == NULL || data == NULL)
@@ -239,7 +273,7 @@ int ffmpeg_send_frame(FFMPEG *ffmpeg, const void *data, size_t width, size_t hei
     return -1;
   }
 
-  return write_all(ffmpeg->pipe, data, width * height * sizeof(uint32_t));
+  return write_pixels(ffmpeg->pipe, (const uint32_t *)data, width * height);
 }
 
 int ffmpeg_send_frame_flipped(FFMPEG *ffmpeg, const void *data, size_t width,
@@ -255,7 +289,7 @@ int ffmpeg_send_frame_flipped(FFMPEG *ffmpeg, const void *data, size_t width,
 
   for (size_t y = height; y > 0; y--)
   {
-    if (write_all(ffmpeg->pipe, rows + (y - 1) * width, width * sizeof(uint32_t)) != 0)
+    if (write_pixels(ffmpeg->pipe, rows + (y - 1) * width, width) != 0)
     {
       return -1;
     }

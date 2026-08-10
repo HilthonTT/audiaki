@@ -538,6 +538,118 @@ TEST(reader_skips_unknown_chunks)
   wav_read_close(&r);
 }
 
+TEST(reader_finds_metadata_appended_after_the_audio)
+{
+  /*
+   * What an editor that retags a file in place produces: the audio where it
+   * was, and a LIST/INFO chunk stuck on the end rather than moved in ahead of
+   * it. audiaki writes its own before the data, but it has to read both.
+   */
+  static const unsigned char file[] = {
+      'R',
+      'I',
+      'F',
+      'F',
+      0x40,
+      0x00,
+      0x00,
+      0x00,
+      'W',
+      'A',
+      'V',
+      'E',
+      'f',
+      'm',
+      't',
+      ' ',
+      0x10,
+      0x00,
+      0x00,
+      0x00, /* size 16 */
+      0x01,
+      0x00, /* PCM */
+      0x01,
+      0x00, /* mono */
+      0x44,
+      0xAC,
+      0x00,
+      0x00, /* 44100 */
+      0x88,
+      0x58,
+      0x01,
+      0x00, /* byte rate */
+      0x02,
+      0x00, /* align */
+      0x10,
+      0x00, /* 16 bit */
+      'd',
+      'a',
+      't',
+      'a',
+      0x04,
+      0x00,
+      0x00,
+      0x00,
+      0x00,
+      0x40,
+      0x00,
+      0xC0,
+      /* LIST/INFO with one ICMT tag, entirely after the payload */
+      'L',
+      'I',
+      'S',
+      'T',
+      0x14,
+      0x00,
+      0x00,
+      0x00,
+      'I',
+      'N',
+      'F',
+      'O',
+      'I',
+      'C',
+      'M',
+      'T',
+      0x08,
+      0x00,
+      0x00,
+      0x00,
+      't',
+      'a',
+      'i',
+      'l',
+      'e',
+      'd',
+      '!',
+      0x00,
+  };
+  wav_reader r;
+  FILE *f;
+  float mono[2];
+
+  f = fopen(g_path, "wb");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
+  fclose(f);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.meta.present, 1);
+  CHECK_EQ_STR(r.meta.note, "tailed!");
+
+  /* and the audio still reads from the right place afterwards */
+  CHECK_EQ_INT(r.frames, 2);
+  CHECK_EQ_INT(wav_read_mono(&r, mono, 2), 2);
+  CHECK_EQ_DBL(mono[0], 0.5, 1e-4);
+  CHECK_EQ_DBL(mono[1], -0.5, 1e-4);
+
+  wav_read_close(&r);
+}
+
 TEST(reader_rejects_what_it_cannot_decode)
 {
   wav_reader r;
@@ -646,6 +758,7 @@ int main(void)
   RUN(a_seek_counts_from_the_audio_not_the_file);
   RUN(seeking_a_closed_reader_is_refused);
   RUN(reader_skips_unknown_chunks);
+  RUN(reader_finds_metadata_appended_after_the_audio);
   RUN(reader_rejects_what_it_cannot_decode);
   RUN(reader_survives_a_lying_header);
 

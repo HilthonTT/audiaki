@@ -22,11 +22,12 @@
 
 typedef struct
 {
-  int input;            /* mix the captured audio in, i.e. --monitor */
-  const char *device;   /* output to play through; NULL means the default one */
-  float gain;           /* scales the input alone - not the click, never the file */
-  double click_bpm;     /* 0 for no metronome, which is the default */
-  unsigned click_beats; /* beats to a bar; the first of each is accented */
+  int input;             /* mix the captured audio in, i.e. --monitor */
+  const char *device;    /* output to play through; NULL means the default one */
+  float gain;            /* scales the input alone - not the click, never the file */
+  double click_bpm;      /* 0 for no metronome, which is the default */
+  unsigned click_beats;  /* beats to a bar; the first of each is accented */
+  unsigned click_subdiv; /* ticks to a beat; 1 is the beat undivided */
   float click_gain;
 } aud_playback_config;
 

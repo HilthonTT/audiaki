@@ -22,7 +22,7 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
                         const aud_playback_config *cfg)
 {
   aud_monitor_config mon_cfg;
-  char bars[32];
+  char bars[48]; /* room for both the bar length and the subdivision */
 
   memset(pb, 0, sizeof(*pb));
   pb->input = cfg->input;
@@ -40,14 +40,21 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
      */
     aud_click_config_defaults(&click_cfg, cfg->click_bpm, dev->rate);
     click_cfg.beats_per_bar = cfg->click_beats;
+    click_cfg.subdiv = cfg->click_subdiv;
     click_cfg.gain = cfg->click_gain;
 
     if (aud_click_init(&pb->click, &click_cfg) == 0)
     {
+      size_t at = 0;
+
       pb->clicking = 1;
       if (cfg->click_beats > 1u)
       {
-        snprintf(bars, sizeof(bars), ", %u to the bar", cfg->click_beats);
+        at += (size_t)snprintf(bars, sizeof(bars), ", %u to the bar", cfg->click_beats);
+      }
+      if (cfg->click_subdiv > 1u && at < sizeof(bars))
+      {
+        snprintf(bars + at, sizeof(bars) - at, ", %u to the beat", cfg->click_subdiv);
       }
     }
     else

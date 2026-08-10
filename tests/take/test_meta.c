@@ -280,6 +280,88 @@ TEST(a_note_at_the_limit_survives_both_chunks)
   }
 }
 
+TEST(a_take_recorded_to_a_click_says_what_click)
+{
+  unsigned char buf[AUD_META_MAX_BYTES];
+  aud_meta_info back;
+  aud_meta m;
+  size_t n;
+
+  a_take(&m);
+  m.click_bpm = 96.0;
+  m.click_beats = 3u;
+  m.click_subdiv = 2u;
+
+  n = aud_meta_build(&m, buf, sizeof(buf));
+  CHECK(n > 0);
+
+  memset(&back, 0, sizeof(back));
+  {
+    uint32_t size = 0;
+    const unsigned char *body = find_chunk(buf, n, "LIST", &size);
+
+    CHECK(body != NULL);
+    if (body != NULL)
+    {
+      aud_meta_read_list(&back, body, size);
+    }
+  }
+
+  CHECK_EQ_STR(back.tempo, "96 BPM, 3 to the bar, 2 per beat");
+  /* the note is untouched by any of it */
+  CHECK_EQ_STR(back.note, "second chorus, clean tone");
+}
+
+TEST(the_parts_of_the_click_that_say_nothing_are_left_out)
+{
+  unsigned char buf[AUD_META_MAX_BYTES];
+  aud_meta_info back;
+  aud_meta m;
+  size_t n;
+  uint32_t size = 0;
+  const unsigned char *body;
+
+  /* a bare pulse, undivided: a tempo and nothing else to say about it */
+  a_take(&m);
+  m.click_bpm = 120.0;
+  m.click_beats = 1u;
+  m.click_subdiv = 1u;
+
+  n = aud_meta_build(&m, buf, sizeof(buf));
+  memset(&back, 0, sizeof(back));
+  body = find_chunk(buf, n, "LIST", &size);
+  CHECK(body != NULL);
+  if (body != NULL)
+  {
+    aud_meta_read_list(&back, body, size);
+  }
+  CHECK_EQ_STR(back.tempo, "120 BPM");
+}
+
+TEST(a_take_recorded_without_a_click_carries_no_tempo)
+{
+  unsigned char buf[AUD_META_MAX_BYTES];
+  aud_meta_info back;
+  aud_meta m;
+  size_t n;
+  uint32_t size = 0;
+  const unsigned char *body;
+
+  a_take(&m); /* leaves click_bpm at zero */
+
+  n = aud_meta_build(&m, buf, sizeof(buf));
+  memset(&back, 0, sizeof(back));
+  body = find_chunk(buf, n, "LIST", &size);
+  CHECK(body != NULL);
+  if (body != NULL)
+  {
+    aud_meta_read_list(&back, body, size);
+  }
+
+  /* absent, not "0 BPM": the take was played to nothing, and says nothing */
+  CHECK_EQ_STR(back.tempo, "");
+}
+
 TEST(a_buffer_too_small_yields_nothing_rather_than_half_a_chunk)
 {
   unsigned char buf[64];
@@ -330,6 +412,9 @@ int main(void)
   RUN(what_was_written_reads_back);
   RUN(a_take_without_a_note_or_a_clock_still_describes_itself);
   RUN(a_note_at_the_limit_survives_both_chunks);
+  RUN(a_take_recorded_to_a_click_says_what_click);
+  RUN(the_parts_of_the_click_that_say_nothing_are_left_out);
+  RUN(a_take_recorded_without_a_click_carries_no_tempo);
   RUN(a_buffer_too_small_yields_nothing_rather_than_half_a_chunk);
   RUN(a_malformed_chunk_is_read_without_running_off_the_end);
 

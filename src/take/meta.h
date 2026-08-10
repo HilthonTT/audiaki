@@ -7,7 +7,8 @@
  * writes two standard chunks ahead of the audio:
  *
  *   LIST/INFO  the tags every tagger and most players already read - the
- *              software, the date, the note, the device it came from
+ *              software, the date, the note, the device it came from, and the
+ *              metronome the take was played to under ITMP
  *   bext       the Broadcast Wave extension (EBU Tech 3285): origination date
  *              and time, where the take falls within the day, and the signal
  *              chain as a coding history line
@@ -65,6 +66,15 @@ typedef struct
    * timeline without either carrying timecode.
    */
   uint64_t time_reference;
+
+  /*
+   * The metronome the take was played to, or a zero tempo for none. Written so
+   * a take that was recorded to a click says what click, which is what a
+   * timeline needs to draw a ruler over it a month later.
+   */
+  double click_bpm;
+  unsigned click_beats;  /* beats to a bar */
+  unsigned click_subdiv; /* ticks to a beat */
 } aud_meta;
 
 /* Fill `m` with the defaults: audiaki as the software, and no clock. */
@@ -102,6 +112,7 @@ typedef struct
   char recorded[24]; /* "YYYY-MM-DD HH:MM:SS", or as much of it as was there */
   char originator[33];
   char coding_history[192];
+  char tempo[48]; /* the metronome, as written by aud_meta_build() */
 } aud_meta_info;
 
 /*

@@ -988,7 +988,14 @@ void app_edit(app *a, app_edit_action action)
  */
 void app_apply_transport(app *a)
 {
+  /*
+   * The click counts out the grid the ruler draws, subdivision and all - on
+   * bars it stays on the beat, because a metronome that only struck once a bar
+   * is not one anybody could play to.
+   */
   aud_player_set_click(&a->player, a->click_on ? a->doc.tempo : 0.0, a->doc.beats_per_bar,
+                       a->doc.grid_div < AUD_DOC_GRID_BEAT ? AUD_DOC_GRID_BEAT
+                                                           : a->doc.grid_div,
                        a->click_gain);
   /*
    * Never while a take is open. A loop means playing the same seconds over
@@ -1343,7 +1350,25 @@ static void handle_arrows(app *a, int ctrl, int shift)
     else
     {
       from = shift ? app_moving_edge(&a->doc) : a->doc.cursor;
-      to = ctrl ? app_clip_edge(a, from, left) : app_step(from, app_nudge(a), left);
+      if (ctrl)
+      {
+        to = app_clip_edge(a, from, left);
+      }
+      else if (a->timeline.grid && !IsKeyDown(KEY_LEFT_ALT) &&
+               !IsKeyDown(KEY_RIGHT_ALT) && aud_doc_grid_frames(&a->doc) > 0.0)
+      {
+        /*
+         * On the grid, an arrow steps from one line to the next rather than by
+         * a fixed number of pixels - which is the only way a keyboard can put
+         * an edit where the pointer would, and the same alt that drops the
+         * pointer off the grid drops the keys off it too.
+         */
+        to = aud_doc_grid_step(&a->doc, from, left);
+      }
+      else
+      {
+        to = app_step(from, app_nudge(a), left);
+      }
       app_move_cursor(a, to, shift);
     }
   }
@@ -1555,8 +1580,39 @@ static void handle_keys(app *a, const aud_engine_status *st)
 
   if (IsKeyPressed(KEY_G))
   {
-    a->timeline.grid = !a->timeline.grid;
-    app_set_status(a, "%s", a->timeline.grid ? "grid on - alt steps off it" : "grid off");
+    /*
+     * Shift+G walks what the grid is divided into rather than turning it off,
+     * so the two things a grid has - whether it is on, and how fine it is - are
+     * one key apart instead of one being buried in a menu.
+     */
+    if (IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT))
+    {
+      static const unsigned steps[] = {AUD_DOC_GRID_BAR, AUD_DOC_GRID_BEAT, 2u, 3u, 4u};
+      size_t at = 0;
+
+      for (size_t i = 0; i < sizeof(steps) / sizeof(steps[0]); i++)
+      {
+        if (steps[i] == a->doc.grid_div)
+        {
+          at = i + 1u;
+          break;
+        }
+      }
+      aud_doc_set_grid(&a->doc, steps[at % (sizeof(steps) / sizeof(steps[0]))]);
+      a->timeline.grid = 1;
+      /* the click counts the grid, so a division it has not been told about
+       * would leave the ruler and the headphones disagreeing until the next
+       * time something else re-armed it */
+      app_apply_transport(a);
+      app_set_status(a, "grid: %s", aud_doc_grid_label(&a->doc));
+    }
+    else
+    {
+      a->timeline.grid = !a->timeline.grid;
+      app_set_status(a, "%s",
+                     a->timeline.grid ? "grid on - shift+G divides it, alt steps off it"
+                                      : "grid off");
+    }
   }
 
   /* the tempo, without having to reach for the spinner */

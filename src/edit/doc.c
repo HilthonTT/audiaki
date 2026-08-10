@@ -17,6 +17,7 @@ void aud_doc_init(aud_doc *d, unsigned rate)
   d->rate = rate != 0 ? rate : 44100u;
   d->tempo = AUD_DOC_DEFAULT_TEMPO;
   d->beats_per_bar = AUD_CLICK_DEFAULT_BEATS;
+  d->grid_div = AUD_DOC_GRID_BEAT;
 }
 
 void aud_doc_set_tempo(aud_doc *d, double bpm, unsigned beats_per_bar)
@@ -62,22 +63,108 @@ double aud_doc_bar_frames(const aud_doc *d)
   return beat * (double)d->beats_per_bar;
 }
 
-uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame)
+void aud_doc_set_grid(aud_doc *d, unsigned div)
+{
+  if (d == NULL)
+  {
+    return;
+  }
+  d->grid_div = div > AUD_DOC_GRID_MAX ? AUD_DOC_GRID_MAX : div;
+}
+
+double aud_doc_grid_frames(const aud_doc *d)
 {
   double beat = aud_doc_beat_frames(d);
-  double at;
 
   if (beat <= 0.0)
+  {
+    return 0.0;
+  }
+  if (d->grid_div == AUD_DOC_GRID_BAR)
+  {
+    return aud_doc_bar_frames(d);
+  }
+  return beat / (double)d->grid_div;
+}
+
+const char *aud_doc_grid_label(const aud_doc *d)
+{
+  /* indexed by grid_div, so the array has to be as long as the division may be */
+  static const char *const labels[AUD_DOC_GRID_MAX + 1u] = {
+      "bars",     "beats",    "1/2 beat", "1/3 beat", "1/4 beat",
+      "1/5 beat", "1/6 beat", "1/7 beat", "1/8 beat",
+  };
+  unsigned div;
+
+  if (d == NULL)
+  {
+    return "beats";
+  }
+  div = d->grid_div > AUD_DOC_GRID_MAX ? AUD_DOC_GRID_MAX : d->grid_div;
+  return labels[div];
+}
+
+uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame)
+{
+  double unit = aud_doc_grid_frames(d);
+  double at;
+
+  if (unit <= 0.0)
   {
     return frame;
   }
 
-  at = ((double)frame / beat + 0.5);
+  at = ((double)frame / unit + 0.5);
   if (at < 0.0)
   {
     return 0;
   }
-  return (uint64_t)(floor(at) * beat + 0.5);
+  return (uint64_t)(floor(at) * unit + 0.5);
+}
+
+uint64_t aud_doc_grid_step(const aud_doc *d, uint64_t frame, int back)
+{
+  double unit = aud_doc_grid_frames(d);
+  double line;
+  uint64_t out;
+
+  if (unit <= 0.0)
+  {
+    return frame;
+  }
+
+  line = (double)frame / unit;
+  line = back ? ceil(line - 1.0) : floor(line + 1.0);
+  if (line < 0.0)
+  {
+    return 0;
+  }
+  out = (uint64_t)(line * unit + 0.5);
+
+  /*
+   * A grid line has to land on a whole frame, and a tempo that does not divide
+   * the sample rate puts one a fraction either side of where the arithmetic
+   * says. So the line next to `frame` can round straight back onto `frame`
+   * itself - at which point the step has to take the line beyond it, or an
+   * arrow key would wedge on every line the rounding went the wrong way for.
+   *
+   * Checked against the answer rather than absorbed into an epsilon on the way
+   * in: the error here scales with how many frames a line is, which no single
+   * constant covers.
+   */
+  if (!back && out <= frame)
+  {
+    out = (uint64_t)((line + 1.0) * unit + 0.5);
+  }
+  else if (back && out >= frame)
+  {
+    if (line < 1.0)
+    {
+      return 0;
+    }
+    out = (uint64_t)((line - 1.0) * unit + 0.5);
+  }
+  return out;
 }
 
 /* Free the tracks of a snapshot, or of the project itself. */

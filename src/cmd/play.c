@@ -498,6 +498,26 @@ static const char *path_at(const aud_options *opts, int i)
   return opts->extra_inputs[i - 1];
 }
 
+/*
+ * Put `order` into a random permutation of itself, Fisher-Yates.
+ *
+ * rand() is the right tool here and would not be for anything else: the worst a
+ * predictable shuffle can do is play a familiar sequence of somebody's own
+ * files. Called again for each pass over a repeating list, so a long run does
+ * not settle into one order.
+ */
+static void shuffle_order(int *order, int total)
+{
+  for (int i = total - 1; i > 0; i--)
+  {
+    int j = rand() % (i + 1);
+    int swap = order[i];
+
+    order[i] = order[j];
+    order[j] = swap;
+  }
+}
+
 int aud_cmd_play(const aud_options *opts)
 {
   aud_play_options play;
@@ -505,6 +525,9 @@ int aud_cmd_play(const aud_options *opts)
   int total = 1 + opts->extra_input_count;
   int at = 0;
   int failures = 0;
+  int failures_this_pass = 0;
+  int quit = 0;
+  int *order;
 
   /*
    * The default output, unless an output was actually named. -D otherwise
@@ -521,6 +544,44 @@ int aud_cmd_play(const aud_options *opts)
   {
     aud_perror("cannot install signal handlers");
     return EXIT_FAILURE;
+  }
+
+  /*
+   * The order the files are walked in, which is the order they were given
+   * until --shuffle says otherwise. Indirecting through it is what lets 'p'
+   * step back through a shuffled list rather than back through argv.
+   */
+  order = malloc((size_t)total * sizeof(*order));
+  if (order == NULL)
+  {
+    aud_error("cannot allocate a playlist of %d file(s)", total);
+    return EXIT_FAILURE;
+  }
+  for (int i = 0; i < total; i++)
+  {
+    order[i] = i;
+  }
+  if (opts->shuffle)
+  {
+    srand((unsigned)time(NULL));
+    shuffle_order(order, total);
+  }
+
+  /*
+   * Said once, up front. Both change when the run ends, and a run that will not
+   * end on its own is worth knowing about before it does not.
+   */
+  if (opts->repeat == AUD_REPEAT_ONE)
+  {
+    aud_info("repeating each file until stopped; n moves on");
+  }
+  else if (opts->repeat == AUD_REPEAT_ALL)
+  {
+    aud_info("repeating %s until stopped", total > 1 ? "the playlist" : "the file");
+  }
+  if (opts->shuffle && total > 1)
+  {
+    aud_info("playing %d files in a shuffled order", total);
   }
 
   /*
@@ -541,38 +602,80 @@ int aud_cmd_play(const aud_options *opts)
     aud_info("press Ctrl+C to stop");
   }
 
-  while (at < total && !aud_signals_stop_requested())
+  while (!quit && !aud_signals_stop_requested())
   {
-    play.input_path = path_at(opts, at);
+    play.input_path = path_at(opts, order[at]);
     play.index = at + 1;
 
     switch (play_run(&play, &keys))
     {
     case PLAY_PREV:
-      /* the first file has nothing before it, so 'p' there starts it again */
-      at = at > 0 ? at - 1 : 0;
+      /*
+       * The first file has nothing before it, so 'p' there starts it again -
+       * unless the list repeats, in which case what is before the first file is
+       * the last one.
+       */
+      if (at > 0)
+      {
+        at--;
+      }
+      else if (opts->repeat == AUD_REPEAT_ALL)
+      {
+        at = total - 1;
+      }
       break;
     case PLAY_QUIT:
-      at = total;
+      quit = 1;
       break;
     case PLAY_FAILED:
       /*
        * One unreadable file does not end a playlist - the rest of it is still
        * worth hearing - but the run still reports that something was wrong.
+       * Counted per pass as well as in total, because --repeat over a list that
+       * is entirely unreadable would otherwise spin forever failing.
        */
       failures++;
+      failures_this_pass++;
+      at++;
+      break;
+    case PLAY_NEXT:
+      /* what 'n' is for, and the one way off a file that repeats on its own */
       at++;
       break;
     case PLAY_ENDED:
-    case PLAY_NEXT:
     case PLAY_CONTINUE:
     default:
-      at++;
+      if (opts->repeat != AUD_REPEAT_ONE)
+      {
+        at++;
+      }
       break;
+    }
+
+    if (at >= total)
+    {
+      if (opts->repeat == AUD_REPEAT_NONE || failures_this_pass >= total)
+      {
+        if (failures_this_pass >= total && opts->repeat != AUD_REPEAT_NONE)
+        {
+          aud_error("nothing in the playlist could be played; not repeating it");
+        }
+        quit = 1;
+      }
+      else
+      {
+        at = 0;
+        failures_this_pass = 0;
+        if (opts->shuffle)
+        {
+          shuffle_order(order, total);
+        }
+      }
     }
   }
 
   aud_keys_close(&keys);
+  free(order);
 
   return failures > 0 ? EXIT_FAILURE : EXIT_SUCCESS;
 }

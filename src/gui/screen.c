@@ -527,9 +527,19 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
   {
     a->timeline.grid = !a->timeline.grid;
   }
-  tip(a, grid,
-      a->timeline.grid ? "the ruler is counting bars; alt drops off the grid   G"
-                       : "count the ruler in bars, and put the pointer on them   G");
+  if (a->timeline.grid)
+  {
+    char what[64];
+
+    snprintf(what, sizeof(what),
+             "snapping to %s; shift+G divides it, alt drops off it   G",
+             aud_doc_grid_label(&a->doc));
+    tip(a, grid, what);
+  }
+  else
+  {
+    tip(a, grid, "count the ruler in bars, and put edits on the grid   G");
+  }
 }
 
 static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)

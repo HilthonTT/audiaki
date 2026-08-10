@@ -23,7 +23,7 @@ complete -c audiaki -s D -l device -d 'Capture device' -x -a '(__audiaki_devices
 complete -c audiaki -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa'
 complete -c audiaki -s r -l rate -d 'Sample rate in Hz' -x -a '44100 48000 88200 96000 192000'
 complete -c audiaki -s c -l channels -d 'How many channels to capture' -x -a '1 2 4 6 8'
-complete -c audiaki -l channel -d 'Write only capture channel N, as mono' -x -a '1 2 3 4 5 6 7 8'
+complete -c audiaki -l channel -d 'Write one capture channel, or mix them all, as mono' -x -a '1 2 3 4 5 6 7 8 mix'
 complete -c audiaki -s f -l format -d 'Sample format' -x -a 's16_le s24_3le s24_le s32_le'
 complete -c audiaki -s t -l duration -d 'Stop after SS, MM:SS or HH:MM:SS' -x
 complete -c audiaki -s p -l period -d 'Period size in frames' -x
@@ -42,6 +42,7 @@ complete -c audiaki -l monitor-device -d 'Output to monitor through' -x -a 'defa
 complete -c audiaki -l monitor-gain -d 'Scale what is monitored, 0.0 to 2.0' -x
 complete -c audiaki -l click -d 'Play a metronome at BPM while recording (heard, not recorded)' -x
 complete -c audiaki -l click-beats -d 'Beats to a bar, accenting the first' -x
+complete -c audiaki -l click-subdiv -d 'Ticks to a beat, struck softer than the beat' -x -a '1 2 3 4 6 8'
 complete -c audiaki -l click-gain -d 'How loud the click is, 0.0 to 2.0' -x
 
 complete -c audiaki -l visualize -d 'Render a WAV to a video and exit' -r -a '(__fish_complete_suffix .wav)'
@@ -53,9 +54,14 @@ complete -c audiaki -l bars -d 'Number of spectrum bars' -x
 
 complete -c audiaki -l tune -d 'Show the pitch of what is being played, then exit'
 complete -c audiaki -l a4 -d 'Tuner reference pitch in Hz' -x
+complete -c audiaki -l tune-min -d 'Lowest pitch the tuner looks for, in Hz' -x
+complete -c audiaki -l tune-max -d 'Highest pitch the tuner looks for, in Hz' -x
 
 complete -c audiaki -l info -d 'Report levels and clipping for one or more WAVs and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l play -d 'Play one or more WAVs through the output and exit' -r -a '(__fish_complete_suffix .wav)'
+complete -c audiaki -l shuffle -d 'Play the files in a random order'
+complete -c audiaki -l repeat -d 'Start the playlist again when it ends'
+complete -c audiaki -l repeat-one -d 'Start the current file again when it ends'
 complete -c audiaki -l render -d 'Mix a saved project down to a WAV and exit' -r -a '(__fish_complete_suffix .aki)'
 complete -c audiaki -l bits -d 'Bit depth --render writes' -x -a '16 24 32'
 complete -c audiaki -l json -d 'Machine readable --list, --probe and --info'

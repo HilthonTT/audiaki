@@ -10,6 +10,7 @@
 #include "term/meter.h"
 #include "term/prompt.h"
 #include "util/log.h"
+#include "util/parse.h"
 #include "util/path.h"
 #include "util/signals.h"
 
@@ -57,6 +58,7 @@ typedef struct
   float monitor_gain;
   double click_bpm;
   unsigned click_beats;
+  unsigned click_subdiv;
   float click_gain;
   /*
    * Stamp the take with what made it, when, and from what device - see meta.h.
@@ -103,12 +105,13 @@ typedef struct
 {
   aud_format format;
   unsigned in_channels;  /* what the device delivers */
-  unsigned out_channels; /* what goes in the file; 1 once a channel is picked */
+  unsigned out_channels; /* what goes in the file; 1 once reduced to one channel */
   unsigned pick;         /* the channel to keep, 0-based; read only when picking */
   int picking;
+  int mixing; /* every channel averaged into one; never set with `picking` */
   int repack;
   unsigned wav_bytes;
-  unsigned char *pick_buf; /* one period of the picked channel, capture layout */
+  unsigned char *pick_buf; /* one period of the one channel out, capture layout */
   unsigned char *out_buf;  /* one period in the WAV layout; NULL without a repack */
 } recorder_shape;
 
@@ -131,6 +134,11 @@ static const unsigned char *shape_frames(const recorder_shape *sh,
   {
     aud_format_pick_channel(sh->pick_buf, hw, frames, sh->in_channels, sh->pick,
                             sh->format);
+    src = sh->pick_buf;
+  }
+  else if (sh->mixing)
+  {
+    aud_format_mix_channels(sh->pick_buf, hw, frames, sh->in_channels, sh->format);
     src = sh->pick_buf;
   }
 
@@ -397,13 +405,19 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
    * '--channel 3' a mistake worth stopping for, and the parser could not have
    * known that.
    */
-  if (opts->channel > 0)
+  if (opts->channel == AUD_CHANNEL_MIX)
+  {
+    shape.mixing = 1;
+    shape.out_channels = 1;
+  }
+  else if (opts->channel > 0)
   {
     if (opts->channel > dev->channels)
     {
       aud_error("--channel %u, but %s gave %u channel(s)", opts->channel, dev->name,
                 dev->channels);
-      aud_info("channels are numbered from 1; --probe shows what the device offers");
+      aud_info("channels are numbered from 1; --probe shows what the device offers, "
+               "and --channel mix takes all of them at once");
       return -1;
     }
     shape.picking = 1;
@@ -429,7 +443,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     return -1;
   }
 
-  if (shape.picking)
+  if (shape.picking || shape.mixing)
   {
     size_t pick_bytes = (size_t)dev->period_frames * hw_bytes;
 
@@ -493,6 +507,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     pb_cfg.gain = opts->monitor_gain;
     pb_cfg.click_bpm = opts->click_bpm;
     pb_cfg.click_beats = opts->click_beats;
+    pb_cfg.click_subdiv = opts->click_subdiv;
     pb_cfg.click_gain = opts->click_gain;
     aud_playback_start(&pb, dev, &pb_cfg);
   }
@@ -547,6 +562,14 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   meta.rate = dev->rate;
   meta.channels = shape.out_channels;
   meta.bits = aud_format_wav_bits(dev->format);
+  /*
+   * The click is heard and not recorded, so the file has no trace of it in the
+   * audio - which is exactly why the tempo has to be written down. A take is
+   * otherwise a performance to a grid nothing remembers.
+   */
+  meta.click_bpm = opts->click_bpm;
+  meta.click_beats = opts->click_beats;
+  meta.click_subdiv = opts->click_subdiv;
   aud_meta_stamp_now(&meta, dev->rate);
 
   if (wav_open_meta(&wav, opts->output_path, dev->rate, (uint16_t)shape.out_channels,
@@ -569,6 +592,12 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
     aud_info("recording %s: %u Hz, channel %u of %u as mono, %s -> %u-bit WAV",
              opts->output_path, dev->rate, opts->channel, dev->channels,
              aud_format_name(dev->format), aud_format_wav_bits(dev->format));
+  }
+  else if (shape.mixing)
+  {
+    aud_info("recording %s: %u Hz, %u channels mixed to mono, %s -> %u-bit WAV",
+             opts->output_path, dev->rate, dev->channels, aud_format_name(dev->format),
+             aud_format_wav_bits(dev->format));
   }
   else
   {
@@ -966,6 +995,7 @@ int aud_cmd_record(const aud_options *opts)
   rec.monitor_gain = (float)opts->monitor_gain;
   rec.click_bpm = opts->click_bpm;
   rec.click_beats = opts->click_beats;
+  rec.click_subdiv = opts->click_subdiv;
   rec.click_gain = (float)opts->click_gain;
   rec.metadata = opts->metadata;
   rec.note = opts->note;

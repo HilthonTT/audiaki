@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "media/wav.h"
 
+#include "util/bytes.h"
+
 #include <errno.h>
 #include <limits.h>
 #include <stdio.h>
@@ -9,20 +11,6 @@
 
 /* off_t, fseeko and ftello, so the reader can seek past the 2 GB mark */
 #include <sys/types.h>
-
-static void put_u16(unsigned char *p, uint16_t v)
-{
-  p[0] = (unsigned char)(v & 0xFFu);
-  p[1] = (unsigned char)((v >> 8) & 0xFFu);
-}
-
-static void put_u32(unsigned char *p, uint32_t v)
-{
-  p[0] = (unsigned char)(v & 0xFFu);
-  p[1] = (unsigned char)((v >> 8) & 0xFFu);
-  p[2] = (unsigned char)((v >> 16) & 0xFFu);
-  p[3] = (unsigned char)((v >> 24) & 0xFFu);
-}
 
 /*
  * The canonical header, with `extra_bytes` of chunks understood to sit between
@@ -40,20 +28,20 @@ static void build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_byte
   uint32_t pad = data_bytes & 1u;
 
   memcpy(out + 0, "RIFF", 4);
-  put_u32(out + 4, 36u + extra_bytes + data_bytes + pad);
+  aud_wr_u32le(out + 4, 36u + extra_bytes + data_bytes + pad);
   memcpy(out + 8, "WAVE", 4);
 
   memcpy(out + 12, "fmt ", 4);
-  put_u32(out + 16, 16u); /* PCM fmt chunk size */
-  put_u16(out + 20, 1u);  /* WAVE_FORMAT_PCM */
-  put_u16(out + 22, channels);
-  put_u32(out + 24, rate);
-  put_u32(out + 28, byte_rate);
-  put_u16(out + 32, block_align);
-  put_u16(out + 34, bits);
+  aud_wr_u32le(out + 16, 16u); /* PCM fmt chunk size */
+  aud_wr_u16le(out + 20, 1u);  /* WAVE_FORMAT_PCM */
+  aud_wr_u16le(out + 22, channels);
+  aud_wr_u32le(out + 24, rate);
+  aud_wr_u32le(out + 28, byte_rate);
+  aud_wr_u16le(out + 32, block_align);
+  aud_wr_u16le(out + 34, bits);
 
   memcpy(out + 36, "data", 4);
-  put_u32(out + 40, data_bytes);
+  aud_wr_u32le(out + 40, data_bytes);
 }
 
 void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
@@ -249,17 +237,6 @@ double wav_duration(const wav_writer *w)
 /* frames staged per fread(); one page or so of audio, not a tuning knob */
 #define WAV_READ_CHUNK_FRAMES 4096u
 
-static uint16_t get_u16(const unsigned char *p)
-{
-  return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
-}
-
-static uint32_t get_u32(const unsigned char *p)
-{
-  return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |
-         ((uint32_t)p[3] << 24);
-}
-
 static int read_exact(FILE *f, void *buf, size_t n)
 {
   return fread(buf, 1, n, f) == n ? 0 : -1;
@@ -325,7 +302,7 @@ int wav_read_open(wav_reader *r, const char *path)
     {
       break;
     } /* ran out of chunks */
-    size = get_u32(head + 4);
+    size = aud_rd_u32le(head + 4);
     /* RIFF chunks are word aligned; an odd body is followed by a pad byte. */
     skip = (off_t)size + (size & 1u);
 
@@ -349,21 +326,23 @@ int wav_read_open(wav_reader *r, const char *path)
         goto fail;
       }
 
-      tag = get_u16(fmt);
-      r->channels = get_u16(fmt + 2);
-      r->rate = get_u32(fmt + 4);
-      r->bits = get_u16(fmt + 14);
+      tag = aud_rd_u16le(fmt);
+      r->channels = aud_rd_u16le(fmt + 2);
+      r->rate = aud_rd_u32le(fmt + 4);
+      r->bits = aud_rd_u16le(fmt + 14);
       /* WAVE_FORMAT_EXTENSIBLE hides the real tag in the SubFormat GUID. */
       if (tag == WAV_FORMAT_EXTENSIBLE && size >= 40u)
       {
-        tag = get_u16(fmt + 24);
+        tag = aud_rd_u16le(fmt + 24);
       }
       have_fmt = 1;
     }
     /*
-     * Metadata is read where it belongs, ahead of the audio - the loop stops
-     * at the data chunk, so chunks an editor appended after the payload are
-     * not seen. A take audiaki wrote always has its own before the data.
+     * Metadata is taken from wherever it is. A take audiaki wrote has its own
+     * ahead of the audio, which is where bext is specified to go, but an editor
+     * is free to append its tags after the payload instead - so the walk only
+     * stops early once there is metadata in hand, and otherwise carries on past
+     * the data chunk to the end of the list looking for it.
      */
     else if (memcmp(head, "LIST", 4) == 0 || memcmp(head, "bext", 4) == 0)
     {
@@ -391,17 +370,23 @@ int wav_read_open(wav_reader *r, const char *path)
     }
     else if (memcmp(head, "data", 4) == 0)
     {
-      data_offset = ftello(r->file);
+      /* the first one is the audio; a malformed second is not a second take */
       if (data_offset < 0)
       {
-        msg = "cannot locate the data chunk";
-        goto fail;
+        data_offset = ftello(r->file);
+        if (data_offset < 0)
+        {
+          msg = "cannot locate the data chunk";
+          goto fail;
+        }
+        data_bytes = size;
       }
-      data_bytes = size;
-      if (have_fmt)
-      {
-        break;
-      } /* nothing after this point can matter */
+      /*
+       * Stepping over the payload rather than reading it, so reaching the tail
+       * of a long take costs one seek. A data size larger than the file - a
+       * recording killed before its header was patched - lands past the end,
+       * where the next read fails and ends the walk with what has been found.
+       */
       if (fseeko(r->file, skip, SEEK_CUR) != 0)
       {
         break;
@@ -412,7 +397,7 @@ int wav_read_open(wav_reader *r, const char *path)
       break;
     }
 
-    if (have_fmt && data_offset >= 0)
+    if (have_fmt && data_offset >= 0 && r->meta.present)
     {
       break;
     }
@@ -494,18 +479,7 @@ static double decode_sample(const wav_reader *r, const unsigned char *q)
 {
   if (r->is_float)
   {
-    if (r->bits == 32u)
-    {
-      float v;
-      memcpy(&v, q, sizeof(v));
-      return (double)v;
-    }
-    else
-    {
-      double v;
-      memcpy(&v, q, sizeof(v));
-      return v;
-    }
+    return r->bits == 32u ? (double)aud_rd_f32le(q) : aud_rd_f64le(q);
   }
 
   switch (r->bits)
@@ -514,23 +488,11 @@ static double decode_sample(const wav_reader *r, const unsigned char *q)
     /* 8 bit WAV is unsigned with 128 as silence, unlike every other depth */
     return ((double)q[0] - 128.0) / 128.0;
   case 16u:
-  {
-    int16_t v;
-    memcpy(&v, q, sizeof(v));
-    return (double)v / 32768.0;
-  }
+    return (double)aud_rd_s16le(q) / 32768.0;
   case 24u:
-  {
-    uint32_t raw = (uint32_t)q[0] | ((uint32_t)q[1] << 8) | ((uint32_t)q[2] << 16);
-    int32_t v = (raw & 0x800000u) ? (int32_t)(raw | 0xFF000000u) : (int32_t)raw;
-    return (double)v / 8388608.0;
-  }
+    return (double)aud_rd_s24le(q) / 8388608.0;
   default:
-  {
-    int32_t v;
-    memcpy(&v, q, sizeof(v));
-    return (double)v / 2147483648.0;
-  }
+    return (double)aud_rd_s32le(q) / 2147483648.0;
   }
 }
 
