@@ -883,6 +883,66 @@ TEST(reader_skips_unknown_chunks)
   wav_read_close(&r);
 }
 
+/* Write `bytes` to the scratch file. Returns non-zero when it got there. */
+static int put_file(const unsigned char *bytes, size_t n)
+{
+  FILE *f = fopen(g_path, "wb");
+
+  if (f == NULL)
+  {
+    return 0;
+  }
+  if (fwrite(bytes, 1, n, f) != n)
+  {
+    fclose(f);
+    return 0;
+  }
+  fclose(f);
+  return 1;
+}
+
+TEST(the_reserved_slot_is_only_the_one_at_the_front)
+{
+  /*
+   * write_header() promotes a file to RF64 by writing ds64 at offset 12, which
+   * is the only place either RF64 or wav_open_ex() puts one. A JUNK chunk of
+   * the same length further in is somebody else's padding, and taking it for
+   * the slot would have a later promotion write over whatever really is there.
+   */
+  static const unsigned char slotted[] = {
+      'R',  'I',  'F',  'F',  0x4C, 0x00, 0x00, 0x00, 'W',  'A',  'V',  'E',  'J',
+      'U',  'N',  'K',  0x1C, 0x00, 0x00, 0x00, /* 28, the ds64 body */
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01,
+      0x00, 0x44, 0xAC, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00,
+      'd',  'a',  't',  'a',  0x04, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0xC0,
+  };
+  /* the same file with a LIST chunk in front of the JUNK, so it is not at 12 */
+  static const unsigned char padded[] = {
+      'R',  'I',  'F',  'F',  0x58, 0x00, 0x00, 0x00, 'W',  'A',  'V',  'E',  'L',  'I',
+      'S',  'T',  0x04, 0x00, 0x00, 0x00, 'I',  'N',  'F',  'O',  'J',  'U',  'N',  'K',
+      0x1C, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x01, 0x00,
+      0x01, 0x00, 0x44, 0xAC, 0x00, 0x00, 0x88, 0x58, 0x01, 0x00, 0x02, 0x00, 0x10, 0x00,
+      'd',  'a',  't',  'a',  0x04, 0x00, 0x00, 0x00, 0x00, 0x40, 0x00, 0xC0,
+  };
+  wav_reader r;
+
+  CHECK(put_file(slotted, sizeof(slotted)));
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.frames, 2);
+  CHECK_EQ_INT(r.has_ds64_slot, 1);
+  wav_read_close(&r);
+
+  CHECK(put_file(padded, sizeof(padded)));
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT(r.frames, 2); /* still a perfectly readable file */
+  CHECK_EQ_INT(r.has_ds64_slot, 0);
+  wav_read_close(&r);
+}
+
 TEST(reader_finds_metadata_appended_after_the_audio)
 {
   /*
@@ -1112,6 +1172,7 @@ int main(void)
   RUN(a_seek_counts_from_the_audio_not_the_file);
   RUN(seeking_a_closed_reader_is_refused);
   RUN(reader_skips_unknown_chunks);
+  RUN(the_reserved_slot_is_only_the_one_at_the_front);
   RUN(reader_finds_metadata_appended_after_the_audio);
   RUN(reader_rejects_what_it_cannot_decode);
   RUN(reader_survives_a_lying_header);

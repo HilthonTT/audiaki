@@ -501,6 +501,16 @@ int aud_track_place(aud_track *t, aud_samples *audio, size_t offset, size_t fram
   {
     return -1;
   }
+  /*
+   * And it has to end somewhere. A start near the top of the range - which a
+   * hand-edited project can name - would wrap clip_end() round to a number
+   * below the clip's own start, and the sorted, non-overlapping list every
+   * walk here assumes would be neither.
+   */
+  if (start > UINT64_MAX - (uint64_t)frames)
+  {
+    return -1;
+  }
 
   index = clip_at_or_after(t, start);
   if (index < t->count && t->clips[index].start < start + frames)
@@ -907,6 +917,16 @@ size_t aud_track_record_push(aud_track *t, const float *interleaved, size_t fram
   }
 
   c = &t->clips[t->recording];
+  /*
+   * A block narrower than the lane is a legal thing to hold - aud_track_read()
+   * plays one and leaves the rest silent - but it is not a thing to grow: the
+   * reserve below counts in the block's frames and the copy in the lane's, so a
+   * mismatch writes past the end of what was reserved.
+   */
+  if (c->audio == NULL || c->audio->channels != t->channels)
+  {
+    return 0;
+  }
   if (aud_samples_reserve(c->audio, frames) != 0)
   {
     return 0;
@@ -939,8 +959,14 @@ int aud_track_record_continue(aud_track *t, uint64_t at)
    * A block anything else is reading cannot be grown: a split or a copy leaves
    * two clips over one block, and appending would change what the other one
    * plays. One reference means this clip is the only owner.
+   *
+   * Nor one that is not the lane's width. A paste across lanes, or a project
+   * file that names a channel count its clips do not have, can leave the tail
+   * of a lane holding a block of another shape - and the take about to arrive
+   * is the lane's width, which is not what such a block has room for.
    */
-  if (last->audio == NULL || last->audio->refs != 1)
+  if (last->audio == NULL || last->audio->refs != 1 ||
+      last->audio->channels != t->channels)
   {
     return -1;
   }

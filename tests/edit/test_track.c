@@ -586,6 +586,54 @@ TEST(carrying_a_take_on_is_refused_when_the_audio_is_shared)
   aud_track_free(&t);
 }
 
+TEST(carrying_a_take_on_is_refused_when_the_block_is_not_the_lanes_width)
+{
+  aud_track t;
+  aud_samples *mono = counted(100, 0.0f);
+  float stereo[512] = {0};
+
+  /*
+   * A lane whose tail holds a block of another shape, which a paste across
+   * lanes or a project file naming its own channel count both leave behind.
+   * The take about to arrive is two channels wide and the block has room for
+   * one, so carrying on into it would write past what was reserved.
+   */
+  aud_track_init(&t, "t", 2);
+  CHECK_EQ_INT(aud_track_place(&t, mono, 0, 100, 0, 0, 0), 0);
+  aud_samples_release(mono); /* the clip is the only owner now */
+
+  CHECK_EQ_INT(aud_track_record_continue(&t, 100), -1);
+  CHECK(!aud_track_recording(&t));
+
+  /* and the push itself declines, whatever managed to arm it */
+  t.recording = 0;
+  CHECK_EQ_INT((int)aud_track_record_push(&t, stereo, 256), 0);
+  CHECK_EQ_INT((int)t.clips[0].audio->frames, 100);
+
+  t.recording = -1;
+  aud_track_free(&t);
+}
+
+TEST(a_clip_that_would_run_off_the_end_of_the_timeline_is_refused)
+{
+  aud_track t;
+  aud_samples *a = counted(8, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+
+  /* a start this far along leaves nowhere for eight frames to end */
+  CHECK_EQ_INT(aud_track_place(&t, a, 0, 8, UINT64_MAX - 4u, 0, 0), -1);
+  CHECK_EQ_INT((int)t.count, 0);
+
+  /* one that does fit is still placed */
+  CHECK_EQ_INT(aud_track_place(&t, a, 0, 8, UINT64_MAX - 8u, 0, 0), 0);
+  CHECK_EQ_INT((int)t.count, 1);
+  CHECK(well_formed(&t));
+
+  aud_samples_release(a);
+  aud_track_free(&t);
+}
+
 TEST(deleting_the_clip_a_take_is_going_into_ends_the_take)
 {
   aud_track t;
@@ -853,6 +901,8 @@ int main(void)
   RUN(an_interrupted_take_carries_on_in_the_same_clip);
   RUN(carrying_a_take_on_is_refused_when_it_would_not_be_the_same_take);
   RUN(carrying_a_take_on_is_refused_when_the_audio_is_shared);
+  RUN(carrying_a_take_on_is_refused_when_the_block_is_not_the_lanes_width);
+  RUN(a_clip_that_would_run_off_the_end_of_the_timeline_is_refused);
 
   return TEST_RESULT();
 }

@@ -429,6 +429,7 @@ int wav_read_open(wav_reader *r, const char *path)
   int is_rf64 = 0;
   uint64_t ds64_data_bytes = 0;
   int have_ds64 = 0;
+  int at_first_chunk = 1;
 
   if (r == NULL)
   {
@@ -482,6 +483,16 @@ int wav_read_open(wav_reader *r, const char *path)
     unsigned char head[8];
     uint32_t size;
     off_t skip;
+    /*
+     * Whether this chunk is the first one, which is the only place a 64-bit
+     * size block may sit: RF64 requires ds64 immediately after WAVE, and that
+     * is where wav_open_ex() reserves its JUNK slot. write_header() writes the
+     * promoted chunk at that offset and nowhere else, so a slot found anywhere
+     * further in is not one this writer can use - see has_ds64_slot below.
+     */
+    int first_chunk = at_first_chunk;
+
+    at_first_chunk = 0;
 
     if (read_exact(r->file, head, sizeof(head)) != 0)
     {
@@ -514,7 +525,10 @@ int wav_read_open(wav_reader *r, const char *path)
       }
       ds64_data_bytes = aud_rd_u64le(body + 8);
       have_ds64 = 1;
-      r->has_ds64_slot = 1;
+      if (first_chunk)
+      {
+        r->has_ds64_slot = 1;
+      }
 
       if (fseeko(r->file, skip - (off_t)sizeof(body), SEEK_CUR) != 0)
       {
@@ -634,9 +648,12 @@ int wav_read_open(wav_reader *r, const char *path)
        * sitting where ds64 would go. That is this writer's own reservation
        * rather than anybody's padding, and it means the file can still be
        * promoted if it is carried on and grows past 4 GB.
+       *
+       * Only as the first chunk. A JUNK of the same length further in is
+       * somebody else's padding, and taking it for the slot would have the
+       * promotion write its ds64 over whatever really is at offset 12.
        */
-      if (memcmp(head, "JUNK", 4) == 0 && size == WAV_DS64_BODY_BYTES &&
-          data_offset < 0 && !have_fmt)
+      if (first_chunk && memcmp(head, "JUNK", 4) == 0 && size == WAV_DS64_BODY_BYTES)
       {
         r->has_ds64_slot = 1;
       }
