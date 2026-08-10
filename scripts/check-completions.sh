@@ -28,7 +28,7 @@ trap 'rm -rf "$work"' EXIT INT TERM
 is_alias()
 {
     case $1 in
-        --visualise | --pre-roll | --metronome) return 0 ;;
+        --visualise | --pre-roll | --metronome | --input-gain) return 0 ;;
         *) return 1 ;;
     esac
 }

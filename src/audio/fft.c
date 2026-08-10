@@ -93,6 +93,36 @@ void aud_fft_forward(float *re, float *im, size_t n)
   }
 }
 
+void aud_fft_inverse(float *re, float *im, size_t n)
+{
+  float scale;
+
+  if (re == NULL || im == NULL || !aud_fft_is_pow2(n))
+  {
+    return;
+  }
+
+  /*
+   * Conjugate, transform forward, conjugate again. The inverse DFT differs
+   * from the forward only in the sign of its exponent, and that identity gets
+   * it out of the one butterfly loop above rather than out of a second copy of
+   * it that could drift away from the first.
+   */
+  for (size_t i = 0; i < n; i++)
+  {
+    im[i] = -im[i];
+  }
+
+  aud_fft_forward(re, im, n);
+
+  scale = 1.0f / (float)n;
+  for (size_t i = 0; i < n; i++)
+  {
+    re[i] *= scale;
+    im[i] *= -scale;
+  }
+}
+
 void aud_fft_hann(float *window, size_t n)
 {
   if (window == NULL || n == 0)

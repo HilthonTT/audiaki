@@ -93,6 +93,38 @@ void aud_format_mix_channels(void *dst, const void *src, size_t frames, unsigned
                              aud_format fmt);
 
 /*
+ * What a capture gain may be asked for: silence, through unchanged, to +24 dB.
+ *
+ * The ceiling is where an input with nothing wrong with it stops needing help.
+ * A bass into a line input can want twenty of those decibels; wanting more than
+ * twenty-four means the signal is not reaching the interface at all, and the
+ * answer to that is a cable, not a multiplier.
+ */
+#define AUD_GAIN_MIN 0.0
+#define AUD_GAIN_MAX 16.0
+
+/*
+ * Scale every one of `samples` samples by `gain`, in place, in the capture
+ * layout. Returns the number of samples that had to be clamped to full scale.
+ *
+ * For an interface with no usable knob on it - a line input, a cheap USB box,
+ * a card whose capture volume ALSA does not expose. Nothing else in audiaki
+ * touches the level on the way in, and this is deliberately the one thing that
+ * does, because it is the one thing that cannot be taken back: a take that
+ * clipped on the way to the file clipped for good.
+ *
+ * So it is applied at the top of the capture path, before the meter, the
+ * spectrum, the pre-roll and the monitor - see cmd/record.c and gui/engine.c.
+ * Everything that says how loud the take is is then saying it about the take,
+ * and a gain set too high reads as CLIP before it reads as a ruined recording.
+ *
+ * A gain of 1.0 returns immediately, so the common case costs a comparison.
+ * Clamping rather than wrapping: wrapping turns a loud note into a burst of
+ * noise, which is worse than the flat top it was trying to avoid.
+ */
+size_t aud_format_gain(void *buf, size_t samples, aud_format fmt, double gain);
+
+/*
  * Absolute peak of an interleaved buffer, normalised to [0.0, 1.0].
  * Returns 0.0 for unknown formats or empty buffers.
  */

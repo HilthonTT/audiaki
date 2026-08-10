@@ -8,6 +8,7 @@ systems also have `man audiaki`.
 - [Options](#options)
 - [Backends](#backends)
 - [Reading the meter](#reading-the-meter)
+- [Turning a quiet input up](#turning-a-quiet-input-up)
 - [Tuning up](#tuning-up)
 - [Numbering takes](#numbering-takes)
 - [Where takes are kept](#where-takes-are-kept)
@@ -67,6 +68,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-M, --monitor` | Hear the input while it is recorded (use headphones) |
 | `--monitor-device NAME` | Output to monitor through (default `default`) |
 | `--monitor-gain X` | Scale what is monitored, 0.0 to 2.0 (default 1.0) |
+| `--gain X` | Scale the capture on the way in, 0.0 to 16.0; this one reaches the file (default 1.0) |
 | `--click BPM` | Play a metronome at BPM (20 to 300) while recording |
 | `--click-beats N` | Beats to a bar, accenting the first (default 4; 0 or 1 for a bare pulse) |
 | `--click-subdiv N` | Ticks to a beat, struck softer than the beat: 2 for eighths, 3 for triplets, 4 for sixteenths (1 to 8, default 1) |
@@ -139,7 +141,7 @@ $ audiaki -D alsa_output.pci-0000_00_1f.3.analog-stereo -t 30 desktop.wav
 ```
 
 Aim for peaks around −6 dBFS. If `CLIP` appears, the signal hit full scale and
-the take is distorted — turn the level down on the device, not in software.
+the take is distorted — turn the level down on the device if it has a knob.
 `xruns` counting up means the machine could not keep up; try a larger
 `--period` or more `--periods`.
 
@@ -152,6 +154,52 @@ from 40 Hz on the left to 12 kHz on the right:
 ```
 
 Block characters are used when the locale is UTF-8, an ASCII ramp otherwise.
+
+## Turning a quiet input up
+
+The level to fix first is the one on the hardware. A gain knob on an interface
+sits ahead of its converter, so turning it up captures more of the converter's
+range; turning it up afterwards in software only scales the range you already
+captured, noise and all. If the interface has a knob, or ALSA exposes a capture
+volume for it (`alsamixer`, F4), that is the one to reach for. Check that a bass
+is going into an instrument or Hi-Z input rather than a line input while you are
+there — that alone is often the whole difference.
+
+Some inputs have no knob to turn. A line input, a cheap USB box, a card whose
+capture volume ALSA does not expose: for those, `--gain` scales the capture on
+the way in.
+
+```sh
+audiaki --gain 2.0 riff.wav       # +6 dB
+audiaki --gain 4.0 riff.wav       # +12 dB
+audiaki --gain 8.0 riff.wav       # +24 dB, about as far as this is worth taking
+```
+
+A multiplier from `0.0` to `16.0`, where `1.0` is unchanged. Unlike
+`--monitor-gain`, **this one reaches the file.** Set it once in the config file
+if it is a property of your interface rather than of today:
+
+```ini
+gain = 2.0
+```
+
+The gain goes on each period as it arrives, before anything measures it — so the
+meter, the `--spectrum` bars, the pre-roll and what you hear through `-M` are all
+describing the recording rather than the device. Watch the meter and aim for the
+same −6 dBFS peaks as ever. If you overshoot, the take says so and names the
+cause:
+
+```
+audiaki: warning: --gain 4.00 clipped 40538 sample(s) - lower it and record again
+```
+
+Clipping is why this is the last resort rather than the first. Samples held at
+full scale cannot be un-held, so a gain set too high damages the take in a way
+no amount of editing afterwards will undo — where a take that came in quiet is
+merely quiet, and audiaki records 24-bit by default, so there is a great deal of
+room to bring one up later with the track gain in the window or in any editor.
+Software gain buys nothing over doing it afterwards except the convenience of
+not having to; what it costs is a take you can ruin. Turn the hardware up first.
 
 ## Tuning up
 
@@ -263,8 +311,7 @@ arrives, so there is no moment when audio is playing and nothing is catching it.
 ### The config file
 
 `~/.config/audiaki/config`, or `$XDG_CONFIG_HOME/audiaki/config`, or whatever
-`$AUDIAKI_CONFIG` names. It holds the two answers that are the same every
-session:
+`$AUDIAKI_CONFIG` names. It holds the answers that are the same every session:
 
 ```ini
 # where a take named without a folder is written
@@ -276,6 +323,10 @@ prompt = auto
 # round-trip latency the window places an overdub by, in milliseconds;
 # left out, it is estimated from the buffers. See DESKTOP.md.
 latency_ms = 14
+
+# gain added to the recording itself, as a multiplier. For an interface
+# with no usable knob on it - see "Turning a quiet input up" above.
+gain = 2.0
 ```
 
 `auto` is the default described above. Everything in the file is a default that
@@ -384,9 +435,12 @@ in `--list` — and monitoring it back through that same output feeds the stream
 directly into itself. Check what `-D` is actually pointing at before adding
 `-M`.
 
-`--monitor-gain` scales what you hear and nothing else — the file is always
-written from the samples the device delivered, so turning the monitor down
-does not record a quieter take, and the meter does not move. It goes from
+`--monitor-gain` scales what you hear and nothing else — turning the monitor
+down does not record a quieter take, and the meter does not move. `--gain` is
+the one that does reach the file; see [Turning a quiet input
+up](#turning-a-quiet-input-up). The two multiply, so an input brought up by
+`--gain 4.0` is already four times louder in the headphones before
+`--monitor-gain` is touched. It goes from
 `0.0` (silent) to `2.0` (+6 dB), with `1.0` unchanged. Naming a gain switches
 monitoring on by itself, so `-M` is only needed on its own. So does naming a
 device — unless `--click` is also given, since then the output has something to

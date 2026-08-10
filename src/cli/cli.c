@@ -2,6 +2,7 @@
 #include "cli/cli.h"
 
 #include "audio/click.h"
+#include "audio/format.h"
 #include "audio/spectrum.h"
 #include "audio/tuner.h"
 #include "backend/device.h"
@@ -73,6 +74,7 @@ enum
   OPT_REPEAT_ONE,
   OPT_MONITOR_DEVICE,
   OPT_MONITOR_GAIN,
+  OPT_GAIN,
   OPT_NOTE,
   OPT_NO_METADATA,
   OPT_CLICK,
@@ -109,6 +111,8 @@ static const struct option long_options[] = {
     {"monitor", no_argument, NULL, 'M'},
     {"monitor-device", required_argument, NULL, OPT_MONITOR_DEVICE},
     {"monitor-gain", required_argument, NULL, OPT_MONITOR_GAIN},
+    {"gain", required_argument, NULL, OPT_GAIN},
+    {"input-gain", required_argument, NULL, OPT_GAIN},
     {"click", required_argument, NULL, OPT_CLICK},
     {"metronome", required_argument, NULL, OPT_CLICK},
     {"click-beats", required_argument, NULL, OPT_CLICK_BEATS},
@@ -171,6 +175,7 @@ void cli_defaults(aud_options *opts)
   opts->monitor = 0;
   opts->monitor_device = NULL;
   opts->monitor_gain = 1.0;
+  opts->input_gain = 1.0; /* the samples the device delivered, untouched */
   opts->click_bpm = 0.0;
   opts->click_beats = AUD_CLICK_DEFAULT_BEATS;
   opts->click_subdiv = AUD_CLICK_DEFAULT_SUBDIV;
@@ -205,6 +210,10 @@ void cli_defaults(aud_options *opts)
   opts->prompt = cfg.prompt;
   /* the same number the desktop app places an overdub by; --click leads by it */
   opts->latency_ms = cfg.latency_ms;
+  if (cfg.input_gain >= 0.0)
+  {
+    opts->input_gain = cfg.input_gain;
+  }
 
   /*
    * A bad $AUDIAKI_BACKEND is left at auto rather than rejected. An exported
@@ -376,6 +385,20 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       opts->monitor = 1;
+      break;
+    /*
+     * The one that does reach the file, which is why it turns nothing else on
+     * and is spelled without "monitor" in it. See --monitor-gain above for the
+     * one that does not.
+     */
+    case OPT_GAIN:
+      if (parse_double(optarg, AUD_GAIN_MIN, AUD_GAIN_MAX, &opts->input_gain) != 0)
+      {
+        bad_value("--gain", optarg,
+                  "0.0 to 16.0, where 1.0 is unchanged and 16.0 "
+                  "is +24 dB");
+        return CLI_EXIT_USAGE;
+      }
       break;
     case OPT_CLICK:
       if (parse_double(optarg, AUD_CLICK_BPM_MIN, AUD_CLICK_BPM_MAX, &opts->click_bpm) !=

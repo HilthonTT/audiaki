@@ -170,12 +170,13 @@ GUI_PLUG_LIB  := $(BUILD_DIR)/lib$(PROJECT)-gui.so
 # the window never asks for one.
 GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
                  src/audio/format.c src/audio/fft.c src/audio/spectrum.c \
+                 src/audio/spectral.c \
                  src/audio/tuner.c src/audio/click.c src/audio/resample.c \
                  src/take/take.c src/take/meta.c src/take/preroll.c \
                  src/take/latency.c \
                  src/edit/samples.c src/edit/track.c src/edit/doc.c \
                  src/edit/edit.c src/edit/load.c src/edit/mix.c \
-                 src/edit/export.c src/edit/project.c \
+                 src/edit/export.c src/edit/project.c src/edit/repair.c \
                  src/media/wav.c src/media/ffmpeg_posix.c \
                  src/util/log.c src/util/jsonout.c src/util/ringbuf.c \
                  src/util/parse.c src/util/path.c src/util/config.c

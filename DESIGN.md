@@ -54,6 +54,7 @@ src/
     spectrum.c/.h streaming analyser: samples in, bar heights out
     tuner.c/.h    pitch detection: samples in, a note and its offset out
     click.c/.h    the metronome: a beat grid, mixed into what you hear
+    spectral.c/.h an editable spectrum, and the audio resynthesised from it
   edit/         the project the window edits: tracks, clips, undo
     samples.c/.h  refcounted blocks of audio, shared and never changed
     track.c/.h    one lane: a sorted list of clips over those blocks
@@ -63,6 +64,7 @@ src/
     project.c/.h  a session written down: which parts of which files sit where
     load.c/.h     a WAV becomes a track
     export.c/.h   the mix, back out as a WAV
+    repair.c/.h   the spectral edit, applied to a range of a lane
   take/         what a recording is, and what surrounds it
     take.c/.h     numbered take filenames for --take
     meta.c/.h     the LIST/INFO and bext chunks a take is stamped with
@@ -101,6 +103,7 @@ src/
     screen.c      every pixel of the chrome
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
+    repair.c/.h   the spectrum of what was recorded, and drawing on it
     ui.c/.h       immediate-mode buttons, slider and meter
   hotreload/    only in a development build of the window
     plug.h        the five calls the shell reaches the app through
@@ -379,6 +382,63 @@ crossfades: clips on a lane do not overlap, and a crossfade needs two pieces of
 audio sounding at once. A split inside a ramp truncates it, because a clip can
 say "ramp up from silence" and has no way to say "carry on from half way up one
 that started in the clip before".
+
+### Taking the hum out
+
+Every edit above is a window moving over audio that never changes. Spectral
+repair is the one that is not, and it is worth being explicit about why: there
+is no arrangement of clips that means *this take, without the 50 Hz buzz*. So
+this one produces audio that did not exist before — the range is read out,
+filtered, and put back as a new block.
+
+The graph **is** the edit. `aud_spectral` holds a gain per FFT bin; the panel
+draws that array and drawing on it writes to that array; applying multiplies the
+audio by it. There is no separate list of filters that could drift out of step
+with what is on screen, and the obvious gesture is the right one: a hum is a
+spike standing out of the floor around it, so you drag the spike down to the
+floor and it is gone.
+
+Three ways in, because a spike you can point at is not the only kind of noise:
+
+- **drag** — pull any part of the spectrum down to where the pointer is
+- **Find hum** — score every candidate fundamental between 30 and 130 Hz on how
+  far its harmonics stand above their surroundings, then notch the whole series
+  at once. Mains hum is never the fundamental alone, and hunting down 100, 150
+  and 200 Hz by hand is the tedium this removes
+- **the noise profile** — an estimate of the noise on its own, subtracted from
+  every frame, for hiss that is everywhere and has no spike to aim at
+
+The profile is the interesting one, because the honest way to get it is a
+stretch of recording with nothing played on it — and people do not always have
+one. So there are two: `Learn` averages the current selection, for when you *do*
+have silence, and `Guess` takes the per-bin **minimum over time** of the whole
+selection, which needs none. A steady hum or hiss is in every window and so
+cannot fall below itself; a note comes and goes and falls to the floor in the
+windows between. The minimum is therefore what was underneath all of it, which
+is a remarkably good noise floor for free.
+
+The filtering is short-time Fourier work — overlapping Hann windows, 4096 points
+at 75% overlap, scaled bin by bin and added back up. Two details are worth
+keeping:
+
+The overlap-add divides by the window energy that actually landed on each output
+sample rather than by the constant it comes to in the middle. So a flat curve
+returns the input **sample for sample**, the two ends included, instead of
+fading in and out of the edit. "Changed nothing" means it, and the test asserts
+it.
+
+Bands are eased over a few bins at each edge rather than stepped. A wall in the
+frequency domain is a long ring in the time domain: a brick-wall notch under a
+bass note does not remove a hum, it removes a hum and adds a chirp after every
+string it was under.
+
+Two costs follow, and both are deliberate. It costs the range — a minute of
+stereo is about twenty megabytes and a second of work, where a cut costs
+neither. And it writes a WAV as it goes, because a project is a list of which
+parts of which files sit where and a block from nowhere cannot be written down
+(see below). Undoing a repair leaves that file behind rather than deleting it:
+the redo stack still points at the block, and a file removed under it would turn
+redo into silence.
 
 ### Writing it down
 

@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "util/config.h"
 
+#include "audio/format.h"
 #include "take/latency.h"
 #include "util/log.h"
 #include "util/parse.h"
@@ -63,6 +64,7 @@ void aud_config_defaults(aud_config *cfg)
   memset(cfg, 0, sizeof(*cfg));
   cfg->prompt = AUD_PROMPT_AUTO;
   cfg->latency_ms = -1.0; /* nothing said; work it out from the buffers */
+  cfg->input_gain = -1.0; /* nothing said; the take is what the device sent */
 }
 
 const char *aud_config_prompt_name(aud_prompt_mode mode)
@@ -232,6 +234,19 @@ int aud_config_parse(aud_config *cfg, const char *text, const char *source)
         aud_warn("%s:%u: latency_ms is milliseconds, 0 to %.0f, not '%s'", source,
                  line_no, AUD_LATENCY_MAX_MS, value);
         cfg->latency_ms = -1.0;
+        bad++;
+      }
+      continue;
+    }
+
+    if (strcmp(key, "gain") == 0 || strcmp(key, "input_gain") == 0 ||
+        strcmp(key, "input-gain") == 0)
+    {
+      if (parse_double(value, AUD_GAIN_MIN, AUD_GAIN_MAX, &cfg->input_gain) != 0)
+      {
+        aud_warn("%s:%u: gain is a multiplier, %.1f to %.1f, not '%s'", source, line_no,
+                 AUD_GAIN_MIN, AUD_GAIN_MAX, value);
+        cfg->input_gain = -1.0;
         bad++;
       }
       continue;

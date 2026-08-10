@@ -40,6 +40,7 @@ complete -c audiaki -l no-meter -d 'Draw nothing while recording'
 complete -c audiaki -s M -l monitor -d 'Hear the input while recording it (use headphones)'
 complete -c audiaki -l monitor-device -d 'Output to monitor through' -x -a 'default (__audiaki_devices)'
 complete -c audiaki -l monitor-gain -d 'Scale what is monitored, 0.0 to 2.0' -x
+complete -c audiaki -l gain -d 'Gain added to the recording itself, 0.0 to 16.0' -x
 complete -c audiaki -l click -d 'Play a metronome at BPM while recording (heard, not recorded)' -x
 complete -c audiaki -l click-beats -d 'Beats to a bar, accenting the first' -x
 complete -c audiaki -l click-subdiv -d 'Ticks to a beat, struck softer than the beat' -x -a '1 2 3 4 6 8'

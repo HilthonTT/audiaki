@@ -70,6 +70,12 @@ typedef struct
    */
   int metadata;
   const char *note;
+  /*
+   * What the capture is scaled by on the way in, before anything measures it.
+   * 1.0 is the samples the device delivered, which is what a take is unless
+   * this says otherwise - see audio/format.h.
+   */
+  double input_gain;
 } aud_recorder_options;
 
 typedef struct
@@ -114,7 +120,26 @@ typedef struct
   unsigned wav_bytes;
   unsigned char *pick_buf; /* one period of the one channel out, capture layout */
   unsigned char *out_buf;  /* one period in the WAV layout; NULL without a repack */
+  /*
+   * The capture gain, which is not part of the reduction below and is applied
+   * before it - see shape_gain(). It sits here because it is the same "what a
+   * period goes through" question the rest of this struct answers.
+   */
+  double gain;
 } recorder_shape;
+
+/*
+ * The capture gain, put on the period the instant it arrives.
+ *
+ * Before the pre-roll, the meter, the spectrum and the monitor - every one of
+ * which then describes the take rather than the device, so a gain set too high
+ * reads as CLIP on the meter while there is still time to turn it down.
+ * Returns the samples that had to be clamped.
+ */
+static size_t shape_gain(const recorder_shape *sh, unsigned char *hw, size_t frames)
+{
+  return aud_format_gain(hw, frames * sh->in_channels, sh->format, sh->gain);
+}
 
 /*
  * Reduce one captured period to the bytes that go in the file. Returns the
@@ -243,6 +268,13 @@ static int arm_and_wait(aud_device *dev, const recorder_shape *shape,
     {
       continue;
     }
+
+    /*
+     * Before the pre-roll takes it, so what is held back is at the level the
+     * take will be at: the seconds before the keypress are part of the take,
+     * and a run-in that was quieter than the rest of it would be a seam.
+     */
+    (void)shape_gain(shape, hw_buf, (size_t)got);
 
     aud_preroll_push(pre, hw_buf, (size_t)got);
 
@@ -375,6 +407,8 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   uint64_t preroll_frames = 0;
   uint64_t recorded = 0; /* frames captured since the take started */
   uint64_t limit_frames = 0;
+  /* samples --gain had to hold at full scale, for the warning at the end */
+  uint64_t gain_clipped = 0;
   unsigned xruns = 0;
   int cancelled = 0;
   double next_meter_at = 0.0;
@@ -403,6 +437,7 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
   shape.out_channels = dev->channels;
   shape.repack = repack;
   shape.wav_bytes = wav_bytes;
+  shape.gain = opts->input_gain;
 
   /*
    * Checked against what the device negotiated rather than what was asked for:
@@ -662,6 +697,8 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
       continue;
     }
 
+    gain_clipped += shape_gain(&shape, hw_buf, (size_t)got);
+
     payload = shape_frames(&shape, hw_buf, (size_t)got, &nbytes, &analysis);
 
     if (wav_would_overflow(&wav, nbytes))
@@ -753,7 +790,21 @@ finish:
              xruns, meter_clipped(&meter) ? ", clipping detected" : "");
     if (meter_clipped(&meter))
     {
-      aud_warn("input clipped - lower the level on the device and record again");
+      /*
+       * Said differently when a gain was asked for, because the fix is
+       * different: the device may well have delivered a clean signal that this
+       * then pushed into the ceiling, and turning the device down would make
+       * the take quieter without making it any less flat-topped.
+       */
+      if (gain_clipped > 0)
+      {
+        aud_warn("--gain %.2f clipped %llu sample(s) - lower it and record again",
+                 opts->input_gain, (unsigned long long)gain_clipped);
+      }
+      else
+      {
+        aud_warn("input clipped - lower the level on the device and record again");
+      }
     }
   }
 
@@ -1014,6 +1065,7 @@ int aud_cmd_record(const aud_options *opts)
   rec.latency_ms = opts->latency_ms;
   rec.metadata = opts->metadata;
   rec.note = opts->note;
+  rec.input_gain = opts->input_gain;
 
   rc = recorder_run(&dev, &rec, &stats);
   aud_device_close(&dev);

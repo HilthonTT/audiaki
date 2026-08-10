@@ -98,6 +98,41 @@ TEST(latency_is_a_number_of_milliseconds_or_nothing_at_all)
   CHECK(cfg.latency_ms < 0.0);
 }
 
+TEST(gain_is_a_multiplier_or_nothing_at_all)
+{
+  aud_config cfg;
+
+  aud_config_defaults(&cfg);
+  /* nothing said means the take is the samples the device delivered */
+  CHECK(cfg.input_gain < 0.0);
+
+  CHECK_EQ_INT(aud_config_parse(&cfg, "gain = 2.5\n", "t"), 0);
+  CHECK_EQ_DBL(cfg.input_gain, 2.5, 1e-9);
+
+  /* both of the longer spellings, for anyone who wrote what they meant */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "input_gain = 4\n", "t"), 0);
+  CHECK_EQ_DBL(cfg.input_gain, 4.0, 1e-9);
+
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "input-gain = 1.5\n", "t"), 0);
+  CHECK_EQ_DBL(cfg.input_gain, 1.5, 1e-9);
+
+  /* nonsense is counted and put back to "nothing said", not left half read */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "gain = loud\n", "t"), 1);
+  CHECK(cfg.input_gain < 0.0);
+
+  /* and so is a multiplier past what an input trim is for */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "gain = 500\n", "t"), 1);
+  CHECK(cfg.input_gain < 0.0);
+
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, "gain = -2\n", "t"), 1);
+  CHECK(cfg.input_gain < 0.0);
+}
+
 TEST(a_bad_line_is_counted_and_the_rest_is_still_read)
 {
   aud_config cfg;
@@ -170,6 +205,7 @@ int main(void)
   RUN(an_empty_take_dir_means_here);
   RUN(prompt_takes_the_spellings_people_reach_for);
   RUN(latency_is_a_number_of_milliseconds_or_nothing_at_all);
+  RUN(gain_is_a_multiplier_or_nothing_at_all);
   RUN(a_bad_line_is_counted_and_the_rest_is_still_read);
   RUN(a_file_with_no_last_newline_still_has_a_last_line);
   RUN(the_path_follows_the_environment);

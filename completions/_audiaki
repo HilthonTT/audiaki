@@ -44,6 +44,7 @@ _audiaki() {
     '(-M --monitor)'{-M,--monitor}'[hear the input while recording it (use headphones)]'
     '--monitor-device[output to monitor through]:device:_audiaki_devices'
     '--monitor-gain[scale what is monitored, 0.0 to 2.0]:gain:'
+    '--gain[gain added to the recording itself, 0.0 to 16.0]:gain:'
     '--click[play a metronome at BPM while recording (heard, not recorded)]:bpm:'
     '--click-beats[beats to a bar, accenting the first]:beats:'
     '--click-subdiv[ticks to a beat, struck softer than the beat]:ticks:(1 2 3 4 6 8)'

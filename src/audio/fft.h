@@ -27,6 +27,19 @@ int aud_fft_is_pow2(size_t n);
 void aud_fft_forward(float *re, float *im, size_t n);
 
 /*
+ * The way back: `n` complex bins to `n` complex samples, in place, scaled by
+ * 1/n so that an inverse of a forward returns the signal it started with.
+ *
+ * Same size rule as the forward, and the same silence when it is not met. A
+ * real signal comes back with im[] at rounding error rather than at exactly
+ * zero, so callers take re[] and ignore what is left in im[].
+ *
+ * Only aud_spectral needs this - a display transforms and stops, and it is the
+ * editor that has to put the audio back together afterwards.
+ */
+void aud_fft_inverse(float *re, float *im, size_t n);
+
+/*
  * Fill window[0..n) with a periodic Hann window. Periodic rather than
  * symmetric because the input is a stream of frames, not one isolated record.
  * The coherent gain is 0.5, which aud_spectrum() relies on when normalising.

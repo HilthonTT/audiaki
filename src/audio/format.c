@@ -131,6 +131,87 @@ void aud_format_repack(void *dst, const void *src, size_t samples, aud_format fm
 }
 
 /*
+ * One sample scaled and held inside [-limit, limit - 1], which is the range a
+ * signed container of that width can describe. `*clipped` counts the ones that
+ * had to be held.
+ *
+ * Rounded rather than truncated. Truncation biases every sample towards
+ * silence by up to a step, which on a quiet take being brought up is a whole
+ * bit of what little there was.
+ */
+static int32_t scaled(int32_t sample, double gain, double limit, size_t *clipped)
+{
+  double v = (double)sample * gain;
+
+  /*
+   * Rounded before the bounds are checked, not after. A sample that lands a
+   * fraction under full scale rounds up onto it, and a check made before that
+   * would pass it through to a container it no longer fits - where it wraps to
+   * the opposite polarity, which is the one outcome this is here to avoid.
+   */
+  v = v >= 0.0 ? v + 0.5 : v - 0.5;
+
+  if (v > limit - 1.0)
+  {
+    (*clipped)++;
+    return (int32_t)(limit - 1.0);
+  }
+  if (v < -limit)
+  {
+    (*clipped)++;
+    return (int32_t)(-limit);
+  }
+  return (int32_t)v;
+}
+
+size_t aud_format_gain(void *buf, size_t samples, aud_format fmt, double gain)
+{
+  unsigned char *p = (unsigned char *)buf;
+  size_t clipped = 0;
+
+  if (p == NULL || samples == 0 || gain == 1.0)
+  {
+    return 0;
+  }
+
+  /* the switch is hoisted out of the sample loop, as in the peak helpers */
+  switch (fmt)
+  {
+  case AUD_FORMAT_S16_LE:
+    for (size_t i = 0; i < samples; i++)
+    {
+      aud_wr_s16le(p + i * 2u, scaled(aud_rd_s16le(p + i * 2u), gain, 32768.0, &clipped));
+    }
+    return clipped;
+  case AUD_FORMAT_S24_3LE:
+    for (size_t i = 0; i < samples; i++)
+    {
+      aud_wr_s24le(p + i * 3u,
+                   scaled(aud_rd_s24le(p + i * 3u), gain, 8388608.0, &clipped));
+    }
+    return clipped;
+  case AUD_FORMAT_S24_LE:
+    for (size_t i = 0; i < samples; i++)
+    {
+      /* back into the four byte container the repack step expects to find */
+      aud_wr_s24le_padded(p + i * 4u,
+                          scaled(aud_rd_s24le(p + i * 4u), gain, 8388608.0, &clipped));
+    }
+    return clipped;
+  case AUD_FORMAT_S32_LE:
+    for (size_t i = 0; i < samples; i++)
+    {
+      aud_wr_s32le(p + i * 4u,
+                   scaled(aud_rd_s32le(p + i * 4u), gain, 2147483648.0, &clipped));
+    }
+    return clipped;
+  case AUD_FORMAT_UNKNOWN:
+  default:
+    return 0;
+  }
+}
+
+/*
  * Peak helpers. The format switch is hoisted out of the sample loop: this
  * runs on every captured period, so a branch per sample is worth avoiding.
  */

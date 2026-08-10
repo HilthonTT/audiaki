@@ -84,6 +84,7 @@ void app_load_track(app *a, const char *path)
   aud_doc_select_tracks(&a->doc, 0);
   a->doc.tracks[index].selected = 1;
   a->project_dirty = 1;
+  aud_repair_panel_reset(&a->repair);
 
   app_set_status(a, "%.80s: %.1f s on track %d", aud_path_basename(path),
                  (double)aud_track_end(&a->doc.tracks[index]) / a->doc.rate, index + 1);
@@ -135,6 +136,8 @@ static int app_open_engine(app *a)
   /* the style survives a device change; the analyser behind it does not */
   aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
   aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
+  /* set again on every engine, so a device swap does not undo the level */
+  aud_engine_set_input_gain(a->engine, a->input_gain);
   return 0;
 }
 
@@ -827,6 +830,10 @@ void app_finish_take(app *a, const char *path)
   char take[AUD_ENGINE_PATH_MAX];
 
   snprintf(take, sizeof(take), "%s", path);
+
+  /* the block grew while it was being recorded into, so whatever the spectrum
+   * panel read of it half way through is out of date */
+  aud_repair_panel_reset(&a->repair);
 
   /*
    * Wherever the take ended up is where its block now says it lives. The
@@ -1590,7 +1597,15 @@ static void handle_keys(app *a, const aud_engine_status *st)
 
   if (IsKeyPressed(KEY_B))
   {
-    a->viz_open = !a->viz_open;
+    a->drawer = a->drawer == APP_DRAWER_VIZ ? APP_DRAWER_NONE : APP_DRAWER_VIZ;
+  }
+
+  if (IsKeyPressed(KEY_N))
+  {
+    a->drawer = a->drawer == APP_DRAWER_SPECTRUM ? APP_DRAWER_NONE : APP_DRAWER_SPECTRUM;
+    /* it reads the timeline rather than the interface, so opening it is what
+     * asks for a reading at all - see gui/repair.h */
+    aud_repair_panel_reset(&a->repair);
   }
 
   /* the three that count time: the loop, the metronome and the grid it beats on */
@@ -1771,6 +1786,7 @@ static app *plug;
 /* Everything init put up, for the paths that give up before there is a window. */
 static void app_free(app *a)
 {
+  aud_repair_panel_free(&a->repair);
   free(a->take_buf);
   free(a);
 }
@@ -1809,8 +1825,10 @@ int aud_plug_init(int argc, char **argv)
   aud_engine_config_defaults(&a->cfg);
   snprintf(a->prefix, sizeof(a->prefix), "%s", APP_DEFAULT_PREFIX);
   a->monitor_gain = 1.0f;
-  a->viz_open = 1; /* what the window has always come up showing */
+  a->input_gain = 1.0f;       /* the samples the interface delivered, untouched */
+  a->drawer = APP_DRAWER_VIZ; /* what the window has always come up showing */
   a->viz_height = APP_VIZ_OPEN_H;
+  aud_repair_panel_init(&a->repair);
   aud_timeline_init(&a->timeline);
   aud_clipboard_init(&a->clipboard);
   aud_player_init(&a->player);
@@ -1851,6 +1869,10 @@ int aud_plug_init(int argc, char **argv)
   aud_config_load(&cfg);
   snprintf(a->take_dir, sizeof(a->take_dir), "%s", cfg.take_dir);
   a->latency_ms = cfg.latency_ms; /* --latency on the command line still wins */
+  if (cfg.input_gain >= 0.0)
+  {
+    a->input_gain = (float)cfg.input_gain; /* and --gain still wins over this */
+  }
   /*
    * Off unless the config says otherwise, and deliberately the other way round
    * from the terminal recorder. There, a take is a file and the question is

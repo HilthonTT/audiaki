@@ -677,6 +677,8 @@ static int save_confirm(app *a)
     a->record_track = -1;
     a->last_take_track = -1;
     aud_player_stop(&a->player);
+    /* a different session's audio, at possibly a different rate */
+    aud_repair_panel_reset(&a->repair);
     s->open = 0;
     app_set_status(a, "opened %.80s: %zu track(s)", aud_path_basename(target),
                    a->doc.count);

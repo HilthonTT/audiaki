@@ -87,11 +87,16 @@ back.
 ## The layout
 
 Top to bottom: the title and the capture device, a transport bar, an edit bar,
-the visualiser panel, the time ruler, the tracks, and a status bar.
+a drawer, the time ruler, the tracks, and a status bar.
 
-The visualiser is a drawer rather than the window. `B`, or the arrow beside its
-name, shuts it and gives the room to the tracks; it keeps running either way, so
-opening it shows what is happening now rather than an empty panel filling up.
+The drawer holds two panels and shows one at a time. **Visualiser** (`B`) is
+what is arriving from the interface right now; **Spectrum** (`N`) is what is
+already on the timeline, and can be drawn on — see [Taking the noise
+out](#taking-the-noise-out). Either arrow shuts its panel and gives the room
+back to the tracks. The visualiser keeps running while it is shut, so opening it
+shows what is happening now rather than an empty panel filling up; the spectrum
+does not, because it reads the timeline rather than the interface and reading a
+take nobody is looking at would cost real work for nothing.
 
 Each track has a control column of its own — its name, **Mute**, **Solo**, a
 gain slider and a pan slider, with `x` to close it and `^` to fold it down to a
@@ -115,6 +120,36 @@ there gives the new one a lane of its own rather than refusing or overwriting.
 The take is a real WAV on disk the whole time — numbered from the prefix, in
 `take_dir` — so an interrupted session is not a lost one. It is also on the
 timeline the moment it stops, ready to cut about, without a dialog in between.
+
+## Turning a quiet input up
+
+The level to fix first is on the hardware — the knob on the interface, or the
+capture volume in `alsamixer`. A gain stage ahead of the converter captures more
+of its range; anything done afterwards only scales the range already captured,
+noise and all. Check that a bass is going into an instrument or Hi-Z input
+rather than a line input while you are there.
+
+Some inputs have no knob. For those there is the **in** slider on the status
+bar, immediately right of the level meter — which is where it is precisely
+because setting an input level means watching a needle, and the needle is there.
+It reads out in dB, and goes from silent to +24 dB.
+
+It applies to each period as it arrives, before anything measures it, so the
+meter, the visualiser, the spectrum panel and what you hear through **Monitor**
+are all describing the recording rather than the device. What the meter says is
+what lands in the file.
+
+`--gain 2.0` sets it at startup, and `gain = 2.0` in the config file sets it
+every time — worth doing when it corrects a property of your interface rather
+than of today's session.
+
+**This one can ruin a take.** Unlike the monitoring level beside it, it reaches
+the file, and samples pushed past full scale are held there for good. A take
+that came in quiet is merely quiet — the window records 24-bit, so there is
+plenty of room to bring it up afterwards with the track's own gain slider, or in
+the spectrum panel, losing nothing. Software gain on the way in buys nothing
+over doing it afterwards except not having to; what it costs is a recording you
+can damage. Aim for peaks around −6 dBFS and turn the hardware up first.
 
 ## Playing it back
 
@@ -241,6 +276,96 @@ the whole editor is built on — and a crossfade needs two pieces of audio
 sounding at once. Fading one out and the next in gives a dip, not a crossfade,
 and calling it one would be a lie.
 
+## Taking the noise out
+
+Press `N`, or the **Spectrum** arrow in the drawer. The panel shows the
+frequency content of whatever is selected — or of the whole track when nothing
+is — as a graph: frequency across the bottom on a log scale, level up the side
+in dBFS.
+
+Three traces. The faint shading behind is the loudest each frequency ever got;
+the grey line is the average; the **blue** line is what you would be left with
+after the edit currently drawn. Bands being taken out are shaded red across the
+full height, so a notch you left in an hour ago is not something you have to go
+looking for.
+
+The graph is the edit. There is no list of filters anywhere — the line on screen
+*is* the gain curve, and applying multiplies the audio by it.
+
+### Dragging it out
+
+**Drag on the graph** to pull the spectrum down to wherever the pointer is. That
+is the whole gesture: a hum is a spike standing out of the floor around it, so
+you drag the spike down to the floor and it is gone. **Right-drag** puts a band
+back to where it was.
+
+The **brush** slider — or the wheel over the graph — sets how wide a stroke is,
+as a fraction of an octave. Narrow for a hum, wide for a whole region.
+
+### A mains hum, all of it at once
+
+**Find hum** looks for a steady tone between 30 and 130 Hz and offers its
+frequency. **Notch** then takes that frequency *and its harmonics* out in one
+go, as many as the **harmonics** slider asks for.
+
+The harmonics are the point. Mains hum is never the fundamental alone — take 50
+Hz out and 100, 150 and 200 Hz go on buzzing — and finding each by hand on the
+graph is exactly the tedium this removes. Six is a sensible number for a bass
+plugged into an interface with a ground loop somewhere in it.
+
+Find hum works on the *quietest* each frequency ever got rather than the
+average, which is what lets it tell a hum from a note: a hum is present in every
+window and cannot fall below itself, while a bass note comes and goes.
+
+### Hiss, which has no spike to point at
+
+Broadband noise — hiss, a noisy preamp, a single-coil buzzing at everything at
+once — has no peak to drag down. For that there is a noise profile: an estimate
+of the noise on its own, subtracted from every frame, so quiet bins fall away
+and the notes are barely touched.
+
+Two ways to get one:
+
+| | |
+| --- | --- |
+| **Learn** | select a stretch with nothing played on it — the count-in, the tail after the last note — and press this. Press it again to forget the profile |
+| **Guess** | works it out from whatever is selected, with no silent stretch needed |
+
+**Guess** is the one to reach for first. It takes the quietest each frequency
+ever fell to across the selection, which for a steady noise is the noise itself:
+it is in every window, while anything played is in some of them and gone in the
+rest. Select the whole take, press **Guess**, and the orange line that appears is
+what was underneath all of it.
+
+Then two sliders. **reduce** is how hard the profile is subtracted — above 1 it
+oversubtracts, which is the usual way to get the last of a hiss out. **floor**
+is how far down it is allowed to pull. Less is gentler: driving a bin to nothing
+while its neighbours stay loud is what makes spectral noise reduction warble, and
+a shallow floor trades a little remaining hiss for none of that. Start at `1.00x`
+and `-18 dB` and go further only if you need to.
+
+### Applying it
+
+Nothing has happened to the audio until you press **Apply**. **Reset** puts the
+whole curve back to flat.
+
+**Apply** replaces the selected range with the filtered version, and it is one
+press of `ctrl+Z` like any other edit — so the honest way to work is to apply,
+play it back, and undo if you took too much.
+
+Applying puts the curve back to flat and lets the noise profile go, because the
+edit is in the audio now. Leaving either up would mean the graph showing a notch
+over audio it has already been taken out of, and a second press of **Apply**
+quietly taking it out twice.
+
+Two things are worth knowing. Unlike every other edit, this one really does
+rewrite audio, so it costs a moment and some memory on a long range rather than
+being instant. And it writes a `cleaned-NNN.wav` into your takes folder as it
+goes, because a session records *which parts of which files sit where* and audio
+that came from nowhere could not be saved. Undoing does not delete that file —
+redo still points at it — so an undone repair leaves a WAV behind that nothing
+refers to, which is a file to delete at your leisure.
+
 ## Sessions
 
 The takes are files the moment they stop. What you have *done* to them — the
@@ -336,6 +461,7 @@ and stereo unless every track in it is mono.
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
 | **Monitor** | Plays the input back through the default output |
 | Volume slider | Monitoring level, from silent to +6 dB |
+| **in** slider | Gain added to the recording itself — on the status bar, beside the meter. See [Turning a quiet input up](#turning-a-quiet-input-up) |
 | Device dropdown | Switches capture device, `default` plus every capture PCM |
 
 | Key | Does |
@@ -357,6 +483,7 @@ and stereo unless every track in it is mono.
 | `home` / `end` | Cursor to the start or the end of the project |
 | `M` | Toggle monitoring |
 | `B` | Show or hide the visualiser panel |
+| `N` | Show or hide the spectrum panel, which is where noise comes out |
 | `V` / `1`–`6` | The next visualiser style / one outright |
 | `F` | Fit the selection, or the whole project |
 | `F11` | Fullscreen |

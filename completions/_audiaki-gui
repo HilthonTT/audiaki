@@ -32,6 +32,7 @@ _audiaki_gui() {
     '--preroll[keep SECS of audio while idle, so takes start earlier]:seconds:'
     '--no-overdub[do not play the project while recording over it]'
     '--latency[round-trip latency to place an overdub by]:milliseconds:'
+    '--gain[gain added to the recording itself, 0.0 to 16.0]:gain:'
     '--tempo[tempo the ruler counts bars on]:bpm:(60 80 90 100 110 120 140 160 180)'
     '--click[that tempo, with the metronome already on]:bpm:(60 80 90 100 110 120 140 160 180)'
     '--click-beats[beats to a bar, accenting the first]:beats:(1 2 3 4 5 6 7 8 12)'

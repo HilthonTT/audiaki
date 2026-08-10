@@ -381,6 +381,153 @@ TEST(mix_channels_edge_cases)
   aud_format_mix_channels(out, src, 0, 2, AUD_FORMAT_S16_LE);
 }
 
+/* -- gain on the way in ----------------------------------------------------- */
+
+TEST(gain_scales_every_sample)
+{
+  unsigned char buf[8];
+
+  aud_wr_s16le(buf + 0, 1000);
+  aud_wr_s16le(buf + 2, -2000);
+  aud_wr_s16le(buf + 4, 0);
+  aud_wr_s16le(buf + 6, 3000);
+
+  CHECK_EQ_INT(aud_format_gain(buf, 4, AUD_FORMAT_S16_LE, 2.0), 0);
+
+  CHECK_EQ_INT(aud_rd_s16le(buf + 0), 2000);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 2), -4000);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 4), 0);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 6), 6000);
+}
+
+TEST(a_gain_of_one_changes_nothing)
+{
+  unsigned char buf[4];
+
+  aud_wr_s16le(buf + 0, 12345);
+  aud_wr_s16le(buf + 2, -12345);
+
+  CHECK_EQ_INT(aud_format_gain(buf, 2, AUD_FORMAT_S16_LE, 1.0), 0);
+
+  CHECK_EQ_INT(aud_rd_s16le(buf + 0), 12345);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 2), -12345);
+}
+
+TEST(gain_clamps_rather_than_wrapping)
+{
+  unsigned char buf[6];
+  size_t clipped;
+
+  aud_wr_s16le(buf + 0, 30000);
+  aud_wr_s16le(buf + 2, -30000);
+  aud_wr_s16le(buf + 4, 100);
+
+  clipped = aud_format_gain(buf, 3, AUD_FORMAT_S16_LE, 4.0);
+
+  /*
+   * Held at the ends of the container rather than wrapping round to the
+   * opposite polarity, which would turn a loud note into a burst of noise.
+   */
+  CHECK_EQ_INT(aud_rd_s16le(buf + 0), 32767);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 2), -32768);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 4), 400);
+  CHECK_EQ_INT(clipped, 2);
+}
+
+TEST(a_sample_that_rounds_onto_full_scale_is_held_there)
+{
+  unsigned char buf[2];
+
+  /*
+   * 32767.5 rounds to 32768, which does not fit a signed 16 bit container and
+   * would come back as -32768. The rounding happens before the bounds are
+   * checked exactly so that it cannot.
+   */
+  aud_wr_s16le(buf, 32767);
+  CHECK_EQ_INT(aud_format_gain(buf, 1, AUD_FORMAT_S16_LE, 1.0000153), 1);
+  CHECK_EQ_INT(aud_rd_s16le(buf), 32767);
+}
+
+TEST(gain_rounds_rather_than_truncating)
+{
+  unsigned char buf[4];
+
+  aud_wr_s16le(buf + 0, 3);
+  aud_wr_s16le(buf + 2, -3);
+
+  /* 3 * 1.5 is 4.5, which rounds away from zero rather than towards silence */
+  CHECK_EQ_INT(aud_format_gain(buf, 2, AUD_FORMAT_S16_LE, 1.5), 0);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 0), 5);
+  CHECK_EQ_INT(aud_rd_s16le(buf + 2), -5);
+}
+
+TEST(gain_reaches_every_layout)
+{
+  unsigned char s24_3[3];
+  unsigned char s24_4[4];
+  unsigned char s32[4];
+
+  aud_wr_s24le(s24_3, 1000);
+  CHECK_EQ_INT(aud_format_gain(s24_3, 1, AUD_FORMAT_S24_3LE, 2.0), 0);
+  CHECK_EQ_INT(aud_rd_s24le(s24_3), 2000);
+
+  /* the padded container keeps its fourth byte, which the repack step reads */
+  aud_wr_s24le_padded(s24_4, -1000);
+  CHECK_EQ_INT(aud_format_gain(s24_4, 1, AUD_FORMAT_S24_LE, 3.0), 0);
+  CHECK_EQ_INT(aud_rd_s24le(s24_4), -3000);
+
+  aud_wr_s32le(s32, 100000);
+  CHECK_EQ_INT(aud_format_gain(s32, 1, AUD_FORMAT_S32_LE, 2.5), 0);
+  CHECK_EQ_INT(aud_rd_s32le(s32), 250000);
+
+  /* and each clamps at its own width */
+  aud_wr_s24le(s24_3, 8000000);
+  CHECK_EQ_INT(aud_format_gain(s24_3, 1, AUD_FORMAT_S24_3LE, 8.0), 1);
+  CHECK_EQ_INT(aud_rd_s24le(s24_3), 8388607);
+
+  aud_wr_s32le(s32, 2000000000);
+  CHECK_EQ_INT(aud_format_gain(s32, 1, AUD_FORMAT_S32_LE, 8.0), 1);
+  CHECK_EQ_INT(aud_rd_s32le(s32), 2147483647);
+}
+
+TEST(gain_moves_the_peak_the_meter_reads)
+{
+  unsigned char buf[8];
+  double before;
+  double after;
+
+  for (size_t i = 0; i < 4; i++)
+  {
+    aud_wr_s16le(buf + i * 2, (int32_t)(3000 + i * 500));
+  }
+
+  before = aud_format_peak(buf, 4, 1, AUD_FORMAT_S16_LE);
+  aud_format_gain(buf, 4, AUD_FORMAT_S16_LE, 2.0);
+  after = aud_format_peak(buf, 4, 1, AUD_FORMAT_S16_LE);
+
+  /*
+   * The property the whole feature rests on: the gain goes on before anything
+   * measures the signal, so what the meter says is what lands in the file.
+   */
+  CHECK_EQ_DBL(after, before * 2.0, 1e-4);
+}
+
+TEST(gain_edge_cases)
+{
+  unsigned char buf[2];
+
+  aud_wr_s16le(buf, 500);
+
+  CHECK_EQ_INT(aud_format_gain(NULL, 4, AUD_FORMAT_S16_LE, 2.0), 0);
+  CHECK_EQ_INT(aud_format_gain(buf, 0, AUD_FORMAT_S16_LE, 2.0), 0);
+  CHECK_EQ_INT(aud_format_gain(buf, 1, AUD_FORMAT_UNKNOWN, 2.0), 0);
+  CHECK_EQ_INT(aud_rd_s16le(buf), 500);
+
+  /* a gain of zero is silence rather than a refusal */
+  CHECK_EQ_INT(aud_format_gain(buf, 1, AUD_FORMAT_S16_LE, 0.0), 0);
+  CHECK_EQ_INT(aud_rd_s16le(buf), 0);
+}
+
 int main(void)
 {
   RUN(format_sizes);
@@ -404,5 +551,13 @@ int main(void)
   RUN(a_mixdown_cannot_clip);
   RUN(mix_channels_keeps_the_24_bit_container);
   RUN(mix_channels_edge_cases);
+  RUN(gain_scales_every_sample);
+  RUN(a_gain_of_one_changes_nothing);
+  RUN(gain_clamps_rather_than_wrapping);
+  RUN(a_sample_that_rounds_onto_full_scale_is_held_there);
+  RUN(gain_rounds_rather_than_truncating);
+  RUN(gain_reaches_every_layout);
+  RUN(gain_moves_the_peak_the_meter_reads);
+  RUN(gain_edge_cases);
   return TEST_RESULT();
 }

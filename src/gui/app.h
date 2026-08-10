@@ -33,6 +33,7 @@
 #include "gui/player.h"
 #include "gui/preview.h"
 #include "gui/render.h"
+#include "gui/repair.h"
 #include "gui/timeline.h"
 #include "gui/viz.h"
 
@@ -56,10 +57,26 @@
 #define APP_RULER_H 26.0f
 #define APP_STATUS_H 34.0f
 
-/* The collapsed visualiser: a strip with its name and the arrow that opens it. */
+/*
+ * The drawer under the toolbars: a strip with the two panels' names on it, and
+ * whichever of them is open below that.
+ *
+ * The spectrum wants more room than the visualiser does. One is a readout and
+ * reads fine at a glance; the other is a graph with two rows of controls under
+ * it and a spike you have to be able to aim at.
+ */
 #define APP_VIZ_BAR_H 24.0f
 #define APP_VIZ_OPEN_H 190.0f
+#define APP_FIX_OPEN_H 320.0f
 #define APP_VIZ_MIN_H 90.0f
+
+/* Which of the drawer's panels is showing, if either. */
+typedef enum
+{
+  APP_DRAWER_NONE = 0,
+  APP_DRAWER_VIZ,     /* the live spectrum coming off the interface */
+  APP_DRAWER_SPECTRUM /* the spectrum of what is on the timeline, and editing it */
+} app_drawer;
 
 /* What the bottom line says after something happened, until something else does. */
 #define APP_STATUS_MAX 200
@@ -343,12 +360,20 @@ typedef struct
   size_t take_buf_frames;
 
   /*
-   * The visualiser, which was the whole window and is now a panel of it. It
-   * still runs while it is shut: the analysis is cheap, and a strip that has
-   * to warm up when you open it is worse than one that is simply there.
+   * The drawer: the visualiser, which was the whole window and is now a panel
+   * of it, and the spectrum editor beside it.
+   *
+   * The visualiser still runs while it is shut: the analysis is cheap, and a
+   * strip that has to warm up when you open it is worse than one that is
+   * simply there. The spectrum editor does not - it reads the timeline rather
+   * than the interface, and reading a take nobody is looking at would cost
+   * real work for nothing.
    */
-  int viz_open;
+  app_drawer drawer;
   float viz_height;
+
+  /* the spectrum of what is on the timeline, and what is being taken out of it */
+  aud_repair_panel repair;
 
   /* the bottom line: what the last thing to happen was */
   char status[APP_STATUS_MAX];
@@ -440,6 +465,13 @@ typedef struct
   float peak_hold;
   float peak_hold_left; /* seconds the marker still has before it decays */
   float monitor_gain;
+  /*
+   * The capture gain, which unlike the one above reaches the take. Held here
+   * rather than only in the engine because it outlives one: a device swapped
+   * mid-session is the same interface into the same bass, and having to set
+   * the level again because the dropdown was touched would be a bug.
+   */
+  float input_gain;
 
   /* the reason the engine could not be created, if it could not be */
   char fatal[AUD_ENGINE_ERROR_MAX];

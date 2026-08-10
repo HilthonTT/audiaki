@@ -28,6 +28,7 @@ complete -c audiaki-gui -s s -l style -d 'Visualiser style to start on' -x -a 'b
 complete -c audiaki-gui -l preroll -d 'Keep SECS of audio while idle, so takes start earlier' -x
 complete -c audiaki-gui -l no-overdub -d 'Do not play the project while recording over it'
 complete -c audiaki-gui -l latency -d 'Round-trip latency to place an overdub by' -x
+complete -c audiaki-gui -l gain -d 'Gain added to the recording itself, 0.0 to 16.0' -x
 
 complete -c audiaki-gui -l tempo -d 'Tempo the ruler counts bars on' -x -a '60 80 90 100 110 120 140 160 180'
 complete -c audiaki-gui -l click -d 'That tempo, with the metronome already on' -x -a '60 80 90 100 110 120 140 160 180'

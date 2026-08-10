@@ -55,6 +55,17 @@ typedef struct
    * interface and the machine, so it is measured once and true from then on.
    */
   double latency_ms;
+  /*
+   * What the capture is scaled by on the way in - see audio/format.h. Negative
+   * means nothing was said, and the samples the device delivered are the take.
+   *
+   * Here for the same reason latency_ms is: it is a property of the interface
+   * rather than of the session. An input with no usable knob on it is quiet by
+   * the same amount every time it is plugged in, and typing --gain on every
+   * invocation to correct for that is exactly the muscle memory this file
+   * exists to remove.
+   */
+  double input_gain;
 } aud_config;
 
 /* The state of a config file that does not exist. */

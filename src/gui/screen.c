@@ -45,6 +45,9 @@
 #define SCREEN_STEP_W 26.0f
 #define SCREEN_TEMPO_W 60.0f
 #define SCREEN_GRID_W 46.0f
+
+/* the capture gain slider on the status bar, beside the meter it moves */
+#define SCREEN_GAIN_W 96.0f
 #define SCREEN_ZOOM_W 34.0f
 
 /* The device dropdown's slot, which the header leaves clear for it. */
@@ -646,43 +649,74 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
   tip(a, fit, "fit the selection, or the whole project   F");
 }
 
-/* -- the visualiser panel --------------------------------------------------- */
+/* -- the drawer ------------------------------------------------------------- */
 
 /*
- * The visualiser, which used to be the window and is now a drawer in it.
+ * The drawer: the visualiser, which used to be the window and is now a panel in
+ * it, and the spectrum editor beside it.
  *
- * Shut it and the tracks get the room; open it and the meters are back. It
- * keeps running either way - see app.h - so opening it shows what is happening
- * now rather than an empty panel filling up.
+ * One at a time, sharing the same room. They are both a wide short picture
+ * under the toolbars and there is only one such place on the screen, so a
+ * window offering both at once would be a window with no tracks left in it -
+ * and they answer different questions anyway. The visualiser is what is coming
+ * in now, which is a thing to watch while playing; the spectrum is what was
+ * recorded, which is a thing to work on afterwards.
  */
-static void draw_viz_panel(app *a, Rectangle r)
+static void draw_drawer(app *a, Rectangle r)
 {
   Rectangle bar = r;
-  Rectangle toggle;
+  Rectangle stage;
+  Rectangle viz_tab;
+  Rectangle fix_tab;
 
   bar.height = APP_VIZ_BAR_H;
 
   DrawRectangleRec(bar, AUD_UI_PANEL);
 
-  toggle.x = bar.x;
-  toggle.y = bar.y;
-  toggle.width = 130.0f;
-  toggle.height = bar.height;
+  viz_tab.x = bar.x;
+  viz_tab.y = bar.y;
+  viz_tab.width = 130.0f;
+  viz_tab.height = bar.height;
 
-  if (aud_ui_toggle(toggle, a->viz_open ? "v  Visualiser" : ">  Visualiser", a->viz_open,
-                    AUD_UI_ACCENT, !covered(a)))
+  fix_tab = viz_tab;
+  fix_tab.x = viz_tab.x + viz_tab.width + 2.0f;
+  fix_tab.width = 140.0f;
+
+  if (aud_ui_toggle(viz_tab,
+                    a->drawer == APP_DRAWER_VIZ ? "v  Visualiser" : ">  Visualiser",
+                    a->drawer == APP_DRAWER_VIZ, AUD_UI_ACCENT, !covered(a)))
   {
-    a->viz_open = !a->viz_open;
+    a->drawer = a->drawer == APP_DRAWER_VIZ ? APP_DRAWER_NONE : APP_DRAWER_VIZ;
   }
-  tip(a, toggle, "show or hide the live visualiser   B");
+  tip(a, viz_tab, "show or hide the live visualiser   B");
 
-  if (!a->viz_open || a->viz == NULL)
+  if (aud_ui_toggle(fix_tab,
+                    a->drawer == APP_DRAWER_SPECTRUM ? "v  Spectrum" : ">  Spectrum",
+                    a->drawer == APP_DRAWER_SPECTRUM, AUD_UI_ACCENT, !covered(a)))
+  {
+    a->drawer = a->drawer == APP_DRAWER_SPECTRUM ? APP_DRAWER_NONE : APP_DRAWER_SPECTRUM;
+    aud_repair_panel_reset(&a->repair);
+  }
+  tip(a, fix_tab, "the spectrum of the selected audio, and taking noise out of it   N");
+
+  stage = (Rectangle){r.x, bar.y + bar.height, r.width, r.height - bar.height};
+
+  if (a->drawer == APP_DRAWER_SPECTRUM)
+  {
+    if (aud_repair_panel_draw(&a->repair, &a->doc, stage, a->take_dir, !covered(a)))
+    {
+      a->project_dirty = 1;
+      app_set_status(a, "%s", a->repair.note);
+    }
+    return;
+  }
+
+  if (a->drawer != APP_DRAWER_VIZ || a->viz == NULL)
   {
     return;
   }
 
   {
-    Rectangle stage = {r.x, bar.y + bar.height, r.width, r.height - bar.height};
     Rectangle inner = {stage.x + 8.0f, stage.y + 6.0f, stage.width - 16.0f,
                        stage.height - 12.0f};
 
@@ -732,7 +766,22 @@ static void format_position(char *dst, size_t size, uint64_t frame, unsigned rat
   snprintf(dst, size, "%u:%06.3f", m, seconds - (double)m * 60.0);
 }
 
-static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
+/*
+ * How a capture gain is said out loud: in dB, because that is the unit an
+ * input trim is thought in, with the multiplier kept out of sight. "off"
+ * rather than "-inf dB" at the bottom of the travel.
+ */
+static void format_input_gain(char *dst, size_t size, float gain)
+{
+  if (!(gain > 0.0f))
+  {
+    snprintf(dst, size, "off");
+    return;
+  }
+  snprintf(dst, size, "%+.1f dB", 20.0 * log10((double)gain));
+}
+
+static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
 {
   char clock[16];
   char text[320];
@@ -764,6 +813,40 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
 
     snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
     aud_ui_text(x, top + 4.0f, 15, st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
+    x += 76.0f;
+
+    /*
+     * The capture gain, next to the meter it moves - which is the whole point
+     * of it being here rather than up in the transport bar with the monitoring
+     * level. Setting an input level is something you do while watching a
+     * needle, and the needle is here.
+     *
+     * Only drawn when there is room for it and the readout beside it; on a
+     * narrow window the meter is worth more than the knob, and the knob is
+     * still reachable from the command line.
+     */
+    if (x + SCREEN_GAIN_W + 84.0f < r.x + r.width - 260.0f)
+    {
+      Rectangle gain = {x, top + 3.0f, SCREEN_GAIN_W, 16.0f};
+      int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
+      char level[32];
+
+      if (aud_ui_slider(gain, &a->input_gain, (float)AUD_GAIN_MIN, (float)AUD_GAIN_MAX,
+                        AUD_UI_WARN, usable))
+      {
+        aud_engine_set_input_gain(a->engine, a->input_gain);
+      }
+      tip(a, gain,
+          "gain added to the recording itself, silent to +24 dB - watch the meter, "
+          "this one can clip the take");
+
+      x += SCREEN_GAIN_W + 8.0f;
+      format_input_gain(level, sizeof(level), a->input_gain);
+      snprintf(text, sizeof(text), "in %s", level);
+      aud_ui_text(x, top + 4.0f, 15, a->input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED,
+                  text);
+      x += 84.0f;
+    }
   }
 
   /*
@@ -825,13 +908,20 @@ static void draw_status(const app *a, Rectangle r, const aud_engine_status *st)
    * than beside its own slider: the toolbar has no room for it at the minimum
    * window width, and a number about how loud something is belongs next to the
    * meter anyway.
+   *
+   * After the capture gain above and dimmer than it, which is the order they
+   * matter in: one of these changes the recording and the other only changes
+   * what you hear while making it.
    */
   {
     char level[32];
 
     format_monitor_gain(level, sizeof(level), a->monitor_gain);
     snprintf(text, sizeof(text), "monitor %s", level);
-    aud_ui_text(x + 96.0f, top + 4.0f, 15, AUD_UI_EDGE, text);
+    if (x + 130.0f < r.x + r.width - 260.0f)
+    {
+      aud_ui_text(x + 16.0f, top + 4.0f, 15, AUD_UI_EDGE, text);
+    }
   }
 
   {
@@ -862,6 +952,7 @@ static const char *const help_keys[][2] = {
     {"I", "import a WAV as a new track"},
     {"M", "playback monitoring on and off"},
     {"B", "show or hide the visualiser panel"},
+    {"N", "the spectrum of the selected audio, and taking noise out of it"},
     {"V", "the next visualiser style"},
     {"1 - 6", "a visualiser style outright"},
     {"drag", "select audio; ctrl+click adds a track to the selection"},
@@ -1021,9 +1112,17 @@ void app_draw_frame(app *a, const aud_engine_status *st)
   viz.x = 0.0f;
   viz.width = w;
   viz.y = y;
-  viz.height = a->viz_open ? a->viz_height : APP_VIZ_BAR_H;
-  /* the tracks come first when the window is short: the visualiser is a
-   * readout, and a readout should not push the work off the screen */
+  viz.height = APP_VIZ_BAR_H;
+  if (a->drawer == APP_DRAWER_VIZ)
+  {
+    viz.height = a->viz_height;
+  }
+  else if (a->drawer == APP_DRAWER_SPECTRUM)
+  {
+    viz.height = APP_FIX_OPEN_H;
+  }
+  /* the tracks come first when the window is short: the drawer is a readout,
+   * and a readout should not push the work off the screen */
   if (viz.y + viz.height > status.y - APP_RULER_H - 80.0f)
   {
     viz.height = status.y - APP_RULER_H - 80.0f - viz.y;
@@ -1055,7 +1154,7 @@ void app_draw_frame(app *a, const aud_engine_status *st)
                             tracks.y,
                             tracks.width - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W,
                             tracks.height});
-  draw_viz_panel(a, viz);
+  draw_drawer(a, viz);
 
   /*
    * The cursor is where the next edit goes; the playhead is where the audio

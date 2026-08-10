@@ -27,9 +27,15 @@
  */
 #define ENGINE_TAKE_SECONDS 4.0
 
-/* Monitoring gain is carried between threads as an integer in thousandths. */
+/* Gains are carried between threads as an integer in thousandths. */
 #define ENGINE_GAIN_SCALE 1000
-#define ENGINE_GAIN_MAX 2000 /* +6 dB */
+#define ENGINE_GAIN_MAX 2000 /* +6 dB, which is as far as monitoring goes */
+
+/*
+ * The capture gain goes further, because it is correcting an interface rather
+ * than setting a comfortable listening level. See audio/format.h.
+ */
+#define ENGINE_INPUT_GAIN_MAX ((int)(AUD_GAIN_MAX * ENGINE_GAIN_SCALE))
 
 struct aud_engine
 {
@@ -41,6 +47,13 @@ struct aud_engine
   atomic_int running;      /* cleared to ask the capture thread to finish */
   atomic_int monitor_want; /* the UI's intent, applied by the capture thread */
   atomic_int monitor_gain; /* thousandths */
+  /*
+   * The capture gain, in thousandths. Read by the capture thread once per
+   * period and written by the window whenever the knob moves, which is the
+   * same arrangement monitor_gain has and for the same reason: a period is a
+   * few milliseconds, so a change lands within one and neither side waits.
+   */
+  atomic_int input_gain;
 
   /* -- protected by lock -------------------------------------------------- */
   aud_engine_state state;
@@ -369,6 +382,21 @@ static void *capture_thread(void *arg)
       continue;
     }
 
+    /*
+     * The capture gain, before anything looks at the period: the peak below,
+     * the meter it feeds, the visualiser, the monitor and the take all then
+     * describe the same signal - the one going in the file.
+     */
+    {
+      int want = atomic_load_explicit(&e->input_gain, memory_order_relaxed);
+
+      if (want != ENGINE_GAIN_SCALE)
+      {
+        aud_format_gain(e->hw_buf, (size_t)got * e->dev.channels, e->dev.format,
+                        (double)want / (double)ENGINE_GAIN_SCALE);
+      }
+    }
+
     peak = aud_format_peak(e->hw_buf, (size_t)got, e->dev.channels, e->dev.format);
 
     /*
@@ -532,6 +560,7 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   atomic_init(&e->running, 1);
   atomic_init(&e->monitor_want, 0);
   atomic_init(&e->monitor_gain, ENGINE_GAIN_SCALE);
+  atomic_init(&e->input_gain, ENGINE_GAIN_SCALE); /* the device's own level */
 
   if (pthread_create(&e->thread, NULL, capture_thread, e) != 0)
   {
@@ -887,6 +916,39 @@ void aud_engine_set_monitor_gain(aud_engine *e, float gain)
   }
 
   atomic_store_explicit(&e->monitor_gain, scaled, memory_order_relaxed);
+}
+
+void aud_engine_set_input_gain(aud_engine *e, float gain)
+{
+  int scaled;
+
+  if (e == NULL)
+  {
+    return;
+  }
+
+  scaled = (int)(gain * (float)ENGINE_GAIN_SCALE + 0.5f);
+  if (scaled < 0)
+  {
+    scaled = 0;
+  }
+  if (scaled > ENGINE_INPUT_GAIN_MAX)
+  {
+    scaled = ENGINE_INPUT_GAIN_MAX;
+  }
+
+  atomic_store_explicit(&e->input_gain, scaled, memory_order_relaxed);
+}
+
+float aud_engine_input_gain(const aud_engine *e)
+{
+  if (e == NULL)
+  {
+    return 1.0f;
+  }
+
+  return (float)atomic_load_explicit(&e->input_gain, memory_order_relaxed) /
+         (float)ENGINE_GAIN_SCALE;
 }
 
 int aud_engine_monitor_wanted(const aud_engine *e)

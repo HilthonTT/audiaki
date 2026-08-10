@@ -113,7 +113,8 @@ _audiaki()
         # numbers, with nothing worth guessing
         -t | --duration | -p | --period | -n | --periods | --fps | --bars | --a4 | \
         --tune-min | --tune-max | \
-        --preroll | --pre-roll | --monitor-gain | --click | --click-beats | \
+        --preroll | --pre-roll | --monitor-gain | --gain | --input-gain | \
+        --click | --click-beats | \
         --click-gain | --latency)
             return
             ;;
@@ -130,7 +131,7 @@ _audiaki()
               --periods --output --force --take --dir --prompt --no-prompt
               --preroll --note --no-metadata
               --spectrum --no-meter
-              --monitor --monitor-device --monitor-gain
+              --monitor --monitor-device --monitor-gain --gain
               --click --click-beats --click-subdiv --click-gain --latency
               --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
               --info --play --shuffle --repeat --repeat-one --json
@@ -191,7 +192,8 @@ _audiaki_gui()
             mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 5 6 7 8 12" -- "$cur")
             return
             ;;
-        --video-fps | --preroll | --pre-roll | --latency | --click-gain)
+        --video-fps | --preroll | --pre-roll | --latency | --click-gain | --gain | \
+        --input-gain)
             return
             ;;
     esac
@@ -200,7 +202,7 @@ _audiaki_gui()
 
     opts="--device --backend --rate --channels --take --dir --no-dialog --style
           --preroll --no-overdub --latency
-          --tempo --click --click-beats --click-gain --grid --loop
+          --tempo --click --click-beats --click-gain --gain --grid --loop
           --video --video-silent --video-size --video-fps --monitor
           --verbose --help"
     mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")

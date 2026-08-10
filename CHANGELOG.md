@@ -9,6 +9,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `--gain X`, and an **in** slider on the desktop app's status bar, for an input
+  with no usable level control of its own - a line input, a cheap USB box, a
+  card whose capture volume ALSA does not expose. A multiplier from 0.0 to 16.0,
+  or `gain = 2.0` in the config file for an interface that is quiet by the same
+  amount every time it is plugged in.
+
+  Unlike `--monitor-gain`, this one reaches the file, and everything about how
+  it is built follows from that. It goes on each period the instant it arrives,
+  ahead of the meter, the spectrum, the pre-roll and monitoring, so all of them
+  describe the recording rather than the device and a gain set too high reads as
+  CLIP while there is still time to turn it down. What the meter says is what
+  lands in the file. The slider sits beside the meter rather than up in the
+  transport bar for the same reason - setting an input level means watching a
+  needle.
+
+  Samples pushed past full scale are held there rather than wrapped, which would
+  turn a loud note into a burst of noise, and the count of them is reported when
+  the take ends and names the gain as the cause rather than blaming the device.
+  Rounded rather than truncated, and the rounding happens before the bounds are
+  checked, so a sample that rounds up onto full scale is held there instead of
+  wrapping to the opposite polarity.
+
+  It is a last resort and the documentation says so. A gain stage ahead of a
+  converter captures more of its range; this only scales the range already
+  captured, so against a take brought up afterwards it buys nothing but the
+  convenience - and it can clip a recording in a way nothing downstream will
+  undo, where a quiet 24-bit take is merely quiet.
+
+- A spectrum of what you recorded, in the desktop app's drawer beside the
+  visualiser, that you can draw on to take noise out of a take - `N`, or the
+  **Spectrum** arrow. Frequency across the bottom on a log scale, level up the
+  side, and three traces: the loudest each frequency ever got, the average, and
+  what you would be left with after the edit currently drawn.
+
+  The graph *is* the edit. There is no list of filters kept in step with a
+  picture of them - the line on screen is the gain curve, drawing on it writes
+  to that curve, and **Apply** multiplies the audio by it. So the obvious
+  gesture is the right one: a hum is a spike standing out of the floor around
+  it, so you drag the spike down to the floor and it is gone. Right-drag puts a
+  band back; the brush slider, or the wheel over the graph, sets how wide a
+  stroke is.
+
+  **Find hum** looks for a steady tone between 30 and 130 Hz, and **Notch**
+  takes it *and its harmonics* out in one go. The harmonics are the point: mains
+  hum is never the fundamental alone, and taking 50 Hz out leaves 100, 150 and
+  200 Hz buzzing away. It scores candidates on the quietest each frequency ever
+  got rather than the average, which is what lets it tell a hum from a note - a
+  hum is in every window and cannot fall below itself, while a bass note comes
+  and goes.
+
+  For hiss, which has no spike to point at, there is a noise profile subtracted
+  from every frame. **Learn** takes a stretch you have selected as being nothing
+  but noise; **Guess** works it out from whatever is selected with no silent
+  stretch needed, by taking the quietest each frequency ever fell to - which for
+  a steady noise is the noise itself. Two sliders decide how hard it is
+  subtracted and how far down it may pull, the second because driving a bin to
+  nothing between two loud ones is what makes spectral noise reduction warble.
+
+  Overlapping Hann windows, 4096 points at 75% overlap, resynthesised by
+  overlap-add. The add divides by the window energy that actually landed on each
+  output sample rather than by the constant it comes to in the middle, so a flat
+  curve returns the input sample for sample including at the two ends rather
+  than fading in and out of the edit. Bands are eased over a few bins at each
+  edge, because a wall in the frequency domain is a ring in the time domain: a
+  brick-wall notch under a bass note does not remove a hum, it removes a hum and
+  adds a chirp after every string it was under.
+
+  Applying is one press of `ctrl+Z` like any other edit. Unlike every other edit
+  it really does rewrite audio, so it costs a moment and some memory on a long
+  range - and it writes a `cleaned-NNN.wav` beside the takes as it goes, because
+  a session records which parts of which files sit where and a block that came
+  from nowhere could not be saved. An undo leaves that file rather than deleting
+  it: redo still points at the block, and a file removed under it would turn
+  redo into silence.
+
 - Takes are no longer capped at 4 GB. A stamped take reserves 36 bytes for a
   `ds64` chunk, and becomes an RF64 file - the format EBU Tech 3306 defines and
   the ITU calls BW64 - if the payload ever needs it. Three and a half hours of

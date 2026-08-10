@@ -257,9 +257,35 @@ layer converts, as in
 .BR \-\-monitor\-gain " " \fIX\fR
 Scale what is monitored, from 0.0 (silent) to 2.0 (+6 dB), default 1.0. Implies
 .BR \-\-monitor .
-This is the monitoring level and nothing else: the file is written from the
-samples the device delivered, so a quiet monitor does not make a quiet take, and
-the meter does not move with it. It does not touch the click either.
+This is the monitoring level and nothing else: a quiet monitor does not make a
+quiet take, and the meter does not move with it. It does not touch the click
+either. See
+.B \-\-gain
+for the one that does reach the file.
+.TP
+.BR \-\-gain " " \fIX\fR
+Scale the capture on the way in, from 0.0 (silence) to 16.0 (+24 dB), default
+1.0. Unlike
+.BR \-\-monitor\-gain ,
+this one reaches the file.
+.IP
+For an input with no usable level control of its own \- a line input, a cheap
+USB interface, a card whose capture volume ALSA does not expose. Turn the
+hardware up first where there is a knob to turn: a gain stage ahead of the
+converter captures more of its range, where this only scales the range already
+captured.
+.IP
+Applied to each period as it arrives, before the meter, the spectrum, the
+pre\-roll and monitoring, so all of them describe the recording rather than the
+device. Samples pushed past full scale are held there rather than wrapped, and
+the count of them is reported when the take ends \- a gain set too high damages
+the take in a way nothing afterwards will undo, where a take that came in quiet
+is merely quiet and can be brought up later without loss.
+.IP
+Settable once as
+.I gain
+in the configuration file; see
+.BR FILES .
 .TP
 .BR \-\-click " " \fIBPM\fR
 Play a metronome at
@@ -1209,6 +1235,15 @@ it late, so the take is placed that much earlier than the button was pressed.
 Left out, it is estimated from the capture and playback buffers, which is a
 starting point rather than a measurement \- see
 .BR audiaki\-gui (1).
+.TP
+.B gain
+Gain added to the recording itself, as a multiplier from 0.0 to 16.0. The same
+setting as
+.BR \-\-gain ,
+and worth keeping here rather than typing when it corrects a property of the
+interface rather than of the session. The desktop application reads it too, as
+the starting position of its input gain slider. Left out, the take is the
+samples the device delivered.
 .RE
 .IP
 For example:
@@ -1218,6 +1253,7 @@ For example:
 take_dir = ~/Takes
 prompt = auto
 latency_ms = 14
+gain = 2.0
 .RE
 .fi
 .SH EXIT STATUS

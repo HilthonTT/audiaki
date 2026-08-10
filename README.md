@@ -113,7 +113,9 @@ copies, pastes, splits, trims and fades with 64 steps of undo, saves the session
 as a `.aki` file and exports a WAV. A session refers to its takes rather than
 containing them, so it is a few kilobytes of readable text that `audiaki
 --render` can mix down without a window. The visualiser is a panel of it you can
-shut. Every option, the meter, the tuner, pre-roll, monitoring, the
+shut, and beside it is a spectrum of what you recorded that you can draw on —
+drag a mains hum off the graph, or subtract a hiss, and the take is saved as
+though it was never there. Every option, the meter, the tuner, pre-roll, monitoring, the
 metronome, take metadata, playback, `--json` output and troubleshooting:
 [docs/USAGE.md](docs/USAGE.md), `man audiaki`, or
 `audiaki --help`. The window, its keys and its visualisers:

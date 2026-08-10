@@ -175,6 +175,22 @@ void aud_engine_set_monitor(aud_engine *e, int enabled);
 /* Monitoring level, clamped to [0.0, 2.0] so a quiet take can be pushed. */
 void aud_engine_set_monitor_gain(aud_engine *e, float gain);
 
+/*
+ * The capture gain, clamped to [AUD_GAIN_MIN, AUD_GAIN_MAX].
+ *
+ * Unlike the monitoring level above, this one reaches the file - it is put on
+ * each period as it arrives, before the meter, the visualiser, the monitor or
+ * the take see it, so everything that says how loud the input is is saying it
+ * about the recording. See audio/format.h.
+ *
+ * Takes effect within a period, so it can be turned while armed and the meter
+ * follows it. A take already being written is not re-levelled: what has been
+ * written has been written, and the rest of the take arrives at the new gain.
+ */
+void aud_engine_set_input_gain(aud_engine *e, float gain);
+
+float aud_engine_input_gain(const aud_engine *e);
+
 int aud_engine_monitor_wanted(const aud_engine *e);
 
 /*

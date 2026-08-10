@@ -57,6 +57,9 @@ void app_usage(FILE *out, const app *a)
           "      --loop           come up looping what Play is given\n"
           "      --latency MS     round-trip latency to place an overdub by\n"
           "                       (default: estimated from the buffers)\n"
+          "      --gain X         gain added to the recording itself, 0.0 to\n"
+          "                       16.0; unlike monitoring this reaches the take,\n"
+          "                       so watch the meter (default: 1.0)\n"
           "  -M, --monitor        start with playback monitoring on\n"
           "  -v, --verbose        log device negotiation to the terminal\n"
           "  -h, --help           show this and exit\n"
@@ -72,7 +75,8 @@ void app_usage(FILE *out, const app *a)
           "Files named on the command line are opened as tracks, in order.\n"
           "\n"
           "keys: space record or pause, S stop, I import, M monitor, B the\n"
-          "      visualiser panel, V style, 1-6 a style outright, F fit,\n"
+          "      visualiser panel, N the spectrum panel, V style,\n"
+          "      1-6 a style outright, F fit,\n"
           "      L loop, C metronome, G grid, -/+ tempo,\n"
           "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
           "      ctrl+wheel zoom, ? the list of them in the window\n",
@@ -243,6 +247,22 @@ int app_parse_args(app *a, int argc, char **argv)
                   AUD_LATENCY_MAX_MS);
         return 2;
       }
+    }
+    /*
+     * The one gain that reaches the take, for an interface with no usable knob
+     * on it. The window's own slider starts here - see audio/format.h.
+     */
+    else if (strcmp(arg, "--gain") == 0 || strcmp(arg, "--input-gain") == 0)
+    {
+      double gain;
+
+      if (parse_double(value, AUD_GAIN_MIN, AUD_GAIN_MAX, &gain) != 0)
+      {
+        aud_error("bad gain '%s' (a multiplier, %.1f to %.1f, where 1.0 is unchanged)",
+                  value, AUD_GAIN_MIN, AUD_GAIN_MAX);
+        return 2;
+      }
+      a->input_gain = (float)gain;
     }
     /*
      * --tempo sets the grid, --click sets it and turns the metronome on. Two

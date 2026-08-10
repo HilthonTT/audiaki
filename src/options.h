@@ -89,10 +89,16 @@ typedef struct
   int monitor;                /* hear the input while it is being recorded */
   const char *monitor_device; /* output to monitor through; NULL = the default */
   double monitor_gain;        /* what the monitor is scaled by, not the file */
-  double click_bpm;           /* metronome tempo; 0 = no metronome */
-  unsigned click_beats;       /* beats to a bar; the first of each is accented */
-  unsigned click_subdiv;      /* ticks to a beat; 1 is the beat undivided */
-  double click_gain;          /* how loud the click is, on the same scale as above */
+  /*
+   * What the capture is scaled by on the way in - and unlike the one above,
+   * this one does reach the file. 1.0 leaves the samples exactly as the device
+   * delivered them, which is what audiaki does unless asked otherwise.
+   */
+  double input_gain;
+  double click_bpm;      /* metronome tempo; 0 = no metronome */
+  unsigned click_beats;  /* beats to a bar; the first of each is accented */
+  unsigned click_subdiv; /* ticks to a beat; 1 is the beat undivided */
+  double click_gain;     /* how loud the click is, on the same scale as above */
   /*
    * Round trip to strike --click ahead of the grid by, so it is heard on the
    * beat rather than a buffer after it. Negative means nothing was said and it
