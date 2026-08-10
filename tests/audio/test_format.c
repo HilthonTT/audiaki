@@ -178,6 +178,100 @@ TEST(to_float_edge_cases)
   CHECK_EQ_DBL(out[0], 7.0, 1e-9);
 }
 
+/*
+ * The encoder the float backends land on. JACK and CoreAudio both hand over
+ * float and neither has an integer format to negotiate, so this is the only
+ * thing standing between what they deliver and what goes into the file.
+ */
+
+TEST(from_float_round_trips_through_every_layout)
+{
+  static const aud_format layouts[] = {AUD_FORMAT_S16_LE, AUD_FORMAT_S24_3LE,
+                                       AUD_FORMAT_S24_LE, AUD_FORMAT_S32_LE};
+  const float in[6] = {0.0f, 0.5f, -0.5f, 0.25f, -1.0f, 0.75f};
+  unsigned char packed[6 * 4];
+  float out[6];
+
+  for (size_t i = 0; i < sizeof(layouts) / sizeof(layouts[0]); i++)
+  {
+    aud_format_from_float(packed, in, 3, 2, layouts[i]);
+    aud_format_to_float(out, packed, 3, 2, layouts[i]);
+
+    /*
+     * A whole 16 bit step is 1/32768, so the tolerance has to clear one of
+     * those for the narrowest layout rather than the widest.
+     */
+    for (int s = 0; s < 6; s++)
+    {
+      CHECK_EQ_DBL(out[s], in[s], 1.0 / 16384.0);
+    }
+  }
+}
+
+TEST(from_float_writes_the_bytes_little_endian)
+{
+  const float in[1] = {0.5f};
+  unsigned char packed[4];
+
+  /* half of full scale, in each container, read back a byte at a time */
+  aud_format_from_float(packed, in, 1, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(aud_rd_s16le(packed), 16383);
+
+  aud_format_from_float(packed, in, 1, 1, AUD_FORMAT_S24_3LE);
+  CHECK_EQ_INT(aud_rd_s24le(packed), 4194303);
+
+  aud_format_from_float(packed, in, 1, 1, AUD_FORMAT_S24_LE);
+  CHECK_EQ_INT(aud_rd_s32le(packed), 4194303);
+
+  aud_format_from_float(packed, in, 1, 1, AUD_FORMAT_S32_LE);
+  CHECK_EQ_INT(aud_rd_s32le(packed), 1073741823);
+}
+
+TEST(from_float_clamps_rather_than_wrapping)
+{
+  /* a plugin chain feeding a JACK port routinely goes past full scale */
+  const float in[4] = {2.0f, -2.0f, 1.0f, -1.0f};
+  unsigned char packed[4 * 2];
+
+  aud_format_from_float(packed, in, 4, 1, AUD_FORMAT_S16_LE);
+
+  CHECK_EQ_INT(aud_rd_s16le(packed), 32767);
+  CHECK_EQ_INT(aud_rd_s16le(packed + 2), -32767);
+  CHECK_EQ_INT(aud_rd_s16le(packed + 4), 32767);
+  CHECK_EQ_INT(aud_rd_s16le(packed + 6), -32767);
+}
+
+TEST(from_float_full_scale_does_not_overflow_the_widest_container)
+{
+  const float in[2] = {1.0f, -1.0f};
+  unsigned char packed[2 * 4];
+
+  /*
+   * The one that a float multiply gets wrong: 2147483648.0f * 1.0f does not
+   * fit an int32_t, and the conversion is undefined rather than merely wrong.
+   */
+  aud_format_from_float(packed, in, 2, 1, AUD_FORMAT_S32_LE);
+  CHECK_EQ_INT(aud_rd_s32le(packed), 2147483647);
+  CHECK_EQ_INT(aud_rd_s32le(packed + 4), -2147483647);
+}
+
+TEST(from_float_edge_cases)
+{
+  const float in[2] = {0.5f, 0.5f};
+  unsigned char packed[8];
+
+  /* an unknown format writes nothing rather than a length of zeros */
+  memset(packed, 0xEE, sizeof(packed));
+  aud_format_from_float(packed, in, 2, 1, AUD_FORMAT_UNKNOWN);
+  CHECK_EQ_INT(packed[0], 0xEE);
+
+  aud_format_from_float(packed, in, 0, 1, AUD_FORMAT_S16_LE);
+  aud_format_from_float(packed, in, 2, 0, AUD_FORMAT_S16_LE);
+  aud_format_from_float(packed, NULL, 2, 1, AUD_FORMAT_S16_LE);
+  aud_format_from_float(NULL, in, 2, 1, AUD_FORMAT_S16_LE);
+  CHECK_EQ_INT(packed[0], 0xEE);
+}
+
 TEST(pick_channel_takes_one_of_the_interleave)
 {
   /* three frames of stereo s16: left counts up, right counts down */
@@ -542,6 +636,11 @@ int main(void)
   RUN(to_float_agrees_across_the_24_bit_layouts);
   RUN(to_float_averages_nothing_where_to_mono_does);
   RUN(to_float_edge_cases);
+  RUN(from_float_round_trips_through_every_layout);
+  RUN(from_float_writes_the_bytes_little_endian);
+  RUN(from_float_clamps_rather_than_wrapping);
+  RUN(from_float_full_scale_does_not_overflow_the_widest_container);
+  RUN(from_float_edge_cases);
   RUN(pick_channel_takes_one_of_the_interleave);
   RUN(pick_channel_carries_the_whole_container);
   RUN(pick_channel_agrees_with_the_float_decoder);

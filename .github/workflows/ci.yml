@@ -48,6 +48,58 @@ jobs:
           fi
           test ! -e out.wav
 
+  build-all-backends:
+    name: build (every Linux backend)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The job above builds what a bare machine has, which is ALSA alone - so
+      # without this one the PipeWire and JACK backends are never compiled by
+      # CI at all, and a warning in either reaches a release. Everything is
+      # present here on purpose, so every backend this platform can build is
+      # built with warnings as errors.
+      - name: Install every backend's headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libpipewire-0.3-dev \
+                                  libjack-jackd2-dev
+
+      - name: Build with warnings as errors
+        run: make STRICT=1
+
+      - name: Check the backends are all in
+        run: |
+          make help
+          for backend in alsa pipewire jack; do
+            ./build/audiaki --help | grep -q "$backend" || {
+              echo "the $backend backend was not compiled in" >&2
+              exit 1
+            }
+          done
+
+  build-macos:
+    name: build (macOS, CoreAudio)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # The only place the CoreAudio backend is compiled, and the only place
+      # the build is exercised without ALSA present at all - the two are the
+      # same test, because ALSA does not exist here and a Makefile that assumed
+      # it would fail at the link rather than at a missing header.
+      - name: Build with warnings as errors
+        run: make STRICT=1
+
+      - name: Run unit tests
+        run: make STRICT=1 test
+
+      - name: Smoke test the binary
+        run: |
+          ./build/audiaki --version
+          ./build/audiaki --help | grep -q coreaudio
+          ./build/audiaki --list
+
   tests-without-alsa:
     name: unit tests (no ALSA installed)
     runs-on: ubuntu-latest

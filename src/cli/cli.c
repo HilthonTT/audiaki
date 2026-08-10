@@ -224,8 +224,8 @@ void cli_defaults(aud_options *opts)
   if (env_backend != NULL && *env_backend != '\0' &&
       aud_backend_parse(env_backend, &opts->backend) != 0)
   {
-    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
-             env_backend);
+    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected %s", env_backend,
+             aud_backend_list());
     opts->backend = AUD_BACKEND_AUTO;
   }
 }
@@ -572,7 +572,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     case OPT_BACKEND:
       if (aud_backend_parse(optarg, &opts->backend) != 0)
       {
-        bad_value("--backend", optarg, "auto, pipewire or alsa");
+        bad_value("--backend", optarg, aud_backend_list());
         return CLI_EXIT_USAGE;
       }
       break;

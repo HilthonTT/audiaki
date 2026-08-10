@@ -10,6 +10,9 @@
 #   sound server rather than to the card. Without them audiaki still builds and
 #   records, through ALSA alone; pass --no-pipewire to skip them.
 #
+#   the JACK development headers, which build the backend that joins a JACK
+#   graph. Only useful on a machine that runs one; pass --no-jack to skip them.
+#
 #   ffmpeg, which `audiaki --visualize` runs to encode a video. It is not
 #   needed to build audiaki or to record with it; pass --no-ffmpeg to skip it.
 #
@@ -18,8 +21,11 @@
 #   line recorder, and useless on a headless machine; pass --no-gui to skip
 #   them.
 #
+# This is for Linux. macOS needs none of it: CoreAudio is part of the system,
+# and the Xcode command line tools bring the compiler and make.
+#
 # Usage: ./scripts/install-deps.sh [--dry-run] [--no-ffmpeg] [--no-gui]
-#                                  [--no-pipewire]
+#                                  [--no-pipewire] [--no-jack]
 
 set -eu
 
@@ -27,14 +33,17 @@ DRY_RUN=0
 WANT_FFMPEG=1
 WANT_GUI=1
 WANT_PIPEWIRE=1
+WANT_JACK=1
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
     --no-ffmpeg) WANT_FFMPEG=0 ;;
     --no-gui) WANT_GUI=0 ;;
     --no-pipewire) WANT_PIPEWIRE=0 ;;
+    --no-jack) WANT_JACK=0 ;;
     *)
-      echo "usage: $0 [--dry-run] [--no-ffmpeg] [--no-gui] [--no-pipewire]" >&2
+      echo "usage: $0 [--dry-run] [--no-ffmpeg] [--no-gui] [--no-pipewire]" \
+           "[--no-jack]" >&2
       exit 2
       ;;
   esac
@@ -81,6 +90,23 @@ pipewire_packages() {
   esac
 }
 
+# jack.pc is what the -dev package installs, and building against jackd2's is
+# what a client wants whichever server ends up running: jackd1, jackd2 and
+# pipewire-jack all answer the same library.
+jack_packages() {
+  if [ "$WANT_JACK" -eq 0 ]; then
+    return
+  fi
+  case "$1" in
+    apt) echo "libjack-jackd2-dev" ;;
+    dnf) echo "jack-audio-connection-kit-devel" ;;
+    pacman) echo "jack2" ;;
+    zypper) echo "libjack-devel" ;;
+    apk) echo "jack-dev" ;;
+    *) ;;
+  esac
+}
+
 # The GUI package names are not: every distribution splits and capitalises the
 # X11 libraries differently, so each branch names its own set. raylib is built
 # against the X11 backend, which works under Wayland through XWayland.
@@ -116,29 +142,34 @@ gui_packages() {
 if command -v apt-get >/dev/null 2>&1; then
   GUI=$(gui_packages apt)
   PW=$(pipewire_packages apt)
+  JACK=$(jack_packages apt)
   run apt-get update
   # shellcheck disable=SC2086
-  run apt-get install -y build-essential pkg-config libasound2-dev $PW $FFMPEG $GUI
+  run apt-get install -y build-essential pkg-config libasound2-dev $PW $JACK $FFMPEG $GUI
 elif command -v dnf >/dev/null 2>&1; then
   GUI=$(gui_packages dnf)
   PW=$(pipewire_packages dnf)
+  JACK=$(jack_packages dnf)
   # shellcheck disable=SC2086
-  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $PW $FFMPEG $GUI
+  run dnf install -y gcc make pkgconf-pkg-config alsa-lib-devel $PW $JACK $FFMPEG $GUI
 elif command -v pacman >/dev/null 2>&1; then
   GUI=$(gui_packages pacman)
   PW=$(pipewire_packages pacman)
+  JACK=$(jack_packages pacman)
   # shellcheck disable=SC2086
-  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $PW $FFMPEG $GUI
+  run pacman -S --needed --noconfirm base-devel pkgconf alsa-lib $PW $JACK $FFMPEG $GUI
 elif command -v zypper >/dev/null 2>&1; then
   GUI=$(gui_packages zypper)
   PW=$(pipewire_packages zypper)
+  JACK=$(jack_packages zypper)
   # shellcheck disable=SC2086
-  run zypper install -y gcc make pkg-config alsa-devel $PW $FFMPEG $GUI
+  run zypper install -y gcc make pkg-config alsa-devel $PW $JACK $FFMPEG $GUI
 elif command -v apk >/dev/null 2>&1; then
   GUI=$(gui_packages apk)
   PW=$(pipewire_packages apk)
+  JACK=$(jack_packages apk)
   # shellcheck disable=SC2086
-  run apk add build-base pkgconf alsa-lib-dev $PW $FFMPEG $GUI
+  run apk add build-base pkgconf alsa-lib-dev $PW $JACK $FFMPEG $GUI
 else
   cat >&2 <<'EOF'
 error: no supported package manager found.
@@ -150,6 +181,8 @@ Install these yourself and re-run `make`:
   - the ALSA development headers (libasound2-dev / alsa-lib-devel / alsa-lib)
   - the PipeWire development headers, if you want the PipeWire backend
     (libpipewire-0.3-dev / pipewire-devel / libpipewire / pipewire-dev)
+  - the JACK development headers, if you want the JACK backend
+    (libjack-jackd2-dev / jack-audio-connection-kit-devel / jack2 / jack-dev)
   - ffmpeg, if you want `audiaki --visualize` to render videos
   - the OpenGL and X11 development headers, if you want the audiaki-gui
     desktop app: GL, X11, Xrandr, Xi, Xcursor, Xinerama and xkbcommon

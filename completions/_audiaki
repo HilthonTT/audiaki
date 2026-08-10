@@ -24,7 +24,7 @@ _audiaki() {
 
   args=(
     '(-D --device)'{-D,--device}'[capture device]:device:_audiaki_devices'
-    '--backend[audio system to talk to]:backend:(auto pipewire alsa)'
+    '--backend[audio system to talk to]:backend:(auto pipewire alsa jack coreaudio)'
     '(-r --rate)'{-r,--rate}'[sample rate in Hz]:rate:(44100 48000 88200 96000 192000)'
     '(-c --channels)'{-c,--channels}'[how many channels to capture]:channels:(1 2 4 6 8)'
     '--channel[write one capture channel, or mix them all, as mono]:channel:(1 2 3 4 5 6 7 8 mix)'

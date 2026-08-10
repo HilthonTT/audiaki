@@ -47,7 +47,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | Option | Description |
 | --- | --- |
 | `-D, --device NAME` | Capture device (default `default`, or `$AUDIAKI_DEVICE`) |
-| `--backend NAME` | `auto`, `pipewire` or `alsa` (default `auto`, or `$AUDIAKI_BACKEND`) |
+| `--backend NAME` | `auto`, `pipewire`, `alsa`, `jack` or `coreaudio` (default `auto`, or `$AUDIAKI_BACKEND`) |
 | `-r, --rate HZ` | Sample rate (default 44100) |
 | `-c, --channels N` | How many channels to capture (default 2) |
 | `--channel N\|mix` | Write only capture channel `N`, counting from 1, as a mono take — or `mix` for every channel averaged into one |
@@ -96,26 +96,78 @@ Set `AUDIAKI_DEVICE=hw:CARD=Box,DEV=0` to stop typing `-D` every time.
 
 ## Backends
 
-audiaki talks to one of two audio systems, and picks without being asked: if a
-PipeWire daemon answers, it uses PipeWire; otherwise ALSA. `--backend` overrides
-that, and `$AUDIAKI_BACKEND` sets a default. Asking for a backend that is not
-there is an error rather than a quiet downgrade.
+audiaki talks to one of four audio systems, and picks without being asked: the
+first of PipeWire, CoreAudio and ALSA that this build has and that answers.
+`--backend` overrides that, and `$AUDIAKI_BACKEND` sets a default. Asking for a
+backend that is not there is an error rather than a quiet downgrade.
+
+Which are in a given build depends on where it was compiled: ALSA and PipeWire
+on Linux, CoreAudio on macOS, JACK on either where the headers were present.
+`--help` lists the ones you actually have, and so does `make help`.
 
 ```sh
 audiaki --list                   # whichever answers
 audiaki --backend alsa --list    # the cards, whatever else is running
 audiaki --backend pipewire -t 30 take01.wav
+audiaki --backend jack -D system -t 30 take01.wav
 ```
 
-|  | `pipewire` | `alsa` |
-| --- | --- | --- |
-| Shares the interface | Yes, with anything else | No, one program at a time |
-| Device names | `alsa_input.usb-...` — as the desktop shows them | `hw:CARD=Box,DEV=0` |
-| Devices appearing | The server says so, at once | Watches `/dev/snd`, and sweeps |
-| Format | Anything asked for, by conversion | What the hardware offers |
-| Records other apps | Yes, through a sink's monitor | No |
-| Monitoring | Any rate; the server resamples | Only if the output takes the capture rate |
-| Needs | A running daemon | Nothing |
+|  | `pipewire` | `alsa` | `jack` | `coreaudio` |
+| --- | --- | --- | --- | --- |
+| Where | Linux | Linux | Linux, macOS | macOS |
+| Shares the interface | Yes, with anything else | No, one program at a time | Yes, with the graph | Yes, with anything else |
+| Device names | `alsa_input.usb-...` — as the desktop shows them | `hw:CARD=Box,DEV=0` | a client name: `system`, `ardour` | the device UID |
+| Devices appearing | The server says so, at once | Watches `/dev/snd`, and sweeps | The server says so, at once | The HAL says so, at once |
+| Rate | Anything asked for | What the hardware offers | The server's, and only the server's | Moves the device to it |
+| Format | Anything asked for, by conversion | What the hardware offers | Float, written as `-f` asks | Float, written as `-f` asks |
+| Records other apps | Yes, through a sink's monitor | No | Yes, any client's output ports | No |
+| Monitoring | Any rate; the server resamples | Only if the output takes the capture rate | Any rate; audiaki resamples | Any rate; audiaki resamples |
+| Needs | A running daemon | Nothing | A running server | Nothing |
+
+### JACK
+
+A JACK "device" is a client on the graph rather than a card, so `-D` takes a
+client name and `--list` shows one row per client. `-D system` is the interface;
+`-D ardour` is whatever Ardour is putting out. Without `-D`, audiaki connects to
+the graph's physical capture ports.
+
+The server owns the rate and the period, and does not resample. Asking for a
+rate it is not running at gets a warning and the server's rate — restarting
+`jackd` is the only way to change it, and that is not audiaki's to do. Playback
+of a take at another rate is converted on the way out, so `--play` and `-M` work
+regardless.
+
+```sh
+$ audiaki --backend jack --list
+DEVICE                           DESCRIPTION
+system                           system: 2 ports
+
+$ audiaki --backend jack -D system -c 2 -t 30 take01.wav
+```
+
+Recording fewer channels than the client has takes its first ports; asking for
+more than it has records the rest as silence and says so. The ports audiaki
+registers are ordinary JACK ports named `audiaki:in_1` and up, so anything that
+patches a graph can rewire them while a take is running.
+
+### CoreAudio
+
+`-D` takes a device UID — the long stable string `--list` prints — or the
+device's name as it appears in Audio MIDI Setup. The UID is what to put in a
+script: names are neither unique nor fixed, and the UID survives a reboot and a
+replug.
+
+The one thing worth knowing: a rate belongs to the *device* on macOS, not to a
+recording. `-r 48000` moves the device to 48 kHz for everything else using it,
+and audiaki does that rather than silently recording at whatever the last
+application left it at. `--probe` lists the rates a device will take. The
+monitor output is left alone — a convenience is not worth moving the rate of
+whatever else the machine is playing through — so a take at another rate is
+converted on the way out instead.
+
+macOS asks for microphone permission the first time a build records, and until
+it is granted the device opens and delivers silence. It is in System
+Settings > Privacy & Security > Microphone.
 
 A PipeWire sink appears in `--list` alongside the inputs, described as a
 monitor. Recording one captures what is being *played* to it — a browser, a
@@ -759,7 +811,8 @@ Ctrl+C stops immediately, as everywhere else. `--play` reads whatever the reader
 audiaki's own takes: 8/16/24/32-bit PCM and 32/64-bit float, at any rate the
 output will take.
 
-Under PipeWire that is any rate at all, because the server resamples. Under
+Under PipeWire that is any rate at all, because the server resamples, and under
+JACK and CoreAudio it is too, because audiaki resamples on the way out. Under
 ALSA the output has to accept the file's rate directly — audiaki does not
 resample — so a 44.1 kHz take on a device running at 48 kHz reports
 `output wants 48000 Hz but the audio is 44100 Hz` and plays nothing. Use
@@ -835,8 +888,22 @@ start one or use `--backend alsa`. `auto` never produces this: it falls back on
 its own.
 
 **`this build has no pipewire backend`**
-It was compiled without `libpipewire-0.3-dev`. Install it and rebuild;
-`make help` reports which backends are in.
+It was compiled without `libpipewire-0.3-dev`. Install it and rebuild; the line
+after it lists the backends this build does have, and `make help` reports the
+same at build time. The message names `jack` when `libjack-jackd2-dev` was
+missing, and `alsa` or `coreaudio` when the build is simply on the other
+platform — those two are not installable, they are the platform.
+
+**`jack: nothing is connected to the capture ports; recording silence`**
+The graph has no physical capture ports, or the client named with `-D` has no
+outputs. audiaki still records, because the ports are there to be patched: wire
+`audiaki:in_1` to something in `qjackctl` or `jack_connect` and the take fills
+in from that point.
+
+**`requested 44100 Hz, the jack server is running at 48000 Hz`**
+The rate is the server's and is the same for every client on it. Restart `jackd`
+at the rate you want, or record at the server's. The take is at the server's
+rate either way, and the WAV header says so.
 
 **`cannot set 2 channel(s)`**
 The device is mono-only, or wants a different count. Run `--probe` to see the
@@ -860,7 +927,17 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
 
 ## Limitations
 
-- Linux only, through ALSA or PipeWire. No JACK or CoreAudio backend.
+- Linux and macOS: ALSA, PipeWire and JACK on the first, CoreAudio and JACK on
+  the second. No Windows backend, and no PulseAudio one — PulseAudio is reached
+  through ALSA's `pulse` device rather than directly.
+- Under JACK the rate and the period belong to the server and are the same for
+  every client on it. `-r` is warned about rather than honoured, and `-p` sizes
+  audiaki's own buffering rather than the server's period. Restarting `jackd` is
+  the only way to change either, and audiaki does not do that for you.
+- Under CoreAudio a rate belongs to the device rather than to a recording, so
+  `-r` moves it for everything else using that device. The monitor output is
+  left alone, which is why a take at another rate is converted on the way out
+  rather than the output being moved to meet it.
 - Rendering shells out to `ffmpeg`, so the codecs and their licensing are its
   business, not audiaki's.
 - Video is rendered after the take, so a long take with video on means waiting

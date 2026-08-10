@@ -1,10 +1,10 @@
-# audiaki - ALSA capture to WAV
+# audiaki - capture to WAV
 # SPDX-License-Identifier: MIT
 #
 # Common targets:
 #   make            build build/audiaki
 #   make debug      build with -O0, debug info and ASan/UBSan
-#   make test       build and run the unit tests (no ALSA required)
+#   make test       build and run the unit tests (no audio system required)
 #   make check      tests, a clang-format style check and the completions
 #   make install    install into $(PREFIX) (default /usr/local)
 #
@@ -83,28 +83,69 @@ $(shell rm -rf $(OBJ_DIR) $(TEST_DIR))
 $(shell mkdir -p $(BUILD_DIR) && printf '%s' '$(strip $(SANITIZE))' > $(SANITIZE_STAMP))
 endif
 
+# -- backends ----------------------------------------------------------------
+
+# Which of the four are compiled in is decided here and nowhere else: each one
+# absent is a -D that is not passed, and src/backend/backend.c turns that into a
+# backend that reports itself unavailable rather than one that fails to link.
+#
+# Two of them are decided by the platform rather than by a package. ALSA does
+# not exist on macOS and CoreAudio does not exist anywhere else, so neither is
+# something to probe for - asking pkg-config about them would only turn "this is
+# a Mac" into a confusing message about a missing development package.
+UNAME_S := $(shell uname -s)
+
+ifneq ($(UNAME_S),Darwin)
 ALSA_CFLAGS := $(shell $(PKG_CONFIG) --cflags alsa 2>/dev/null)
 ALSA_LIBS   := $(shell $(PKG_CONFIG) --libs alsa 2>/dev/null || echo -lasound)
 ifeq ($(strip $(ALSA_LIBS)),)
 ALSA_LIBS := -lasound
 endif
+HAVE_ALSA := 1
+endif
 
-# PipeWire is optional, the way raylib is: with the headers absent the second
-# backend is simply not compiled and audiaki talks to ALSA as it always has.
-# There is no fallback to hand-written paths here - a machine either has the
+# The frameworks rather than a library: they are part of the system on every Mac
+# that can run this, so there is nothing to install and nothing to detect.
+ifeq ($(UNAME_S),Darwin)
+COREAUDIO_LIBS := -framework CoreAudio -framework AudioToolbox \
+                  -framework AudioUnit -framework CoreFoundation
+HAVE_COREAUDIO := 1
+endif
+
+# PipeWire and JACK are optional, the way raylib is: with the headers absent the
+# backend is simply not compiled and audiaki talks to whatever else is there.
+# There is no fallback to hand-written paths - a machine either has the
 # development package or it does not.
 PIPEWIRE_CFLAGS := $(shell $(PKG_CONFIG) --cflags libpipewire-0.3 2>/dev/null)
 PIPEWIRE_LIBS   := $(shell $(PKG_CONFIG) --libs libpipewire-0.3 2>/dev/null)
 HAVE_PIPEWIRE   := $(if $(strip $(PIPEWIRE_LIBS)),1,)
 
+# jack.pc is what both jackd1 and jackd2 install, and what pipewire-jack
+# installs as well - which is the point: a JACK client built against any of them
+# talks to whichever is running.
+JACK_CFLAGS := $(shell $(PKG_CONFIG) --cflags jack 2>/dev/null)
+JACK_LIBS   := $(shell $(PKG_CONFIG) --libs jack 2>/dev/null)
+HAVE_JACK   := $(if $(strip $(JACK_LIBS)),1,)
+
+ifneq ($(HAVE_ALSA),)
+CPPFLAGS  += -DAUDIAKI_HAVE_ALSA
+endif
 ifneq ($(HAVE_PIPEWIRE),)
 CPPFLAGS  += -DAUDIAKI_HAVE_PIPEWIRE
-BACKEND_STATUS := enabled
-else
-BACKEND_STATUS := alsa only - install libpipewire-0.3-dev to add it
+endif
+ifneq ($(HAVE_JACK),)
+CPPFLAGS  += -DAUDIAKI_HAVE_JACK
+endif
+ifneq ($(HAVE_COREAUDIO),)
+CPPFLAGS  += -DAUDIAKI_HAVE_COREAUDIO
 endif
 
-LDLIBS    += $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lm
+BACKENDS := $(strip $(if $(HAVE_PIPEWIRE),pipewire) $(if $(HAVE_COREAUDIO),coreaudio) \
+                    $(if $(HAVE_ALSA),alsa) $(if $(HAVE_JACK),jack))
+BACKEND_MISSING := $(strip $(if $(HAVE_PIPEWIRE),,libpipewire-0.3-dev) \
+                           $(if $(HAVE_JACK),,libjack-jackd2-dev))
+
+LDLIBS    += $(ALSA_LIBS) $(PIPEWIRE_LIBS) $(JACK_LIBS) $(COREAUDIO_LIBS) -lm
 
 # -- sources -----------------------------------------------------------------
 
@@ -114,8 +155,21 @@ SRC_DIRS  := src src/cli src/cmd src/backend src/audio src/take src/media \
              src/edit src/term src/util
 
 SRCS      := $(sort $(foreach d,$(SRC_DIRS),$(wildcard $(d)/*.c)))
+
+# A backend that is not compiled in does not have its sources compiled either.
+# The naming is the rule: src/backend/{device,monitor}_<backend>.c, so adding a
+# fifth audio system means one more line here and nothing else in this file.
+ifeq ($(HAVE_ALSA),)
+SRCS      := $(filter-out src/backend/%_alsa.c,$(SRCS))
+endif
 ifeq ($(HAVE_PIPEWIRE),)
 SRCS      := $(filter-out src/backend/%_pipewire.c,$(SRCS))
+endif
+ifeq ($(HAVE_JACK),)
+SRCS      := $(filter-out src/backend/%_jack.c,$(SRCS))
+endif
+ifeq ($(HAVE_COREAUDIO),)
+SRCS      := $(filter-out src/backend/%_coreaudio.c,$(SRCS))
 endif
 OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
@@ -186,7 +240,19 @@ GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
 GUI_CORE_OBJS := $(GUI_CORE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
 GUI_CPPFLAGS := -I$(RAYLIB_SRC)
-GUI_SYS_LIBS := $(ALSA_LIBS) $(PIPEWIRE_LIBS) -lGL -lX11 -lm -lpthread -ldl -lrt
+
+# What raylib itself needs, which is the one part of the link that is about the
+# window rather than about audio. macOS has no X11 and no librt; it draws
+# through Cocoa and the system's own OpenGL.
+ifeq ($(UNAME_S),Darwin)
+GUI_PLATFORM_LIBS := -framework Cocoa -framework IOKit -framework CoreVideo \
+                     -framework OpenGL
+else
+GUI_PLATFORM_LIBS := -lGL -lX11 -ldl -lrt
+endif
+
+GUI_SYS_LIBS := $(ALSA_LIBS) $(PIPEWIRE_LIBS) $(JACK_LIBS) $(COREAUDIO_LIBS) \
+                $(GUI_PLATFORM_LIBS) -lm -lpthread
 GUI_LDLIBS   := $(RAYLIB_LIB) $(GUI_SYS_LIBS)
 
 # An uninitialised submodule is not an error: the CLI still builds, and `make`
@@ -201,9 +267,14 @@ HAVE_RAYLIB := $(wildcard $(RAYLIB_SRC)/raylib.h)
 # make escapes a literal '#' inside $(shell ...), and the backslash survives
 # into the program text and stops it compiling for the wrong reason entirely.
 ifneq ($(HAVE_RAYLIB),)
+ifeq ($(UNAME_S),Darwin)
+# Nothing to probe: raylib draws through frameworks that are part of the system.
+HAVE_GLX := yes
+else
 HAVE_GLX := $(shell echo 'int main(void){return 0;}' \
               | $(CC) -x c - -include X11/Xlib.h -include GL/gl.h \
                       -o /dev/null -lX11 -lGL >/dev/null 2>&1 && echo yes)
+endif
 endif
 
 BUILD_GUI := $(if $(HAVE_RAYLIB),$(HAVE_GLX))
@@ -246,18 +317,21 @@ debug:
 $(BIN): $(OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
 
-# The PipeWire and SPA headers use GCC statement expressions, which -Wpedantic
-# rejects in strict ISO mode, so the two backend objects are built without it -
-# the same exception raylib already gets. Everything audiaki itself writes,
-# including the rest of these files, still gets the full warning set.
-$(OBJ_DIR)/backend/device_pipewire.o $(OBJ_DIR)/backend/monitor_pipewire.o: \
+# The PipeWire and SPA headers use GCC statement expressions, and Apple's
+# framework headers are not strict ISO either, so -Wpedantic is dropped for
+# those four objects - the same exception raylib already gets. Everything
+# audiaki itself writes, including the rest of these files, still gets the full
+# warning set; the JACK headers are clean enough not to need the exception.
+$(OBJ_DIR)/backend/device_pipewire.o $(OBJ_DIR)/backend/monitor_pipewire.o \
+$(OBJ_DIR)/backend/device_coreaudio.o $(OBJ_DIR)/backend/monitor_coreaudio.o: \
   CFLAGS := $(filter-out -Wpedantic,$(CFLAGS))
 
 # $(@D) rather than a fixed list of order-only prerequisites: the object tree
 # mirrors src/, so adding a layer must not mean adding a rule here too.
 $(OBJ_DIR)/%.o: src/%.c
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) $(CFLAGS) -c -o $@ $<
+	$(CC) $(CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) $(JACK_CFLAGS) $(CFLAGS) \
+	      -c -o $@ $<
 
 $(BUILD_DIR):
 	@mkdir -p $@
@@ -438,7 +512,10 @@ help:
 	@echo "         format-check install uninstall clean clean-raylib"
 	@echo "vars:    PREFIX=$(PREFIX) CC=$(CC) STRICT=0|1 BUILD_DIR=$(BUILD_DIR)"
 	@echo "         HOTRELOAD=1 builds $(GUI_BIN) with F5 reloading its own code"
-	@echo "gui:     $(GUI_STATUS)"
-	@echo "pipewire: $(BACKEND_STATUS)"
+	@echo "gui:      $(GUI_STATUS)"
+	@echo "backends: $(BACKENDS)"
+ifneq ($(BACKEND_MISSING),)
+	@echo "          install $(BACKEND_MISSING) to add the rest"
+endif
 
 -include $(DEPS)

@@ -53,11 +53,13 @@ interrupted recordings are still valid files.
 
 ## Install
 
-Requires a C11 compiler, `make`, and the ALSA development headers. The PipeWire
-headers (`libpipewire-0.3-dev`) are optional: with them present the PipeWire
-backend is compiled in, without them `make` quietly builds the ALSA-only binary
-and everything else works unchanged. Rendering a video also needs `ffmpeg` on
-`PATH` at run time — not to build or to record.
+Requires a C11 compiler, `make`, and — on Linux — the ALSA development headers.
+The PipeWire (`libpipewire-0.3-dev`) and JACK (`libjack-jackd2-dev`) headers are
+optional: with them present those backends are compiled in, without them `make`
+quietly builds without them and everything else works unchanged. On macOS the
+CoreAudio backend is built instead, out of the system frameworks, with nothing
+to install. `make help` reports which backends a build has. Rendering a video
+also needs `ffmpeg` on `PATH` at run time — not to build or to record.
 
 ```sh
 ./scripts/install-deps.sh   # or install libasound2-dev / alsa-lib-devel yourself
@@ -66,10 +68,10 @@ sudo make install           # installs to /usr/local; override with PREFIX=~/.lo
 ```
 
 The script handles apt, dnf, pacman, zypper and apk, and takes `--dry-run` to
-show what it would install. By default it also pulls in the PipeWire headers,
-`ffmpeg`, and the desktop app's OpenGL and X11 headers; `--no-pipewire`,
-`--no-ffmpeg` and `--no-gui` skip those. The desktop app additionally needs the
-vendored raylib submodule — see [docs/DESKTOP.md](docs/DESKTOP.md#building-it).
+show what it would install. By default it also pulls in the PipeWire and JACK
+headers, `ffmpeg`, and the desktop app's OpenGL and X11 headers;
+`--no-pipewire`, `--no-jack`, `--no-ffmpeg` and `--no-gui` skip those. The
+desktop app additionally needs the vendored raylib submodule — see [docs/DESKTOP.md](docs/DESKTOP.md#building-it).
 
 ## Usage
 
@@ -153,8 +155,11 @@ system are in [DESIGN.md](DESIGN.md#layout).
 
 ## Limitations
 
-Linux only, through ALSA or PipeWire — no JACK or CoreAudio backend. The tuner
-is monophonic, and video rendering shells out to `ffmpeg` and happens after the
+Linux and macOS: ALSA, PipeWire and JACK on the first, CoreAudio and JACK on the
+second — no Windows backend. Under JACK the rate and the period are the server's
+and cannot be changed from here; under CoreAudio a rate belongs to the device,
+so asking for one moves it for everything else using that device. The tuner is
+monophonic, and video rendering shells out to `ffmpeg` and happens after the
 take rather than during it. The desktop app falls back to browsing folders
 itself when neither `zenity` nor `kdialog` is installed to hand the question to.
 `--no-metadata` still stops at the 4 GB RIFF limit, since a plain 44-byte header

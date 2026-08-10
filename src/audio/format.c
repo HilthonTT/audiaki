@@ -583,6 +583,93 @@ void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned ch
   }
 }
 
+/*
+ * Encoders, the mirror of the decoders above.
+ *
+ * Full scale is the largest positive value the container holds rather than the
+ * negative one, for the same reason monitor_alsa.c scales by 32767: a sample at
+ * exactly +1.0 multiplied by the negative full scale wraps to the most negative
+ * value, which is a click at the loudest point of a take.
+ */
+
+static float clamp_unit(float v)
+{
+  if (v > 1.0f)
+  {
+    return 1.0f;
+  }
+  if (v < -1.0f)
+  {
+    return -1.0f;
+  }
+  /* NaN compares false against both, and would convert to something arbitrary */
+  return v == v ? v : 0.0f;
+}
+
+static void enc_s16(unsigned char *p, const float *src, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    aud_wr_s16le(p + i * 2, (int32_t)(clamp_unit(src[i]) * 32767.0f));
+  }
+}
+
+static void enc_s24_3(unsigned char *p, const float *src, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    aud_wr_s24le(p + i * 3, (int32_t)(clamp_unit(src[i]) * 8388607.0f));
+  }
+}
+
+static void enc_s24_4(unsigned char *p, const float *src, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    aud_wr_s24le_padded(p + i * 4, (int32_t)(clamp_unit(src[i]) * 8388607.0f));
+  }
+}
+
+static void enc_s32(unsigned char *p, const float *src, size_t n)
+{
+  for (size_t i = 0; i < n; i++)
+  {
+    /* double, because 2147483647 is not representable as a float and rounds up */
+    aud_wr_s32le(p + i * 4, (int32_t)((double)clamp_unit(src[i]) * 2147483647.0));
+  }
+}
+
+void aud_format_from_float(void *dst, const float *src, size_t frames, unsigned channels,
+                           aud_format fmt)
+{
+  unsigned char *p = (unsigned char *)dst;
+  size_t n = frames * (size_t)channels;
+
+  if (p == NULL || src == NULL || frames == 0 || channels == 0)
+  {
+    return;
+  }
+
+  switch (fmt)
+  {
+  case AUD_FORMAT_S16_LE:
+    enc_s16(p, src, n);
+    return;
+  case AUD_FORMAT_S24_3LE:
+    enc_s24_3(p, src, n);
+    return;
+  case AUD_FORMAT_S24_LE:
+    enc_s24_4(p, src, n);
+    return;
+  case AUD_FORMAT_S32_LE:
+    enc_s32(p, src, n);
+    return;
+  case AUD_FORMAT_UNKNOWN:
+  default:
+    return;
+  }
+}
+
 double aud_format_dbfs(double peak)
 {
   if (!(peak > 0.0))

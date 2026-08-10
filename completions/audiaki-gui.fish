@@ -18,7 +18,7 @@ end
 complete -c audiaki-gui -f
 
 complete -c audiaki-gui -s D -l device -d 'Capture device the window opens on' -x -a '(__audiaki_gui_devices)'
-complete -c audiaki-gui -s b -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa'
+complete -c audiaki-gui -s b -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa jack coreaudio'
 complete -c audiaki-gui -s r -l rate -d 'Sample rate in Hz' -x -a '44100 48000 88200 96000 192000'
 complete -c audiaki-gui -s c -l channels -d 'Channel count' -x -a '1 2 4 6 8'
 complete -c audiaki-gui -s o -l take -d 'Take name prefix' -r

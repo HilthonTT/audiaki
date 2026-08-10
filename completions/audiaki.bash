@@ -58,7 +58,7 @@ _audiaki()
             return
             ;;
         --backend)
-            mapfile -t COMPREPLY < <(compgen -W "auto pipewire alsa" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "auto pipewire alsa jack coreaudio" -- "$cur")
             return
             ;;
         -f | --format)
@@ -157,7 +157,7 @@ _audiaki_gui()
             return
             ;;
         -b | --backend)
-            mapfile -t COMPREPLY < <(compgen -W "auto pipewire alsa" -- "$cur")
+            mapfile -t COMPREPLY < <(compgen -W "auto pipewire alsa jack coreaudio" -- "$cur")
             return
             ;;
         -s | --style)

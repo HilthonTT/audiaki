@@ -497,14 +497,18 @@ Set it to play with an ensemble tuned somewhere other than concert pitch.
 .TP
 .BR \-\-backend " " \fINAME\fR
 Audio system to talk to:
-.BR auto ", " pipewire " or " alsa
+.BR auto ", " pipewire ", " alsa ", " jack " or " coreaudio
 (default
 .BR auto ,
 or the value of
 .BR AUDIAKI_BACKEND ).
 .B auto
-uses PipeWire when its daemon answers and ALSA otherwise. Naming a backend that
-is unavailable is an error rather than a fallback. See
+takes the first of PipeWire, CoreAudio and ALSA that this build has and that
+answers. Naming a backend that is unavailable is an error rather than a
+fallback, and a build carries only the backends the machine it was compiled on
+could provide \(em
+.B \-\-help
+lists the ones this one has. See
 .BR BACKENDS .
 .TP
 .BR \-\-info " " \fIFILE\fR
@@ -909,7 +913,7 @@ appears there even when it is not one of the enumerated devices.
 .TP
 .B \-b, \-\-backend NAME
 Audio system to talk to:
-.BR auto ", " pipewire " or " alsa .
+.BR auto ", " pipewire ", " alsa ", " jack " or " coreaudio .
 Chosen before the dropdown is first filled, so the list is whichever backend's.
 See
 .BR BACKENDS .
@@ -1144,7 +1148,9 @@ and X11 development headers are installed. Neither is needed for
 .BR audiaki .
 .SH BACKENDS
 .B audiaki
-reaches the hardware through one of two audio systems.
+reaches the hardware through one of four audio systems. Which of them a build
+has depends on the machine it was compiled on: ALSA and PipeWire on Linux,
+CoreAudio on macOS, JACK on either where its headers were present.
 .TP
 .B pipewire
 Asks the sound server that owns the card. It shares the interface with anything
@@ -1161,6 +1167,33 @@ at a time holds a device, so a busy card fails rather than being shared, and the
 format is whatever the hardware genuinely offers \(em which is what makes
 .B \-\-probe
 meaningful here and advisory under PipeWire. Needs no daemon.
+.TP
+.B jack
+Joins a graph somebody else set up. A device here is a JACK client rather than a
+card, so
+.B \-D
+takes a client name \(em
+.B system
+for the interface, or the name of any other program on the graph, whose output
+is then what is recorded. Without one, audiaki connects to the graph's physical
+capture ports. The server owns the rate and the period and does not resample, so
+a rate it is not running at is reported rather than provided; playback of a take
+at another rate is converted on the way out. Requires a running server, and a
+build with the JACK headers present.
+.TP
+.B coreaudio
+The macOS audio system, and there the only one there is: it is both the driver
+layer and the mixer, so it shares devices the way PipeWire does while opening
+them as directly as ALSA does.
+.B \-D
+takes a device UID \(em the stable string
+.B \-\-list
+prints \(em or the device's name. A rate belongs to the device rather than to a
+recording, so
+.B \-r
+moves it for everything else using that device; the monitor output is left where
+it is and a take at another rate is converted on the way out instead. macOS asks
+for microphone permission the first time a build records.
 .PP
 Which one is in use shows in the
 .B backend
@@ -1182,7 +1215,7 @@ which opens an output rather than an input.
 .TP
 .B AUDIAKI_BACKEND
 Default backend
-.RB ( auto ", " pipewire " or " alsa ),
+.RB ( auto ", " pipewire ", " alsa ", " jack " or " coreaudio ),
 used when
 .B \-\-backend
 is not given. An unrecognised value warns and is ignored rather than failing, so

@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **JACK and CoreAudio backends**, joining ALSA and PipeWire. `--backend jack`,
+  `--backend coreaudio`, and both in `$AUDIAKI_BACKEND` and the desktop app's
+  `-b`. Which ones a build has depends on where it was compiled - ALSA and
+  PipeWire on Linux, CoreAudio on macOS, JACK on either where its headers were
+  present - so `--help` now lists the backends you actually have rather than a
+  fixed three, and `make help` reports them at build time.
+
+  Under JACK a device is a client on the graph rather than a card, which is the
+  thing worth knowing about it: `-D system` is the interface and `-D ardour` is
+  whatever Ardour is putting out, so recording another program is a matter of
+  naming it. Without `-D`, audiaki connects to the graph's physical capture
+  ports. The ports it registers are ordinary JACK ports - `audiaki:in_1` and up
+  - so anything that patches a graph can rewire a take while it is running.
+
+  The server owns the rate and the period and does not resample. Asking for a
+  rate it is not running at gets a warning and the server's rate, because the
+  alternative is restarting `jackd` and that is not audiaki's to do. Playback of
+  a take at another rate is converted on the way out instead, so `--play` and
+  `-M` work regardless.
+
+  CoreAudio is the macOS audio system and there the only one there is - both the
+  driver layer and the mixer - so it shares devices the way PipeWire does while
+  opening them as directly as ALSA does. `-D` takes a device UID, the stable
+  string `--list` prints, or the device's name. The one surprise is that a rate
+  belongs to the *device* on macOS rather than to a recording: `-r 48000` moves
+  it for everything else using that device, which audiaki does rather than
+  silently recording at whatever the last application left it at. The monitor
+  output is left where it is, and a take at another rate is converted on the way
+  out.
+
+  Both are callback backends, like PipeWire, and both work in float. So both go
+  through the same wait-free ring the desktop app already used between its
+  capture and draw threads, and both encode into the capture format in the
+  reader rather than in the real-time callback - which keeps a JACK process
+  callback down to an interleave and a copy, where a mutex held a moment too
+  long is an xrun in every other client on the machine.
+
+  The build follows: `backend.c` now holds the four in one table, so parsing a
+  name, reporting availability, choosing one and listing what a build has are
+  four readings of one row. A backend that was not compiled in is a row with
+  null ops, which is the only difference between "PipeWire is not installed
+  here" and "ALSA does not exist on macOS" - and the second of those is new,
+  because ALSA is no longer assumed to be present.
+
 - The desktop app asks before four things, and deliberately not before anything
   else. A confirmation that appears constantly is one nobody reads, at which
   point the dangerous case is worse off than it was - so the rule is narrow: an

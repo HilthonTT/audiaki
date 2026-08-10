@@ -28,7 +28,7 @@ void app_usage(FILE *out, const app *a)
           "usage: " AUDIAKI_NAME "-gui [options] [take.wav ...]\n"
           "\n"
           "  -D, --device NAME    capture device (default: %s)\n"
-          "  -b, --backend NAME   auto, pipewire or alsa (default: auto)\n"
+          "  -b, --backend NAME   %s (default: auto)\n"
           "  -r, --rate HZ        sample rate (default: %u)\n"
           "  -c, --channels N     channel count (default: %u)\n"
           "  -o, --take PREFIX    take name prefix (default: %s)\n"
@@ -80,7 +80,7 @@ void app_usage(FILE *out, const app *a)
           "      L loop, C metronome, G grid, -/+ tempo,\n"
           "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
           "      ctrl+wheel zoom, ? the list of them in the window\n",
-          a->cfg.device, a->cfg.rate, a->cfg.channels, a->prefix,
+          a->cfg.device, aud_backend_list(), a->cfg.rate, a->cfg.channels, a->prefix,
           aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
           a->video_height, a->video_fps, AUD_DOC_DEFAULT_TEMPO, AUD_CLICK_DEFAULT_BEATS,
           AUD_CLICK_DEFAULT_GAIN);
@@ -319,7 +319,7 @@ int app_parse_args(app *a, int argc, char **argv)
       if (aud_backend_parse(value, &a->backend) != 0)
       {
         aud_error("unknown backend '%s'", value);
-        aud_info("backends: auto, pipewire, alsa");
+        aud_info("backends: %s", aud_backend_list());
         return 2;
       }
     }

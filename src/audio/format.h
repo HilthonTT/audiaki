@@ -151,6 +151,24 @@ void aud_format_to_float(float *dst, const void *src, size_t frames, unsigned ch
                          aud_format fmt);
 
 /*
+ * The other direction: encode `frames` interleaved frames of float into the
+ * capture layout. dst must hold frames * channels * aud_format_hw_bytes(fmt)
+ * bytes. Unknown formats write nothing.
+ *
+ * For the backends whose audio system works in float and has no integer
+ * format to negotiate - JACK and CoreAudio both hand over float and expect the
+ * client to land it wherever it wants. Everything above device.h reads whole
+ * samples in the capture layout, so the conversion belongs at the point the
+ * frames arrive rather than in a second path through the WAV writer.
+ *
+ * Values outside [-1.0, 1.0] are clamped rather than wrapped: a plugin chain
+ * feeding a JACK port routinely goes past full scale, and wrapping would turn
+ * a loud note into a burst of noise.
+ */
+void aud_format_from_float(void *dst, const float *src, size_t frames, unsigned channels,
+                           aud_format fmt);
+
+/*
  * The peak at which a buffer counts as clipped.
  *
  * Not 1.0. Signed PCM is asymmetric: the most negative sample normalises to

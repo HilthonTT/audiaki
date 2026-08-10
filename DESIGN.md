@@ -116,8 +116,9 @@ vendor/raylib/  submodule, only needed for the desktop app
 ```
 
 No audio system appears outside `backend/`: `device.c` and `monitor.c` are
-dispatchers, and only the four `*_alsa.c` / `*_pipewire.c` files include
-`<alsa/asoundlib.h>` or `<pipewire/pipewire.h>`. `cmd/` drives that directory
+dispatchers, and only the eight `*_alsa.c` / `*_pipewire.c` / `*_jack.c` /
+`*_coreaudio.c` files include `<alsa/asoundlib.h>`, `<pipewire/pipewire.h>`,
+`<jack/jack.h>` or the CoreAudio frameworks. `cmd/` drives that directory
 and `cli/` names it, so everything under those three — `audio`, `take`, `media`,
 `term` and `util` — is plain C that builds and tests anywhere, which is what CI
 does.
@@ -137,18 +138,50 @@ raylib, which keeps the CLI buildable with the submodule absent.
 
 ## Backends
 
+Four of them, behind one pair of tables: ALSA and PipeWire on Linux, CoreAudio
+on macOS, JACK on either. `backend.c` holds them in a single table — name,
+aliases, the two ops pointers, and how to ask whether the thing is running — so
+parsing a name, reporting availability, choosing one and listing what this build
+has are four readings of one row rather than four switch statements to keep in
+step. A backend that was not compiled in is a row with null ops, which is the
+only difference between "PipeWire is not installed here" and "ALSA does not
+exist on macOS".
+
 Asking for a backend that is not there is an error rather than a quiet
 downgrade: `--backend pipewire` on a machine with no daemon says so, instead of
 recording through ALSA and leaving you to wonder why the device names changed.
-Only `auto` falls back, because that is what it was asked to do.
+Only `auto` falls back, because that is what it was asked to do — and it tries
+PipeWire, CoreAudio and ALSA in that order.
+
+JACK is not in that order, and is reached only by name (or when it is the sole
+backend a build has). A JACK graph is something somebody wired up on purpose,
+where the right capture source is a decision rather than a default; and on a
+desktop running `pipewire-jack` a JACK server answering says nothing about what
+the user wanted.
+
+### Who converts
+
+The three callback backends — PipeWire, JACK and CoreAudio — all deliver float
+and all push, where ALSA hands over the hardware's own integers and is pulled
+from. Both differences are absorbed in `backend/`: a wait-free ring
+(`util/ringbuf.h`) between the callback and `aud_device_read()`, holding the
+float that arrived, and `aud_format_from_float()` encoding it into the capture
+layout in the reader rather than in the real-time callback. That keeps the
+callback down to an interleave and a copy, and keeps one encoder shared by the
+three rather than one each.
 
 ### What `--probe` means on each
 
 Under ALSA, `--probe` asks the hardware what it supports, and the answer decides
 what a recording can be. Under PipeWire the server converts, so anything audiaki
 asks for is what it gets and the hardware's own list no longer governs — the
-probe says so rather than printing a capability table that decides nothing. For
-the question "what can this card actually do", use `--backend alsa --probe`.
+probe says so rather than printing a capability table that decides nothing.
+Under JACK there is nothing device-shaped to ask: the rate and the period belong
+to the server and are the same for every client on it, so the probe reports the
+server's terms and counts the named client's ports, which is the one number that
+does vary. CoreAudio is between the two — the device has a real list of rates,
+and moving it to one of them is something `-r` genuinely does. For the question
+"what can this card actually do", use `--backend alsa --probe`.
 
 ### Monitoring
 
@@ -172,10 +205,13 @@ convenience is what gives way. The gain applies to the monitor alone for the sam
 reason: the take is written from the samples the device delivered, whatever is
 being listened to at the time.
 
-Under ALSA, monitoring needs an output that accepts the capture rate directly.
-Resampling would mean carrying an interpolator around for a convenience feature,
-so audiaki declines to monitor rather than play back at the wrong pitch. The
-PipeWire backend has no such limit, because the server resamples anyway.
+Which side resamples differs, and only that. PipeWire converts in the server, so
+the monitor there asks for the capture rate and gets it. ALSA, JACK and
+CoreAudio will each only run the output at a rate of their own choosing — the
+card's, the server's, the device's — so those three put `audio/resample.h` in
+the write path when it does not match. Nothing resamples what is written to a
+take, in any of the four: the file is the samples the device delivered, at the
+rate it delivered them.
 
 ## The metronome
 

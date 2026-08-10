@@ -22,7 +22,7 @@ _audiaki_gui() {
 
   args=(
     '(-D --device)'{-D,--device}'[capture device the window opens on]:device:_audiaki_devices'
-    '(-b --backend)'{-b,--backend}'[audio system to talk to]:backend:(auto pipewire alsa)'
+    '(-b --backend)'{-b,--backend}'[audio system to talk to]:backend:(auto pipewire alsa jack coreaudio)'
     '(-r --rate)'{-r,--rate}'[sample rate in Hz]:rate:(44100 48000 88200 96000 192000)'
     '(-c --channels)'{-c,--channels}'[channel count]:channels:(1 2 4 6 8)'
     '(-o --take)'{-o,--take}'[take name prefix]:prefix:_files'

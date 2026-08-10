@@ -20,7 +20,7 @@ complete -c audiaki -f
 complete -c audiaki -k -a '(__fish_complete_suffix .wav)' -d 'take to write'
 
 complete -c audiaki -s D -l device -d 'Capture device' -x -a '(__audiaki_devices)'
-complete -c audiaki -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa'
+complete -c audiaki -l backend -d 'Audio system to talk to' -x -a 'auto pipewire alsa jack coreaudio'
 complete -c audiaki -s r -l rate -d 'Sample rate in Hz' -x -a '44100 48000 88200 96000 192000'
 complete -c audiaki -s c -l channels -d 'How many channels to capture' -x -a '1 2 4 6 8'
 complete -c audiaki -l channel -d 'Write one capture channel, or mix them all, as mono' -x -a '1 2 3 4 5 6 7 8 mix'

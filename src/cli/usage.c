@@ -143,7 +143,7 @@ void cli_print_usage(FILE *out)
           "                        a piccolo's top C, and raising it is cheap\n"
           "\n"
           "Common options:\n"
-          "      --backend NAME    auto, pipewire or alsa (default: auto,\n"
+          "      --backend NAME    %s (default: auto,\n"
           "                        $AUDIAKI_BACKEND)\n"
           "      --info FILE       report levels and clipping for FILE and exit;\n"
           "                        further files may follow, and are reported as\n"
@@ -197,7 +197,7 @@ void cli_print_usage(FILE *out)
           "                        overdub by (default: from the buffers)\n"
           "\n"
           "Home page: " AUDIAKI_HOMEPAGE "\n",
-          AUD_TUNER_DEFAULT_A4);
+          AUD_TUNER_DEFAULT_A4, aud_backend_list());
 }
 
 void cli_print_version(FILE *out)
