@@ -130,7 +130,10 @@ OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 PORTABLE_SRCS := $(filter-out src/backend/% src/cmd/% src/cli/% src/main.c,$(SRCS))
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-TEST_SRCS := $(sort $(wildcard tests/*/test_*.c))
+# tests/gui is held back: it links against the window and so needs raylib, and
+# everything else here deliberately builds with the submodule absent. It is
+# added back below, only when there is a raylib to link against.
+TEST_SRCS := $(filter-out tests/gui/%,$(sort $(wildcard tests/*/test_*.c)))
 TEST_BINS := $(TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
 
 # -- desktop app -------------------------------------------------------------
@@ -217,7 +220,7 @@ GUI_STATUS := run 'git submodule update --init --depth 1' to enable
 endif
 
 DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(GUI_SHELL_OBJS:.o=.d) \
-             $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d)
+             $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d) $(GUI_TEST_BINS:=.d)
 
 .PHONY: all gui gui-skipped release debug test check check-completions format \
         format-check install uninstall clean clean-raylib help
@@ -325,9 +328,27 @@ $(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
 
-test: $(TEST_BINS)
+# The window's own tests, which exist only where there is a raylib to link.
+#
+# Only what decides something is testable this way, and that is the point of it
+# being apart from what draws: confirm.c reads the document and writes a
+# question, and never touches a pixel. The sources go in whole rather than as
+# objects because the window's objects are built PIC or not depending on
+# HOTRELOAD, and a test should not have to care which.
+ifneq ($(HAVE_RAYLIB),)
+GUI_TEST_SRCS := $(sort $(wildcard tests/gui/test_*.c))
+GUI_TEST_BINS := $(GUI_TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
+GUI_TEST_DEPS := src/gui/confirm.c src/gui/ui.c
+
+$(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ \
+	  $< $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB) $(GUI_SYS_LIBS)
+endif
+
+test: $(TEST_BINS) $(GUI_TEST_BINS)
 	@status=0; \
-	for t in $(TEST_BINS); do \
+	for t in $(TEST_BINS) $(GUI_TEST_BINS); do \
 	  printf '\n== %s ==\n' "$$t"; \
 	  "$$t" || status=1; \
 	done; \

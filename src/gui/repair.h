@@ -98,6 +98,17 @@ typedef struct
   float *result;
   size_t result_bins;
 
+  /*
+   * Apply has been pressed and nothing has happened yet.
+   *
+   * The panel asks rather than acts because the answer is not its to give: a
+   * repair rewrites audio and leaves a file behind, and whether that is worth
+   * doing is a question for the window, which owns the dialog that asks it -
+   * see app_confirm_apply(). The window clears this and calls
+   * aud_repair_panel_apply() if the answer was yes.
+   */
+  int apply_wanted;
+
   char note[AUD_REPAIR_NOTE_MAX];
 } aud_repair_panel;
 
@@ -112,14 +123,31 @@ void aud_repair_panel_free(aud_repair_panel *p);
 void aud_repair_panel_reset(aud_repair_panel *p);
 
 /*
- * Draw into `area` and carry out whatever the pointer did. `dir` is the folder
- * a repair writes its audio into. `enabled` is cleared when something is over
- * the top of the window.
+ * Draw into `area` and carry out whatever the pointer did. `enabled` is
+ * cleared when something is over the top of the window.
  *
- * Returns non-zero on the frame the project changed, which is the frame Apply
- * was pressed and succeeded.
+ * Pressing Apply sets `apply_wanted` rather than doing anything; nothing here
+ * changes the project. The caller answers that and calls the function below.
  */
-int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
-                          const char *dir, int enabled);
+void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int enabled);
+
+/*
+ * Put the curve through the audio the reading was taken from, writing the
+ * result into `dir`. What Apply meant, once it has been agreed to.
+ *
+ * The range is the one the reading was taken over rather than whatever is
+ * selected now, so the audio that gets cleaned up is the audio that was on the
+ * graph when the button was pressed.
+ *
+ * Returns non-zero when the project changed. Either way it says what happened
+ * in `note`.
+ */
+int aud_repair_panel_apply(aud_repair_panel *p, aud_doc *d, const char *dir);
+
+/* Seconds the reading covers, for the question that asks about it. */
+double aud_repair_panel_seconds(const aud_repair_panel *p, const aud_doc *d);
+
+/* The lane it was taken from, or "" when there is not one. Never NULL. */
+const char *aud_repair_panel_track(const aud_repair_panel *p, const aud_doc *d);
 
 #endif /* AUDIAKI_GUI_REPAIR_H */

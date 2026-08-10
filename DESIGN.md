@@ -104,6 +104,7 @@ src/
     engine.c/.h   the capture thread and its idle/recording/paused transport
     viz.c/.h      the glowing spectrum, drawn with raylib
     repair.c/.h   the spectrum of what was recorded, and drawing on it
+    confirm.c     the question that stops an action until it is answered
     ui.c/.h       immediate-mode buttons, slider and meter
   hotreload/    only in a development build of the window
     plug.h        the five calls the shell reaches the app through

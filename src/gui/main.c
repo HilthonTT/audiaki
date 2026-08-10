@@ -41,7 +41,13 @@ int main(int argc, char *argv[])
     return rc < 0 ? EXIT_SUCCESS : rc;
   }
 
-  while (!WindowShouldClose())
+  /*
+   * The close request is handed to the app rather than acted on here, because
+   * whether it is safe to go is a question about the session and the session is
+   * the app's. raylib clears the flag every frame, so a close that is declined
+   * simply does not happen and the next one asks again.
+   */
+  for (;;)
   {
 #ifdef AUDIAKI_HOTRELOAD
     if (IsKeyPressed(KEY_F5))
@@ -66,7 +72,10 @@ int main(int argc, char *argv[])
     }
 #endif
 
-    AUD_PLUG(frame)();
+    if (!AUD_PLUG(frame)(WindowShouldClose()))
+    {
+      break;
+    }
   }
 
   AUD_PLUG(shutdown)();

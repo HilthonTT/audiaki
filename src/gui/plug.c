@@ -941,6 +941,29 @@ void app_cancel_render(app *a)
  */
 void app_edit(app *a, app_edit_action action)
 {
+  /*
+   * The one gate, so nothing can reach an edit without having been offered the
+   * question - the toolbar, the keys and the timeline all come through here.
+   * A question going up means nothing else happens this frame; the answer is
+   * what calls app_edit_now().
+   */
+  if (action == APP_EDIT_UNDO)
+  {
+    if (app_confirm_undo(a))
+    {
+      return;
+    }
+  }
+  else if (app_confirm_edit(a, action))
+  {
+    return;
+  }
+
+  app_edit_now(a, action);
+}
+
+void app_edit_now(app *a, app_edit_action action)
+{
   aud_doc *d = &a->doc;
   int ok = -1;
 
@@ -1445,6 +1468,16 @@ static void handle_keys(app *a, const aud_engine_status *st)
    * one being named.
    */
   if (a->save.open)
+  {
+    return;
+  }
+
+  /*
+   * A question is waiting on an answer, so nothing behind it may act - least
+   * of all the edit keys, which are what most of the questions are about.
+   * Escape answers it "no", and the dialog itself reads that.
+   */
+  if (a->confirm.open)
   {
     return;
   }
@@ -2011,10 +2044,28 @@ int aud_plug_init(int argc, char **argv)
   return 0;
 }
 
-void aud_plug_frame(void)
+/*
+ * The window manager has asked to close. Returns non-zero when it may.
+ *
+ * A question going up is an answer of "not yet": the close is dropped, the
+ * dialog stays, and pressing the button again while it is up changes nothing -
+ * see app_confirm_quit(). The answer to it is what actually leaves.
+ */
+static int closing_now(app *a, int asked)
+{
+  if (!asked)
+  {
+    return 0;
+  }
+
+  return !app_confirm_quit(a);
+}
+
+bool aud_plug_frame(bool close_requested)
 {
   app *a = plug;
   aud_engine_status st;
+  int quit = 0;
 
   /*
    * Before the watch, which is what replaces a dead engine with a live one:
@@ -2044,10 +2095,15 @@ void aud_plug_frame(void)
     a->help_open = 0;
     app_update_title(a, NULL);
 
+    if (closing_now(a, close_requested))
+    {
+      return false;
+    }
+
     BeginDrawing();
-    app_draw_fatal(a);
+    quit = app_draw_fatal(a);
     EndDrawing();
-    return;
+    return quit ? false : true;
   }
 
   aud_engine_status_get(a->engine, &st);
@@ -2096,9 +2152,16 @@ void aud_plug_frame(void)
   app_pump_render(a);
   app_update_title(a, &st);
 
+  if (closing_now(a, close_requested))
+  {
+    return false;
+  }
+
   BeginDrawing();
-  app_draw_frame(a, &st);
+  quit = app_draw_frame(a, &st);
   EndDrawing();
+
+  return quit ? false : true;
 }
 
 void aud_plug_shutdown(void)

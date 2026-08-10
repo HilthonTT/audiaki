@@ -242,6 +242,37 @@ the selection as well; `ctrl+A` selects everything. Then:
 | **Fade in** / **Fade out** | `[` / `]` — ramps the selection out of silence, or into it |
 | **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
 
+### When it stops to ask
+
+Most edits just happen. Four things put a question up first, and the rule is
+narrow on purpose — a confirmation that appears constantly is one nobody reads,
+which makes the dangerous case worse rather than better:
+
+| | |
+| --- | --- |
+| An edit over **10 seconds** of audio | Counted across every lane it touches — 2 s across six tracks is twelve seconds |
+| An edit that **empties the project** | Whatever its length. `ctrl+A` then `del` on a short session still asks |
+| **Closing a track** | Always. It takes every clip on the lane, and it is a small button next to a name |
+| Any edit **after you have undone something** | This is the one that matters — see below |
+| **Apply** in the spectrum panel | It rewrites audio and writes a file, unlike every other edit |
+
+**Ctrl+Z is not guarded.** Undo is the way back out of a mistake, and making
+that harder would be exactly the wrong thing. The one exception is undoing a
+spectral repair, which asks because the `cleaned-NNN.wav` it wrote stays on disk
+with nothing pointing at it — redo still needs it, so it cannot be deleted for
+you.
+
+The one worth reading is the third. Once you have undone a few steps, making any
+new edit **silently discards everything you could have redone** — that is how
+every editor works, and it is invisible. The dialog names the number:
+
+```
+Delete, and lose what you undid?
+  3 steps you could have redone will go, and no undo brings them back.
+```
+
+Escape or **Cancel** backs out of any of them.
+
 Pasting over a selection replaces it, the way typing over selected text does.
 None of this copies audio about — see [DESIGN.md](../DESIGN.md#the-editor) — so
 cutting an hour-long take is as quick as cutting a bar of one, and so is undoing
@@ -380,9 +411,12 @@ so a session folder can be copied to another disk and still open. Move a take
 somewhere else and the session says which one is missing rather than opening
 with a silent lane.
 
-Closing the window with unsaved edits writes them out rather than dropping them:
-back to the session file if there is one, and to `recovered.aki` beside the
-takes if there is not.
+Closing the window with unsaved edits asks first, and says what will happen to
+them either way — they are written out rather than dropped: back to the session
+file if there is one, and to `recovered.aki` beside the takes if there is not.
+The question is there because a file you did not know was written is a file you
+will not go looking for. A take still recording is named in the same dialog; it
+is a finished WAV whichever answer you give.
 
 `audiaki --render session.aki -o mix.wav` mixes a session down without opening a
 window at all, which is what makes a session something a script can use.

@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The desktop app asks before four things, and deliberately not before anything
+  else. A confirmation that appears constantly is one nobody reads, at which
+  point the dangerous case is worse off than it was - so the rule is narrow: an
+  action has to be large, or it has to lose something no undo will bring back.
+
+  Large is an edit over ten seconds of audio, counted across every lane it
+  touches rather than off the ruler - two seconds across six selected tracks is
+  twelve seconds of audio, not two. An edit that would leave the project empty
+  asks whatever its length, because emptying a session is a different act from
+  taking a bit out of one and `ctrl+A` on a short session is still `ctrl+A`. So
+  does closing a track, which takes every clip on the lane from a small button
+  next to a name - exactly the shape of click somebody makes by accident.
+
+  Lossy is the one worth having, because it is invisible without it: once you
+  have undone a few steps, making any new edit silently discards everything you
+  could have redone. The dialog names the number. Applying a spectral repair
+  asks too, being the one operation that rewrites audio rather than moving clips
+  over it, and it says that it writes a file.
+
+  **Ctrl+Z is not guarded.** Undo is the way back out of a mistake and making it
+  harder would be the wrong thing to do; the only undo that asks is undoing a
+  repair, which says that the `cleaned-NNN.wav` stays on disk with nothing
+  pointing at it.
+
+  Closing the window with unsaved edits asks as well, and says where they go
+  rather than only that they exist - a file you did not know was written is a
+  file you will not go looking for. The window-manager close is handed to the
+  app rather than acted on by the run loop, so the answer can be "not yet".
+
+  The close button on a lane and Apply in the spectrum panel now ask for the
+  action rather than carrying it out, so the one place that gates an edit is the
+  one every route goes through.
+
 - `--gain X`, and an **in** slider on the desktop app's status bar, for an input
   with no usable level control of its own - a line input, a cheap USB box, a
   card whose capture volume ALSA does not expose. A multiplier from 0.0 to 16.0,

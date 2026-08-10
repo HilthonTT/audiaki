@@ -82,7 +82,7 @@ static Rectangle header_help(Rectangle r)
 /* Non-zero when something is over the window and nothing beneath may be used. */
 static int covered(const app *a)
 {
-  return a->device_menu_open || a->help_open || a->save.open;
+  return a->device_menu_open || a->help_open || a->save.open || a->confirm.open;
 }
 
 /*
@@ -703,10 +703,13 @@ static void draw_drawer(app *a, Rectangle r)
 
   if (a->drawer == APP_DRAWER_SPECTRUM)
   {
-    if (aud_repair_panel_draw(&a->repair, &a->doc, stage, a->take_dir, !covered(a)))
+    aud_repair_panel_draw(&a->repair, &a->doc, stage, !covered(a));
+
+    if (a->repair.apply_wanted)
     {
-      a->project_dirty = 1;
-      app_set_status(a, "%s", a->repair.note);
+      a->repair.apply_wanted = 0;
+      app_confirm_apply(a, aud_repair_panel_seconds(&a->repair, &a->doc),
+                        aud_repair_panel_track(&a->repair, &a->doc));
     }
     return;
   }
@@ -1033,8 +1036,9 @@ static void draw_help(app *a, Rectangle header)
  * restart away - and it keeps the tracks, because audio already recorded is
  * still worth editing with the interface unplugged.
  */
-void app_draw_fatal(app *a)
+int app_draw_fatal(app *a)
 {
+  int quit = 0;
   Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
   Rectangle header = {APP_PAD, APP_PAD, screen.width - 2.0f * APP_PAD, APP_HEADER_H};
   Rectangle line = screen;
@@ -1072,11 +1076,16 @@ void app_draw_fatal(app *a)
    */
   app_save_draw(a);
 
+  /* asked here too: losing the interface is not a reason to lose the edits */
+  quit = app_confirm_draw(a);
+
   aud_ui_tooltip_draw();
+  return quit;
 }
 
-void app_draw_frame(app *a, const aud_engine_status *st)
+int app_draw_frame(app *a, const aud_engine_status *st)
 {
+  int quit = 0;
   float w = (float)GetScreenWidth();
   float h = (float)GetScreenHeight();
   Rectangle header = {APP_PAD, APP_PAD, w - 2.0f * APP_PAD, APP_HEADER_H};
@@ -1180,6 +1189,15 @@ void app_draw_frame(app *a, const aud_engine_status *st)
     aud_timeline_draw(&a->timeline, &a->doc, ruler, tracks, head, running, !covered(a));
   }
 
+  /* the close button on a lane asks rather than acts; see timeline.h */
+  if (a->timeline.close_requested >= 0)
+  {
+    long index = a->timeline.close_requested;
+
+    a->timeline.close_requested = -1;
+    app_confirm_close_track(a, (size_t)index);
+  }
+
   draw_status(a, status, st);
 
   /*
@@ -1209,6 +1227,10 @@ void app_draw_frame(app *a, const aud_engine_status *st)
   /* over even the shortcut list: it is the one thing here waiting on an answer */
   app_save_draw(a);
 
+  /* over even that: a question stops everything, the save dialog included */
+  quit = app_confirm_draw(a);
+
   /* last of all, so it is over every control that could have asked for it */
   aud_ui_tooltip_draw();
+  return quit;
 }

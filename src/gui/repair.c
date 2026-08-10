@@ -592,8 +592,55 @@ static int labelled_slider(Rectangle r, const char *name, const char *reading,
   return changed;
 }
 
-int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
-                          const char *dir, int enabled)
+double aud_repair_panel_seconds(const aud_repair_panel *p, const aud_doc *d)
+{
+  if (p == NULL || d == NULL || d->rate == 0 || !p->have)
+  {
+    return 0.0;
+  }
+  return p->to > p->from ? (double)(p->to - p->from) / (double)d->rate : 0.0;
+}
+
+const char *aud_repair_panel_track(const aud_repair_panel *p, const aud_doc *d)
+{
+  if (p == NULL || d == NULL || !p->have || p->track >= d->count)
+  {
+    return "";
+  }
+  return d->tracks[p->track].name;
+}
+
+int aud_repair_panel_apply(aud_repair_panel *p, aud_doc *d, const char *dir)
+{
+  const char *why = NULL;
+
+  if (p == NULL || d == NULL || p->sp == NULL || !p->have)
+  {
+    return 0;
+  }
+
+  if (aud_repair_apply(d, p->track, p->from, p->to, p->sp, dir, &why) != 0)
+  {
+    note(p, "%s", why != NULL ? why : "that could not be applied");
+    return 0;
+  }
+
+  /*
+   * The edit is in the audio now, so the curve that described it goes flat and
+   * the profile is let go. Leaving either up would mean the graph showing a
+   * notch over audio it has already been taken out of, and a second press of
+   * Apply quietly taking it out twice.
+   */
+  note(p, "cleaned up %.1fs of %s - ctrl+Z puts it back", aud_repair_panel_seconds(p, d),
+       d->tracks[p->track].name);
+  aud_spectral_flatten(p->sp);
+  aud_spectral_forget_noise(p->sp);
+  p->hum_hz = 0.0f;
+  aud_repair_panel_reset(p);
+  return 1;
+}
+
+void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int enabled)
 {
   Rectangle graph;
   Rectangle row_one;
@@ -602,13 +649,12 @@ int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
   uint64_t from = 0;
   uint64_t to = 0;
   double top_hz;
-  int changed = 0;
   int usable;
   float x;
 
   if (p == NULL || d == NULL)
   {
-    return 0;
+    return;
   }
 
   DrawRectangleRec(area, AUD_UI_PANEL);
@@ -618,14 +664,14 @@ int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
   {
     aud_ui_text_centred(area, 15, AUD_UI_MUTED,
                         "record or open something, and its spectrum turns up here");
-    return 0;
+    return;
   }
 
   index = working_track(d);
   if (index >= d->count)
   {
     aud_ui_text_centred(area, 15, AUD_UI_MUTED, "no audio on any track yet");
-    return 0;
+    return;
   }
 
   /* The analyser belongs to the project's rate, and a session can change it. */
@@ -639,7 +685,7 @@ int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
     if (p->sp == NULL)
     {
       aud_ui_text_centred(area, 15, AUD_UI_WARN, "not enough memory to analyse");
-      return 0;
+      return;
     }
     p->have = 0;
   }
@@ -688,7 +734,7 @@ int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
   if (graph.width < REPAIR_MIN_GRAPH_W || graph.height < REPAIR_MIN_GRAPH_H)
   {
     aud_ui_text_centred(area, 14, AUD_UI_MUTED, "the window is too small for the graph");
-    return 0;
+    return;
   }
 
   top_hz = (double)d->rate / 2.0;
@@ -885,39 +931,18 @@ int aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area,
     {
       int ready = usable && aud_spectral_would_change(p->sp);
 
+      /*
+       * Asked for rather than done. What this costs - rewritten audio and a
+       * file on disk - is a question the window puts up, and it is the window
+       * that carries it out if the answer is yes.
+       */
       if (aud_ui_button(apply, "Apply", AUD_UI_OK, ready))
       {
-        const char *why = NULL;
-
-        if (aud_repair_apply(d, index, from, to, p->sp, dir, &why) == 0)
-        {
-          double seconds = (double)(to - from) / (double)d->rate;
-
-          /*
-           * The edit is in the audio now, so the curve that described it goes
-           * flat and the profile is let go. Leaving either up would mean the
-           * graph showing a notch over audio it has already been taken out of,
-           * and a second press of Apply quietly taking it out twice.
-           */
-          aud_spectral_flatten(p->sp);
-          aud_spectral_forget_noise(p->sp);
-          p->hum_hz = 0.0f;
-
-          note(p, "cleaned up %.1fs of %s - ctrl+Z puts it back", seconds,
-               d->tracks[index].name);
-          aud_repair_panel_reset(p);
-          changed = 1;
-        }
-        else
-        {
-          note(p, "%s", why != NULL ? why : "that could not be applied");
-        }
+        p->apply_wanted = 1;
       }
       aud_ui_tooltip(apply, ready ? "write this back onto the track; one press of "
                                     "Undo takes it off again"
                                   : "drag something out of the spectrum first");
     }
   }
-
-  return changed;
 }

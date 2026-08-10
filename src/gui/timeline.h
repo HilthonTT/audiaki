@@ -73,6 +73,14 @@ typedef struct
 
   /* what the pointer is over, for the status line to explain */
   char hint[96];
+
+  /*
+   * A lane whose close button was pressed, or -1. Asked for rather than done,
+   * because closing a track takes every clip on it and that is worth a
+   * question - and the question belongs to the window, which owns the dialog.
+   * The caller carries it out and puts this back to -1.
+   */
+  long close_requested;
 } aud_timeline;
 
 void aud_timeline_init(aud_timeline *tl);

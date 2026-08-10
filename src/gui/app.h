@@ -13,6 +13,7 @@
  *   devices.c  the dropdown's list, and keeping it level with the hardware
  *   save.c     where a finished take goes, and the dialog that asks
  *   preview.c  hearing a file from that dialog without loading it
+ *   confirm.c  the question that stops an action until it is answered
  *   screen.c   every pixel of the chrome
  *   timeline.c every pixel of the tracks, and what a pointer does to them
  *
@@ -264,6 +265,78 @@ typedef struct
   struct aud_chooser *chooser;
 } app_save;
 
+/* What the edit toolbar and the edit keys both stand for. */
+typedef enum
+{
+  APP_EDIT_UNDO = 0,
+  APP_EDIT_REDO,
+  APP_EDIT_CUT,
+  APP_EDIT_COPY,
+  APP_EDIT_PASTE,
+  APP_EDIT_DELETE,
+  APP_EDIT_SILENCE,
+  APP_EDIT_TRIM,
+  APP_EDIT_SPLIT,
+  APP_EDIT_DUPLICATE,
+  APP_EDIT_FADE_IN,
+  APP_EDIT_FADE_OUT,
+  APP_EDIT_SELECT_ALL,
+} app_edit_action;
+
+/*
+ * Audio an edit has to touch before it is worth stopping to ask about.
+ *
+ * There is a real cost to asking. Every edit here is undoable, so a dialog in
+ * front of each one would be a click bought with nothing - and a confirmation
+ * that appears constantly is one nobody reads, which makes the dangerous case
+ * worse rather than better. Ten seconds is about where an edit stops being a
+ * tidy-up and starts being a decision.
+ */
+#define APP_CONFIRM_SECONDS 10.0
+
+/* What is waiting on an answer, and what to do when one arrives. */
+typedef enum
+{
+  APP_CONFIRM_NONE = 0,
+  APP_CONFIRM_EDIT,        /* an edit action, held in `action` */
+  APP_CONFIRM_CLOSE_TRACK, /* a lane, held in `track` */
+  APP_CONFIRM_UNDO,        /* an undo that would strand a file on disk */
+  APP_CONFIRM_APPLY,       /* the spectrum panel's Apply */
+  APP_CONFIRM_QUIT,
+} app_confirm_kind;
+
+/* Reasons a question can give. More than this and it is a manual, not a dialog. */
+#define APP_CONFIRM_REASONS 3
+#define APP_CONFIRM_LINE 140
+#define APP_CONFIRM_LABEL 24
+
+/*
+ * The question that stops an action until it is answered.
+ *
+ * Nothing here decides anything: it holds a question, the reasons for asking
+ * it, and what was about to happen. The answer is carried out by whoever put
+ * the question up - see app_confirm_take() - so the dialog itself never needs
+ * to know what any of these actions mean.
+ */
+typedef struct
+{
+  int open;
+  app_confirm_kind kind;
+  app_edit_action action; /* read only when kind is APP_CONFIRM_EDIT */
+  long track;             /* read only when kind is APP_CONFIRM_CLOSE_TRACK */
+
+  char title[APP_CONFIRM_LINE];
+  char reason[APP_CONFIRM_REASONS][APP_CONFIRM_LINE];
+  int reasons;
+  char accept[APP_CONFIRM_LABEL]; /* what the button that goes ahead says */
+  /*
+   * Whether going ahead loses something no undo will bring back. It colours
+   * the button, and it is the difference between "this is a big edit" and
+   * "this is the end of that piece of work".
+   */
+  int irreversible;
+} app_confirm;
+
 typedef struct
 {
   /*
@@ -431,6 +504,9 @@ typedef struct
   /* the shortcut list, over the top of everything while it is up */
   int help_open;
 
+  /* the question waiting on an answer, over the top of even that */
+  app_confirm confirm;
+
   /*
    * What the title bar last said. A window behind another one should still be
    * able to answer "is it still recording?", and setting the title is a round
@@ -518,26 +594,15 @@ void app_finish_take(app *a, const char *path);
 /* Read a WAV into the project as a new track. Says how it went on the status. */
 void app_load_track(app *a, const char *path);
 
-/* What the edit toolbar and the edit keys both stand for. */
-typedef enum
-{
-  APP_EDIT_UNDO = 0,
-  APP_EDIT_REDO,
-  APP_EDIT_CUT,
-  APP_EDIT_COPY,
-  APP_EDIT_PASTE,
-  APP_EDIT_DELETE,
-  APP_EDIT_SILENCE,
-  APP_EDIT_TRIM,
-  APP_EDIT_SPLIT,
-  APP_EDIT_DUPLICATE,
-  APP_EDIT_FADE_IN,
-  APP_EDIT_FADE_OUT,
-  APP_EDIT_SELECT_ALL,
-} app_edit_action;
-
-/* Carry one out, and say on the status line what happened. */
+/*
+ * Carry one out, and say on the status line what happened.
+ *
+ * Asks first when the edit is big enough or lossy enough to be worth asking
+ * about - see confirm.c - in which case nothing happens until the question is
+ * answered. app_edit_now() is the same thing with the asking already done.
+ */
 void app_edit(app *a, app_edit_action action);
+void app_edit_now(app *a, app_edit_action action);
 
 /* Play from the cursor, or from the start of the selection. Stops if playing. */
 void app_toggle_play(app *a);
@@ -592,11 +657,44 @@ void app_save_dismiss(app *a);
 /* Drop the dialog without answering it, for the way out of the program. */
 void app_save_shutdown(app *a);
 
+/* -- confirm.c ------------------------------------------------------------- */
+
+/*
+ * Ask about `action` if it is worth asking about, and return non-zero when a
+ * question went up - in which case the caller has done nothing and must not.
+ * Zero means carry on: either there was nothing to ask, or the edit is one
+ * that changes nothing.
+ */
+int app_confirm_edit(app *a, app_edit_action action);
+
+/* The same for the ones that are not edit actions. */
+int app_confirm_close_track(app *a, size_t index);
+int app_confirm_undo(app *a);
+int app_confirm_apply(app *a, double seconds, const char *track);
+int app_confirm_quit(app *a);
+
+/*
+ * Draw the question and carry out whatever was answered. Called from the
+ * drawing, over the top of everything else including the save dialog.
+ *
+ * Returns non-zero when the answer was to quit, which is the one answer the
+ * dialog cannot carry out itself.
+ */
+int app_confirm_draw(app *a);
+
+/* Take the question down unanswered, for the paths that give up on it. */
+void app_confirm_dismiss(app *a);
+
 /* -- screen.c -------------------------------------------------------------- */
 
-void app_draw_frame(app *a, const aud_engine_status *st);
+/*
+ * Draw the whole window and carry out whatever was clicked. Returns non-zero
+ * when the answer to a question was to quit, which is the one thing the
+ * drawing cannot do for itself - the run loop is the shell's. See main.c.
+ */
+int app_draw_frame(app *a, const aud_engine_status *st);
 
 /* The window with no engine behind it: a message, and the picker to escape by. */
-void app_draw_fatal(app *a);
+int app_draw_fatal(app *a);
 
 #endif /* AUDIAKI_GUI_APP_H */

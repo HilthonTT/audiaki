@@ -18,7 +18,10 @@
  *   init         argv, the window, the device, and whatever was named on the
  *                command line. Returns 0 to run, or a process exit code; -1
  *                means it has already said its piece, as --help does.
- *   frame        one pass of the run loop: input, audio, and a drawn frame.
+ *   frame        one pass of the run loop: input, audio, and a drawn frame. It
+ *                is told whether the window manager has asked to close, and
+ *                answers whether to keep running - so an unsaved session can
+ *                put a question up instead of going quietly.
  *   pre_reload   the library is about to go: let go of everything only this
  *                copy of the code knows the shape of, and hand back the state.
  *   post_reload  the new library takes that state as its own.
@@ -36,7 +39,7 @@
 
 #define AUD_LIST_OF_PLUGS         \
   PLUG(init, int, int, char **)   \
-  PLUG(frame, void, void)         \
+  PLUG(frame, bool, bool)         \
   PLUG(pre_reload, void *, void)  \
   PLUG(post_reload, bool, void *) \
   PLUG(shutdown, void, void)

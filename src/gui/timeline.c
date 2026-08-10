@@ -176,6 +176,7 @@ void aud_timeline_init(aud_timeline *tl)
 {
   memset(tl, 0, sizeof(*tl));
   tl->zoom = AUD_TIMELINE_ZOOM_DEFAULT;
+  tl->close_requested = -1;
 }
 
 float aud_timeline_x_of(const aud_timeline *tl, double seconds)
@@ -801,7 +802,8 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
 
   if (aud_ui_button(close, "x", AUD_UI_RECORD, enabled))
   {
-    aud_edit_remove_track(d, index);
+    /* asked for, not done: see aud_timeline.close_requested */
+    tl->close_requested = (long)index;
     return;
   }
 
