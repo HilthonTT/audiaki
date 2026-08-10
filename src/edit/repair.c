@@ -3,6 +3,7 @@
 
 #include "media/wav.h"
 #include "take/take.h"
+#include "util/bytes.h"
 #include "util/path.h"
 
 #include <errno.h>
@@ -134,8 +135,6 @@ int aud_repair_read(const aud_doc *d, size_t index, uint64_t from, uint64_t to,
  */
 static void put_sample(unsigned char *dst, float v)
 {
-  long value;
-
   if (v > 1.0f)
   {
     v = 1.0f;
@@ -145,10 +144,7 @@ static void put_sample(unsigned char *dst, float v)
     v = -1.0f;
   }
 
-  value = (long)(v * 8388607.0f);
-  dst[0] = (unsigned char)(value & 0xff);
-  dst[1] = (unsigned char)((value >> 8) & 0xff);
-  dst[2] = (unsigned char)((value >> 16) & 0xff);
+  aud_wr_s24le(dst, (int32_t)(v * 8388607.0f));
 }
 
 /*
