@@ -8,6 +8,25 @@
 #define UI_CORNER 6.0f
 #define UI_FONT 20
 
+/*
+ * A label is drawn at the size the caller asked for if it fits its control and
+ * a size down otherwise, until it either fits or reaches this. Below it the end
+ * of the label is dropped instead. The window is resizable and the toolbars
+ * divide whatever width it has, so a control is often narrower than the text in
+ * it wants to be - and text drawn at its natural size in a button that shrank
+ * under it lands on top of the button next door.
+ */
+#define UI_FONT_MIN 12
+
+/*
+ * The room a label insists on between itself and the edges of its control. It
+ * is deliberately less than a toolbar leaves when it measures a button from its
+ * label: the two are asking different questions - how much room looks right,
+ * and how little a label can be given before it has to start losing letters -
+ * and a widget that answered the first would cut short labels that fit.
+ */
+#define UI_LABEL_PAD 4.0f
+
 /* How far the fill of a control is lifted when the pointer is over it. */
 #define UI_HOVER_LIFT 0.10f
 #define UI_PRESS_DROP 0.06f
@@ -82,6 +101,99 @@ void aud_ui_text_centred(Rectangle bounds, int size, Color color, const char *te
   DrawText(text, (int)x, (int)y, size, color);
 }
 
+/*
+ * The largest size no bigger than `size` at which `text` fits `room` pixels,
+ * or UI_FONT_MIN if none of them do. A point at a time: the default font is a
+ * bitmap and half a point of it is a blurred one.
+ */
+static int fitted_size(const char *text, int size, float room)
+{
+  while (size > UI_FONT_MIN && (float)MeasureText(text, size) > room)
+  {
+    size--;
+  }
+  return size;
+}
+
+/*
+ * `text` with its end replaced by an ellipsis until what is left fits `room`,
+ * returned in a buffer that lasts until the next call - which is long enough,
+ * because every caller hands it straight to DrawText.
+ */
+static const char *shortened(const char *text, int size, float room)
+{
+  static char buf[192];
+  size_t len;
+
+  if ((float)MeasureText(text, size) <= room)
+  {
+    return text;
+  }
+
+  snprintf(buf, sizeof(buf), "%s", text);
+  len = strlen(buf);
+
+  /* trim a character at a time; the strings are short and this runs per frame
+   * only for the one label that overflows */
+  while (len > 1)
+  {
+    buf[--len] = '\0';
+    if (len + 4 < sizeof(buf) &&
+        (float)MeasureText(TextFormat("%s...", buf), size) <= room)
+    {
+      break;
+    }
+  }
+
+  snprintf(buf + len, sizeof(buf) - len, "...");
+  return buf;
+}
+
+/*
+ * The size a control letters its label at unless it is told otherwise. A
+ * toolbar that has had to pack itself tighter than this says so once for the
+ * whole row: passing the size to each of the dozen calls that draw a button
+ * would be a dozen chances to letter one of them differently.
+ */
+static int ui_label_size = UI_FONT;
+
+void aud_ui_label_size(int size)
+{
+  ui_label_size = size > 0 ? size : UI_FONT;
+}
+
+/*
+ * A label inside a control: as large as it was asked for while that fits, then
+ * smaller, and finally cut short. Never taller than the control either, which
+ * is what keeps the drawer's tabs from writing over their own edges.
+ */
+static void label_centred(Rectangle bounds, int size, Color color, const char *label)
+{
+  float room = bounds.width - 2.0f * UI_LABEL_PAD;
+  int font;
+
+  if (label == NULL || *label == '\0')
+  {
+    return;
+  }
+
+  if (room < 12.0f)
+  {
+    room = bounds.width - 2.0f;
+  }
+  if ((float)size > bounds.height - 6.0f)
+  {
+    size = (int)bounds.height - 6;
+  }
+  if (size < UI_FONT_MIN)
+  {
+    size = UI_FONT_MIN;
+  }
+
+  font = fitted_size(label, size, room);
+  aud_ui_text_centred(bounds, font, color, shortened(label, font, room));
+}
+
 /* Shared body of button and toggle: returns non-zero when clicked. */
 static int clickable(Rectangle bounds, const char *label, Color tint, int enabled,
                      int lit)
@@ -116,7 +228,7 @@ static int clickable(Rectangle bounds, const char *label, Color tint, int enable
 
   DrawRectangleRounded(bounds, roundness, 8, fill);
   DrawRectangleRoundedLines(bounds, roundness, 8, edge);
-  aud_ui_text_centred(bounds, UI_FONT, text, label);
+  label_centred(bounds, ui_label_size, text, label);
 
   if (enabled && hover)
   {
@@ -357,7 +469,7 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
       text = fade_to(cell_hover ? AUD_UI_TEXT : AUD_UI_MUTED, strength);
     }
 
-    aud_ui_text_centred(cell, 16, text, labels[i]);
+    label_centred(cell, 16, text, labels[i]);
 
     if (cell_hover)
     {
@@ -381,31 +493,7 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
 static void text_fit(float x, float y, int size, Color color, const char *text,
                      float max_width)
 {
-  char buf[192];
-  size_t len;
-
-  if ((float)MeasureText(text, size) <= max_width)
-  {
-    DrawText(text, (int)x, (int)y, size, color);
-    return;
-  }
-
-  snprintf(buf, sizeof(buf), "%s", text);
-  len = strlen(buf);
-
-  /* trim a character at a time; the strings are short and this runs per frame
-   * only for the one label that overflows */
-  while (len > 1)
-  {
-    buf[--len] = '\0';
-    if (len + 3 < sizeof(buf) &&
-        (float)MeasureText(TextFormat("%s...", buf), size) <= max_width)
-    {
-      break;
-    }
-  }
-
-  DrawText(TextFormat("%s...", buf), (int)x, (int)y, size, color);
+  DrawText(shortened(text, size, max_width), (int)x, (int)y, size, color);
 }
 
 /*

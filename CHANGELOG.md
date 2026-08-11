@@ -493,6 +493,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The toolbars fit the window they are in**, instead of only fitting a
+  full-screen one. The desktop app opens at 1100 by 680 and the two rows of
+  buttons across the top of it were laid out in equal slots, which is a way of
+  dividing a row that ignores what is written in it: "Cut" was handed the same
+  width as "Fade out", and the slots were narrower than the longest labels well
+  before the window was, so the edit bar ran its words into each other -
+  "PasteDeleteSilence" - at the size it starts at. Widening the window to the
+  whole screen was the only way to read it.
+
+  Both bars are now measured from their labels. Each button is as wide as what
+  it says plus its padding, and the size the row is lettered at is the largest
+  at which the whole bar - the edits, the tempo cluster and the zoom controls,
+  or the transport and the capture options - fits between the window's edges.
+  One size for both rows, so they match. A button never draws a label wider than
+  itself either: it steps the size down until it fits and cuts the end off with
+  an ellipsis only when there is nothing left to give, which is what keeps the
+  timeline's lane buttons and the dialogs honest as well.
+
+  Widths come from the longest label a button ever carries - Play becomes
+  Playing, Save grows a star - so nothing shifts out from under the pointer when
+  the state changes.
+
+- Overdub, Video, Audio, the monitoring switch and its level are on the
+  transport bar at the size the window opens at. The bar had no room for them
+  once its equal slots had been handed out, and rather than overlap the
+  transport it drew none of them - so five controls were missing from a fresh
+  window until it was made wider, with nothing to say they existed.
+
 - A take the capture device was pulled out of now carries on in the *same*
   file, and the same clip on the lane, rather than in a second one beside it.
 

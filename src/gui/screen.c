@@ -27,28 +27,86 @@
 #include <stdio.h>
 #include <string.h>
 
-/* Buttons in a toolbar row: wide enough to read, narrow enough to all fit. */
-#define SCREEN_BUTTON_MIN 46.0f
-#define SCREEN_BUTTON_MAX 96.0f
+/* Between two buttons, and between two groups of them. */
 #define SCREEN_BUTTON_GAP 5.0f
-
-/* Loop, which shares the transport row without taking a whole slot of it. */
-#define SCREEN_LOOP_W 52.0f
+#define SCREEN_GROUP_GAP 18.0f
 
 /*
- * The tempo cluster at the end of the edit bar: the metronome, the number it
- * counts on and the grid it draws. One group because they are one idea - what
- * a bar is - and separating them would mean hunting for the tempo in one row
- * and the thing it drives in another.
+ * What the toolbars are lettered at when the window has room for it, and the
+ * smallest they are packed to before ui.c starts cutting labels short. Both
+ * bars use one size, worked out from whichever of them is tighter: two rows of
+ * buttons stacked on top of each other in different lettering read as a
+ * mistake rather than as a bar that made room for itself.
  */
-#define SCREEN_CLICK_W 52.0f
-#define SCREEN_STEP_W 26.0f
-#define SCREEN_TEMPO_W 60.0f
-#define SCREEN_GRID_W 46.0f
+#define SCREEN_FONT_MAX 18
+#define SCREEN_FONT_MIN 12
+
+/* the drawer's strip, which is shorter than a toolbar row */
+#define SCREEN_TAB_FONT 15
 
 /* the capture gain slider on the status bar, beside the meter it moves */
 #define SCREEN_GAIN_W 96.0f
-#define SCREEN_ZOOM_W 34.0f
+
+/*
+ * The transport, in the order it is laid out and described by the longest label
+ * each slot ever carries. Widths come from these rather than from what the
+ * button says this frame: Play becomes Playing while it runs and Save grows a
+ * star when there is something to save, and a bar that resized itself around
+ * that would shuffle every button along it out from under the pointer.
+ */
+enum
+{
+  SCREEN_PLAY = 0,
+  SCREEN_LOOP,
+  SCREEN_REC,
+  SCREEN_PAUSE,
+  SCREEN_STOP,
+  SCREEN_IMPORT,
+  SCREEN_EXPORT,
+  SCREEN_OPEN,
+  SCREEN_SAVE,
+  SCREEN_TRANSPORT_COUNT
+};
+
+static const char *const screen_transport[SCREEN_TRANSPORT_COUNT] = {
+    "Playing", "Loop",   "Recording", "Resume", "Cancel",
+    "Import",  "Export", "Open",      "Save *"};
+
+/* The capture options at the other end of the same row, likewise. */
+enum
+{
+  SCREEN_OVERDUB = 0,
+  SCREEN_VIDEO,
+  SCREEN_VIDEO_AUDIO,
+  SCREEN_MONITOR,
+  SCREEN_CAPTURE_COUNT
+};
+
+static const char *const screen_capture[SCREEN_CAPTURE_COUNT] = {
+    "Overdub", "Video", "No audio", "Monitor on"};
+
+/* Every button on the edit bar, in order, with what each is for. */
+static const struct
+{
+  const char *label;
+  app_edit_action action;
+  const char *tip;
+} screen_edits[] = {
+    {"Undo", APP_EDIT_UNDO, "take back the last edit   ctrl+Z"},
+    {"Redo", APP_EDIT_REDO, "put it back   ctrl+shift+Z"},
+    {"Cut", APP_EDIT_CUT, "remove the selection and keep it   ctrl+X"},
+    {"Copy", APP_EDIT_COPY, "keep the selection   ctrl+C"},
+    {"Paste", APP_EDIT_PASTE, "drop the clipboard in at the cursor   ctrl+V"},
+    {"Delete", APP_EDIT_DELETE, "remove the selection and close the gap   del"},
+    {"Silence", APP_EDIT_SILENCE, "empty the selection, leaving the timing alone"},
+    {"Trim", APP_EDIT_TRIM, "throw away everything outside the selection"},
+    {"Split", APP_EDIT_SPLIT, "cut the clips at the edges of the selection"},
+    {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
+    {"Fade in", APP_EDIT_FADE_IN, "ramp the selection up out of silence   ["},
+    {"Fade out", APP_EDIT_FADE_OUT, "ramp the selection down into silence   ]"},
+};
+
+#define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
 
 /* The device dropdown's slot, which the header leaves clear for it. */
 static Rectangle header_picker(Rectangle r)
@@ -178,44 +236,123 @@ static void format_monitor_gain(char *dst, size_t size, float gain)
   snprintf(dst, size, "%+.1f dB", 20.0 * log10((double)gain));
 }
 
+/* -- laying a row of buttons out ------------------------------------------- */
+
 /*
- * Hand out `count` equal slots across `row`, left to right, and return the
- * width of one. A toolbar that overflowed at the minimum window width would be
- * a toolbar with a button nobody can reach, so they shrink rather than spill.
+ * A toolbar is measured from its labels rather than cut into equal slots. "Cut"
+ * does not need the room "Fade out" does, and a bar that hands them the same
+ * width either wastes half of one or writes the other over its neighbour - which
+ * is what the window did at anything less than full screen.
  */
-static float slot_width(Rectangle row, int count)
+static float label_pad(int font)
 {
-  float w;
+  return 0.45f * (float)font;
+}
 
-  if (count <= 0)
-  {
-    return 0.0f;
-  }
+static float button_width(const char *label, int font)
+{
+  return (float)MeasureText(label, font) + 2.0f * label_pad(font);
+}
 
-  w = (row.width - SCREEN_BUTTON_GAP * (float)(count - 1)) / (float)count;
-  if (w > SCREEN_BUTTON_MAX)
+/* The room `count` buttons need side by side, the gaps between them included. */
+static float row_width(const char *const *labels, int count, int font)
+{
+  float w = 0.0f;
+
+  for (int i = 0; i < count; i++)
   {
-    w = SCREEN_BUTTON_MAX;
+    w += button_width(labels[i], font);
   }
-  if (w < SCREEN_BUTTON_MIN)
+  if (count > 1)
   {
-    w = SCREEN_BUTTON_MIN;
+    w += SCREEN_BUTTON_GAP * (float)(count - 1);
   }
   return w;
 }
 
-static Rectangle slot_at(Rectangle row, float w, int index)
+/* A button carrying one character still has to be worth aiming at. */
+static float step_width(int font)
 {
-  Rectangle r = row;
+  float w = button_width("+", font);
 
-  r.x = row.x + (w + SCREEN_BUTTON_GAP) * (float)index;
-  r.width = w;
-  return r;
+  return w < 24.0f ? 24.0f : w;
+}
+
+static float monitor_slider_width(int font)
+{
+  return 6.0f * (float)font;
+}
+
+/* Lay `labels` out along `row` from `x`, and return the edge they reach. */
+static float place_row(Rectangle row, float x, const char *const *labels, int count,
+                       int font, Rectangle *out)
+{
+  for (int i = 0; i < count; i++)
+  {
+    out[i].x = x;
+    out[i].y = row.y;
+    out[i].width = button_width(labels[i], font);
+    out[i].height = row.height;
+    x += out[i].width + SCREEN_BUTTON_GAP;
+  }
+  return x - SCREEN_BUTTON_GAP;
+}
+
+/*
+ * The tempo and zoom clusters, which end the edit bar whatever else fits: the
+ * metronome, the number it counts on, the grid it draws, and the three that
+ * decide how much of the project is on the screen. Four one-character steps,
+ * five gaps - the tempo's own three butt up against each other, being one
+ * control rather than three.
+ */
+static float edit_tail_width(int font)
+{
+  return button_width("Click", font) + button_width("188 BPM", font) +
+         button_width("Grid", font) + button_width("[ ]", font) +
+         4.0f * step_width(font) + 5.0f * SCREEN_BUTTON_GAP;
+}
+
+static float transport_row_width(int font)
+{
+  return row_width(screen_transport, SCREEN_TRANSPORT_COUNT, font) + SCREEN_GROUP_GAP +
+         row_width(screen_capture, SCREEN_CAPTURE_COUNT, font) + SCREEN_BUTTON_GAP +
+         monitor_slider_width(font);
+}
+
+static float edit_row_width(int font)
+{
+  float w = 0.0f;
+
+  for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
+  {
+    w += button_width(screen_edits[i].label, font) + SCREEN_BUTTON_GAP;
+  }
+  return w - SCREEN_BUTTON_GAP + SCREEN_GROUP_GAP + edit_tail_width(font);
+}
+
+/*
+ * The size both toolbars are lettered at: the largest at which each of them
+ * fits the window whole. Nothing is dropped or overlapped above the floor, and
+ * below it ui.c cuts the longest labels short - which is still a bar every
+ * button of which can be read and pressed.
+ */
+static int toolbar_font(float row_w)
+{
+  int font;
+
+  for (font = SCREEN_FONT_MAX; font > SCREEN_FONT_MIN; font--)
+  {
+    if (transport_row_width(font) <= row_w && edit_row_width(font) <= row_w)
+    {
+      break;
+    }
+  }
+  return font;
 }
 
 /* -- the transport bar ------------------------------------------------------ */
 
-static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
+static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int font)
 {
   int recording = st->state == AUD_ENGINE_RECORDING;
   int paused = st->state == AUD_ENGINE_PAUSED;
@@ -223,17 +360,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   int live = (recording || paused) && !covered(a);
   int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
   int playing = aud_player_playing(&a->player);
-  float w = slot_width(r, 11);
-  Rectangle play = slot_at(r, w, 0);
-  /*
-   * Loop takes a slot of its own rather than a full one: it is a modifier on
-   * Play rather than a transport button in its own right, and giving it the
-   * same width as Record would say otherwise - as well as pushing the capture
-   * options off the end of the bar on a narrower window.
-   */
-  Rectangle loop = {play.x + play.width + SCREEN_BUTTON_GAP, r.y, SCREEN_LOOP_W,
-                    r.height};
-  Rectangle rest = r;
+  Rectangle slot[SCREEN_TRANSPORT_COUNT];
+  Rectangle play;
+  Rectangle loop;
   Rectangle rec;
   Rectangle pause;
   Rectangle stop;
@@ -241,17 +370,17 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
   Rectangle export_to;
   Rectangle open_project;
   Rectangle save_project;
+  float filled = place_row(r, r.x, screen_transport, SCREEN_TRANSPORT_COUNT, font, slot);
 
-  rest.x = loop.x + loop.width + SCREEN_BUTTON_GAP;
-  rest.width = r.x + r.width - rest.x;
-
-  rec = slot_at(rest, w, 0);
-  pause = slot_at(rest, w, 1);
-  stop = slot_at(rest, w, 2);
-  import = slot_at(rest, w, 3);
-  export_to = slot_at(rest, w, 4);
-  open_project = slot_at(rest, w, 5);
-  save_project = slot_at(rest, w, 6);
+  play = slot[SCREEN_PLAY];
+  loop = slot[SCREEN_LOOP];
+  rec = slot[SCREEN_REC];
+  pause = slot[SCREEN_PAUSE];
+  stop = slot[SCREEN_STOP];
+  import = slot[SCREEN_IMPORT];
+  export_to = slot[SCREEN_EXPORT];
+  open_project = slot[SCREEN_OPEN];
+  save_project = slot[SCREEN_SAVE];
 
   /*
    * Play first, because it is the one pressed most and the one the eye goes to
@@ -390,14 +519,16 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
 
   /* the capture options sit at the right hand end, away from the transport */
   {
-    float slider_w = 120.0f;
-    float ctl_w = 92.0f;
+    float slider_w = monitor_slider_width(font);
+    float group_w = row_width(screen_capture, SCREEN_CAPTURE_COUNT, font) +
+                    SCREEN_BUTTON_GAP + slider_w;
+    Rectangle group[SCREEN_CAPTURE_COUNT];
     Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f,
                         slider_w, 22.0f};
-    Rectangle monitor = {slider.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
-    Rectangle audio = {monitor.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
-    Rectangle video = {audio.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
-    Rectangle overdub = {video.x - SCREEN_BUTTON_GAP - ctl_w, r.y, ctl_w, r.height};
+    Rectangle overdub;
+    Rectangle video;
+    Rectangle audio;
+    Rectangle monitor;
     int wanted = a->engine != NULL && aud_engine_monitor_wanted(a->engine);
     /*
      * Only settable between takes: the video is rendered from the finished
@@ -407,10 +538,17 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
      */
     int settable = usable && !live && !rendering;
 
-    if (overdub.x < save_project.x + save_project.width + SCREEN_BUTTON_GAP)
+    if (r.x + r.width - group_w < filled + SCREEN_GROUP_GAP)
     {
       return; /* too narrow a window for these; the transport comes first */
     }
+
+    place_row(r, r.x + r.width - group_w, screen_capture, SCREEN_CAPTURE_COUNT, font,
+              group);
+    overdub = group[SCREEN_OVERDUB];
+    video = group[SCREEN_VIDEO];
+    audio = group[SCREEN_VIDEO_AUDIO];
+    monitor = group[SCREEN_MONITOR];
 
     /*
      * Playing the project while recording over it. Only settable between
@@ -463,29 +601,6 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st)
 
 /* -- the edit bar ----------------------------------------------------------- */
 
-/* Every button on it, in order, with what each is for. */
-static const struct
-{
-  const char *label;
-  app_edit_action action;
-  const char *tip;
-} screen_edits[] = {
-    {"Undo", APP_EDIT_UNDO, "take back the last edit   ctrl+Z"},
-    {"Redo", APP_EDIT_REDO, "put it back   ctrl+shift+Z"},
-    {"Cut", APP_EDIT_CUT, "remove the selection and keep it   ctrl+X"},
-    {"Copy", APP_EDIT_COPY, "keep the selection   ctrl+C"},
-    {"Paste", APP_EDIT_PASTE, "drop the clipboard in at the cursor   ctrl+V"},
-    {"Delete", APP_EDIT_DELETE, "remove the selection and close the gap   del"},
-    {"Silence", APP_EDIT_SILENCE, "empty the selection, leaving the timing alone"},
-    {"Trim", APP_EDIT_TRIM, "throw away everything outside the selection"},
-    {"Split", APP_EDIT_SPLIT, "cut the clips at the edges of the selection"},
-    {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
-    {"Fade in", APP_EDIT_FADE_IN, "ramp the selection up out of silence   ["},
-    {"Fade out", APP_EDIT_FADE_OUT, "ramp the selection down into silence   ]"},
-};
-
-#define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
-
 /*
  * The metronome, the tempo and the grid, drawn as one control at the end of
  * the edit bar. The reading between the two steps is text rather than a field:
@@ -493,7 +608,8 @@ static const struct
  * sits right, not by typing a number you already knew.
  */
 static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
-                               Rectangle reading, Rectangle faster, Rectangle grid)
+                               Rectangle reading, Rectangle faster, Rectangle grid,
+                               int font)
 {
   int usable = !covered(a);
   int shift = IsKeyDown(KEY_LEFT_SHIFT) || IsKeyDown(KEY_RIGHT_SHIFT);
@@ -517,7 +633,7 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
 
   DrawRectangleRec(reading, AUD_UI_PANEL);
   snprintf(text, sizeof(text), "%.0f BPM", a->doc.tempo);
-  aud_ui_text_centred(reading, 15, a->click_on ? AUD_UI_TEXT : AUD_UI_MUTED, text);
+  aud_ui_text_centred(reading, font, a->click_on ? AUD_UI_TEXT : AUD_UI_MUTED, text);
   tip(a, reading, "the tempo this session is counted on; it is saved with it");
 
   if (aud_ui_button(faster, "+", AUD_UI_ACCENT, usable))
@@ -545,49 +661,47 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
   }
 }
 
-static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
+static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area, int font)
 {
   int usable = !covered(a);
-  Rectangle zoom_out = {r.x + r.width - SCREEN_ZOOM_W * 3.0f - SCREEN_BUTTON_GAP * 2.0f,
-                        r.y, SCREEN_ZOOM_W, r.height};
-  Rectangle zoom_in = {zoom_out.x + SCREEN_ZOOM_W + SCREEN_BUTTON_GAP, r.y, SCREEN_ZOOM_W,
-                       r.height};
-  Rectangle fit = {zoom_in.x + SCREEN_ZOOM_W + SCREEN_BUTTON_GAP, r.y, SCREEN_ZOOM_W,
+  float step = step_width(font);
+  float zoom_w = 2.0f * step + button_width("[ ]", font) + 2.0f * SCREEN_BUTTON_GAP;
+  Rectangle zoom_out = {r.x + r.width - zoom_w, r.y, step, r.height};
+  Rectangle zoom_in = {zoom_out.x + step + SCREEN_BUTTON_GAP, r.y, step, r.height};
+  Rectangle fit = {zoom_in.x + step + SCREEN_BUTTON_GAP, r.y, button_width("[ ]", font),
                    r.height};
-  Rectangle grid = {zoom_out.x - SCREEN_BUTTON_GAP - SCREEN_GRID_W, r.y, SCREEN_GRID_W,
-                    r.height};
+  Rectangle grid = {zoom_out.x - SCREEN_BUTTON_GAP - button_width("Grid", font), r.y,
+                    button_width("Grid", font), r.height};
   /* the three of these butt up against each other: one control, not three */
-  Rectangle faster = {grid.x - SCREEN_BUTTON_GAP - SCREEN_STEP_W, r.y, SCREEN_STEP_W,
-                      r.height};
-  Rectangle reading = {faster.x - SCREEN_TEMPO_W, r.y, SCREEN_TEMPO_W, r.height};
-  Rectangle slower = {reading.x - SCREEN_STEP_W, r.y, SCREEN_STEP_W, r.height};
-  Rectangle click = {slower.x - SCREEN_BUTTON_GAP - SCREEN_CLICK_W, r.y, SCREEN_CLICK_W,
-                     r.height};
+  Rectangle faster = {grid.x - SCREEN_BUTTON_GAP - step, r.y, step, r.height};
+  Rectangle reading = {faster.x - button_width("188 BPM", font), r.y,
+                       button_width("188 BPM", font), r.height};
+  Rectangle slower = {reading.x - step, r.y, step, r.height};
+  Rectangle click = {slower.x - SCREEN_BUTTON_GAP - button_width("Click", font), r.y,
+                     button_width("Click", font), r.height};
   /*
    * What is left for the edits, once the clusters at the far end have had
-   * theirs. Sized from the room that remains rather than from a slot count
-   * that pretends they are buttons in the same row: a fixed group and a
-   * sharing one do not divide the same way.
+   * theirs. Each of them then takes the width its own label asks for: they are
+   * three characters long at one end of the row and eight at the other, and a
+   * bar that gave them all the same either wastes the short ones' room or spills
+   * the long ones over the button next door.
    */
   Rectangle row = r;
-  float w;
+  float x;
 
-  row.width = click.x - SCREEN_BUTTON_GAP - row.x;
-  if (row.width < SCREEN_BUTTON_MIN)
-  {
-    row.width = SCREEN_BUTTON_MIN;
-  }
-  w = slot_width(row, SCREEN_EDIT_COUNT);
+  row.width = click.x - SCREEN_GROUP_GAP - row.x;
 
+  x = row.x;
   for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
   {
-    Rectangle slot = slot_at(row, w, i);
+    Rectangle slot = {x, row.y, button_width(screen_edits[i].label, font), row.height};
     int enabled = usable;
 
     if (slot.x + slot.width > row.x + row.width)
     {
       break; /* the window is too narrow for the rest; zoom stays reachable */
     }
+    x += slot.width + SCREEN_BUTTON_GAP;
 
     /*
      * Greyed out when they would refuse, so the toolbar answers "why is
@@ -619,7 +733,7 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area)
     tip(a, slot, enabled ? screen_edits[i].tip : "select some audio on a track first");
   }
 
-  draw_tempo_cluster(a, click, slower, reading, faster, grid);
+  draw_tempo_cluster(a, click, slower, reading, faster, grid, font);
 
   if (aud_ui_button(zoom_out, "-", AUD_UI_ACCENT, usable))
   {
@@ -673,14 +787,20 @@ static void draw_drawer(app *a, Rectangle r)
 
   DrawRectangleRec(bar, AUD_UI_PANEL);
 
+  /*
+   * The strip is short, so its two names are lettered to fit it rather than to
+   * match the toolbars, and each is as wide as what it says.
+   */
+  aud_ui_label_size(SCREEN_TAB_FONT);
+
   viz_tab.x = bar.x;
   viz_tab.y = bar.y;
-  viz_tab.width = 130.0f;
+  viz_tab.width = button_width("v  Visualiser", SCREEN_TAB_FONT);
   viz_tab.height = bar.height;
 
   fix_tab = viz_tab;
   fix_tab.x = viz_tab.x + viz_tab.width + 2.0f;
-  fix_tab.width = 140.0f;
+  fix_tab.width = button_width("v  Spectrum", SCREEN_TAB_FONT);
 
   if (aud_ui_toggle(viz_tab,
                     a->drawer == APP_DRAWER_VIZ ? "v  Visualiser" : ">  Visualiser",
@@ -698,6 +818,8 @@ static void draw_drawer(app *a, Rectangle r)
     aud_repair_panel_reset(&a->repair);
   }
   tip(a, fix_tab, "the spectrum of the selected audio, and taking noise out of it   N");
+
+  aud_ui_label_size(0);
 
   stage = (Rectangle){r.x, bar.y + bar.height, r.width, r.height - bar.height};
 
@@ -1157,12 +1279,26 @@ int app_draw_frame(app *a, const aud_engine_status *st)
   }
 
   draw_header(a, header);
-  draw_transport(a, transport, st);
-  draw_edit_bar(a, edits,
-                (Rectangle){tracks.x + AUD_TIMELINE_PANEL_W + AUD_TIMELINE_SCALE_W,
-                            tracks.y,
-                            tracks.width - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W,
-                            tracks.height});
+
+  /*
+   * Both bars packed to one size, worked out from the window as it is now: it
+   * is resizable, and a toolbar laid out for the width it was opened at is a
+   * toolbar with buttons under each other at any other width.
+   */
+  {
+    int font = toolbar_font(transport.width);
+
+    aud_ui_label_size(font);
+    draw_transport(a, transport, st, font);
+    draw_edit_bar(a, edits,
+                  (Rectangle){tracks.x + AUD_TIMELINE_PANEL_W + AUD_TIMELINE_SCALE_W,
+                              tracks.y,
+                              tracks.width - AUD_TIMELINE_PANEL_W - AUD_TIMELINE_SCALE_W,
+                              tracks.height},
+                  font);
+    aud_ui_label_size(0);
+  }
+
   draw_drawer(a, viz);
 
   /*

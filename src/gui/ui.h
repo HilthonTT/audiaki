@@ -66,6 +66,16 @@
   }
 
 /*
+ * The size buttons and toggles letter their labels at from here on, or 0 for
+ * the default. A label never overflows its control whatever this says - it is
+ * drawn a size down, and then a size down again, and cut short with an ellipsis
+ * once there is nothing left to give. This is how a toolbar that has worked out
+ * it must pack tighter than usual says so for the whole row at once, so that
+ * every button in it is lettered the same.
+ */
+void aud_ui_label_size(int size);
+
+/*
  * A button. `tint` colours the label and the border when it is active.
  * Returns non-zero on the frame it is clicked. A disabled button dims itself
  * and never reports a click.
