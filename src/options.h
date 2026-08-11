@@ -25,6 +25,7 @@ typedef enum
   AUD_CMD_VISUALIZE,
   AUD_CMD_INFO,
   AUD_CMD_TUNE,
+  AUD_CMD_CALIBRATE, /* measure the round trip; see take/calibrate.h */
   AUD_CMD_PLAY,
   AUD_CMD_RENDER, /* mix a saved project down to a WAV; see edit/project.h */
   AUD_CMD_HELP,

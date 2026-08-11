@@ -60,6 +60,7 @@ _audiaki() {
     '--a4[tuner reference pitch in Hz]:hz:'
     '--tune-min[lowest pitch the tuner looks for, in Hz]:hz:'
     '--tune-max[highest pitch the tuner looks for, in Hz]:hz:'
+    '--calibrate[measure the round trip through a loopback and exit]'
     '--info[report levels and clipping for one or more WAVs and exit]:wav file:_files -g "*.wav(-.)"'
     '--play[play one or more WAVs through the output and exit]:wav file:_files -g "*.wav(-.)"'
     '--shuffle[play the files in a random order]'

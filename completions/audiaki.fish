@@ -59,6 +59,8 @@ complete -c audiaki -l a4 -d 'Tuner reference pitch in Hz' -x
 complete -c audiaki -l tune-min -d 'Lowest pitch the tuner looks for, in Hz' -x
 complete -c audiaki -l tune-max -d 'Highest pitch the tuner looks for, in Hz' -x
 
+complete -c audiaki -l calibrate -d 'Measure the round trip through a loopback and exit'
+
 complete -c audiaki -l info -d 'Report levels and clipping for one or more WAVs and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l play -d 'Play one or more WAVs through the output and exit' -r -a '(__fish_complete_suffix .wav)'
 complete -c audiaki -l shuffle -d 'Play the files in a random order'

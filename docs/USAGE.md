@@ -16,6 +16,7 @@ systems also have `man audiaki`.
 - [Pre-roll](#pre-roll)
 - [Hearing yourself](#hearing-yourself)
 - [Playing to a click](#playing-to-a-click)
+- [Measuring the round trip](#measuring-the-round-trip)
 - [What a take says about itself](#what-a-take-says-about-itself)
 - [Checking a take](#checking-a-take)
 - [Playing one back](#playing-one-back)
@@ -30,6 +31,7 @@ systems also have `man audiaki`.
 audiaki --list                       # which capture devices exist
 audiaki --probe -D hw:CARD=Box,DEV=0 # what that device supports
 audiaki --tune                       # tune up before playing anything
+audiaki --calibrate                  # measure the round trip, once, per machine
 audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum take01.wav        # record, watching the spectrum
 audiaki -t 1:30 take02.wav           # record 90 seconds
@@ -79,6 +81,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `--size SPEC` | `WxH`, or `480p`/`720p`/`1080p`/`1440p`/`2160p` (default `1280x720`) |
 | `--fps N` | Video frame rate (default 60) |
 | `--bars N` | Spectrum bar count (default 64) |
+| `--calibrate` | Measure the round trip through a loopback and offer to keep it; see [below](#measuring-the-round-trip) |
 | `--tune` | Show the pitch of what is being played, until Ctrl+C |
 | `--a4 HZ` | Tuner reference pitch (default 440) |
 | `--tune-min HZ` | Lowest pitch the tuner looks for (default 30, a five-string bass's low B) |
@@ -373,7 +376,8 @@ take_dir = ~/Takes
 prompt = auto
 
 # round-trip latency the window places an overdub by, in milliseconds;
-# left out, it is estimated from the buffers. See DESKTOP.md.
+# left out, it is estimated from the buffers. 'audiaki --calibrate'
+# measures it and offers to write this line. See DESKTOP.md.
 latency_ms = 14
 
 # gain added to the recording itself, as a multiplier. For an interface
@@ -614,13 +618,116 @@ audiaki -M --click 120 --latency 0 take01.wav    # no correction, as it was
 
 The default is worked out from the buffer sizes, which is a good estimate and
 not a measurement — the converters, the driver and the interface all add delay
-that nothing here can see. Play a click into a loopback, look at where it lands
-in the file, and put that number in `latency_ms`.
+that nothing here can see. `audiaki --calibrate` measures it instead; see
+[below](#measuring-the-round-trip).
 
 What is left after that is jitter rather than offset: playback is fed from one
 loop and capture runs on another, so the two agree to within a few milliseconds
 rather than to the sample. The systematic part is gone; the rest is the price of
 not having one clock behind both.
+
+## Measuring the round trip
+
+Everything above corrects for the same number: how long it takes for something
+audiaki plays to come back in through the input. The click is struck that far
+early, the desktop app places an overdub that far back, and both take it from
+`latency_ms`. Left alone it is worked out from the two buffer sizes, which is
+a good guess and not a measurement — the converters, the driver and the
+interface all add delay that no buffer size describes.
+
+`--calibrate` measures it. Connect the output to the input — a cable from the
+headphone socket to the instrument input is the whole rig — and:
+
+```sh
+audiaki --calibrate                            # through the default devices
+audiaki --calibrate -D hw:CARD=Box,DEV=0       # ...into that interface
+audiaki --calibrate --monitor-device plughw:CARD=Box,DEV=0   # ...out of it, too
+audiaki --calibrate --no-prompt                # just print the number
+```
+
+```
+$ audiaki --calibrate
+audiaki: measuring the round trip out of 'default' and back into 'default': 48000 Hz, 5 burst(s)
+audiaki: connect the output to the input, and play nothing until it is done
+audiaki:  1/5    14.2 ms   match 0.98
+audiaki:  2/5    14.1 ms   match 0.98
+audiaki:  3/5    14.2 ms   match 0.97
+audiaki:  4/5    14.2 ms   match 0.98
+audiaki:  5/5    14.1 ms   match 0.98
+round trip:  14.2 ms  (682 frames at 48000 Hz)
+spread:      0.1 ms  over 5 reading(s), weakest match 0.97
+estimate:    34.8 ms  (what the buffers alone would have guessed)
+write 'latency_ms = 14.2' to ~/.config/audiaki/config? [y/N]
+```
+
+The three lines in the middle are the report, and they go to stdout the way
+`--info` and `--list` do; everything else is on stderr. So `--quiet` leaves you
+the measurement and nothing else, which is the shape a script wants:
+
+```sh
+$ audiaki --calibrate --quiet --no-prompt
+round trip:  14.2 ms  (682 frames at 48000 Hz)
+spread:      0.1 ms  over 5 reading(s), weakest match 0.97
+estimate:    34.8 ms  (what the buffers alone would have guessed)
+```
+
+The `estimate` line is what audiaki would have used had you not measured, and it
+is there to be compared: on most interfaces it is out by more than half, which
+is the whole reason this exists.
+
+Answer `y` and the line is written to the config file, which is where it
+belongs: it is a property of the interface and the machine rather than of
+today's session, so it is measured once and true from then on. Everything else
+in the file is left exactly as it was — the comments, the other settings, the
+order they were put in — and a `latency_ms` that is already there is replaced
+rather than added to. Anything but `y` prints the line for you to add yourself,
+and so does `--no-prompt`, or a run with no terminal to ask at.
+
+### What it is doing
+
+It plays a short sweep, five times, and looks for each one coming back. The
+number is the distance between the frame a burst was written to the output and
+the frame it arrived at on the input, counted on the capture clock — the same
+clock the beat grid is counted on, which is what makes it the right correction
+for the click and not merely a number about the hardware.
+
+A sweep rather than a click because what happens to it afterwards is a
+correlation: a tone matches itself once per cycle, so a reading can land a whole
+cycle out with nothing looking wrong, while a sweep matches itself once and
+sharply. `match` is how well the return fitted, from 0 to 1 — down a cable it
+is above 0.9, and anything under 0.4 is not the burst and is thrown away. The
+polarity does not matter: a cable that returns the sweep upside down is still
+returning the sweep.
+
+Five readings rather than one because playback here is fed from the capture
+loop, and the two are not the same crystal. `spread` is how far apart they
+landed, and it is the jitter the rest of this document is careful to say is
+there. A reading a long way from the others — something else made a noise, the
+machine stalled — is discarded rather than averaged in, and if too few agree,
+the run says it could not tell rather than picking one.
+
+### When it does not work
+
+**`nothing came back`** The loop is not closed, or the input is turned all the
+way down. Check the cable, and check that `-D` and `--monitor-device` really are
+the two ends of one loop rather than two unrelated devices.
+
+**`something came back but it was not the burst`** Something arrived, but it did
+not fit the sweep. Usually the same problem seen from the other side — the input
+is picking up a room rather than the output — and occasionally something else
+playing over the top. Play nothing while it runs.
+
+**`the output could not play the bursts`** The output dropped the frames the
+burst was in, so nobody heard it and there is nothing to have come back. Try a
+larger `--period` or more `--periods`.
+
+**`the readings did not agree with each other`** They landed too far apart to be
+one measurement. Something was making a noise, or the machine could not keep
+both streams fed.
+
+Ctrl+C stops it, as everywhere else. Nothing is written and no file is created
+either way; the only thing `--calibrate` can write is the one line in the config
+file, and only after asking.
 
 ## What a take says about itself
 
@@ -952,6 +1059,13 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   something a correction can remove: it is for checking a sound, not for
   playing along with one. What *is* corrected is where the click falls against
   it — see `--latency`.
+- `--calibrate` needs a loop from the output back to the input to measure
+  anything, and a cable is what it is built for: the accepted match is set for
+  a return that arrives more or less unchanged, so a microphone in front of a
+  speaker — where reflections land on top of the burst and smear it — is
+  likely to be rejected rather than measured. It measures the round trip
+  audiaki can see, which is the one the click and the overdub are placed by;
+  what the burst does between the socket and your ears is not in it.
 - The click is one tempo for the whole take: no tempo changes part way through.
   The desktop app keeps its tempo in the session rather than in the take, and it
   is one tempo there too.

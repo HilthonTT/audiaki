@@ -134,6 +134,7 @@ _audiaki()
               --monitor --monitor-device --monitor-gain --gain
               --click --click-beats --click-subdiv --click-gain --latency
               --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
+              --calibrate
               --info --play --shuffle --repeat --repeat-one --json
               --render --bits
               --quiet --verbose --list --probe --help --version"

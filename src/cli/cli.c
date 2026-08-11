@@ -63,6 +63,7 @@ enum
   OPT_TAKE,
   OPT_JSON,
   OPT_TUNE,
+  OPT_CALIBRATE,
   OPT_A4,
   OPT_TUNE_MIN,
   OPT_TUNE_MAX,
@@ -138,6 +139,7 @@ static const struct option long_options[] = {
     {"preroll", required_argument, NULL, OPT_PREROLL},
     {"pre-roll", required_argument, NULL, OPT_PREROLL},
     {"tune", no_argument, NULL, OPT_TUNE},
+    {"calibrate", no_argument, NULL, OPT_CALIBRATE},
     {"a4", required_argument, NULL, OPT_A4},
     {"tune-min", required_argument, NULL, OPT_TUNE_MIN},
     {"tune-max", required_argument, NULL, OPT_TUNE_MAX},
@@ -240,12 +242,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   int opt;
   int click_shape = 0;          /* --click-beats or --click-gain was typed */
   int monitor_device_given = 0; /* --monitor-device was typed */
+  int latency_given = 0;        /* --latency was typed */
   /*
    * Typed, as opposed to read out of the config file. The config applies to
    * every invocation, so it cannot be what makes one rejected for asking about
    * takes on a command that does not make any.
    */
-  int store_given = 0;
+  int dir_given = 0;
+  int prompt_given = 0;
 
   cli_defaults(opts);
 
@@ -335,15 +339,15 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         bad_value("--dir", optarg, "a folder to keep takes in");
         return CLI_EXIT_USAGE;
       }
-      store_given = 1;
+      dir_given = 1;
       break;
     case OPT_PROMPT:
       opts->prompt = AUD_PROMPT_ALWAYS;
-      store_given = 1;
+      prompt_given = 1;
       break;
     case OPT_NO_PROMPT:
       opts->prompt = AUD_PROMPT_NEVER;
-      store_given = 1;
+      prompt_given = 1;
       break;
     case 'y':
       opts->overwrite = 1;
@@ -445,6 +449,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       click_shape = 1;
+      latency_given = 1;
       break;
     case 'q':
       opts->log_level = AUD_LOG_QUIET;
@@ -546,6 +551,9 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     case OPT_TUNE:
       opts->command = AUD_CMD_TUNE;
       break;
+    case OPT_CALIBRATE:
+      opts->command = AUD_CMD_CALIBRATE;
+      break;
     case OPT_A4:
       if (parse_double(optarg, AUD_TUNER_A4_MIN, AUD_TUNER_A4_MAX, &opts->a4_hz) != 0)
       {
@@ -614,8 +622,13 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * this one" until a metronome gives the output something else to carry, and
    * then it means "play the click through this one" and leaves the input where
    * it was. Either way the flag does something, which is the point.
+   *
+   * --calibrate is the third of those: the output is half of what is being
+   * measured, so naming it is the whole use of the flag there, and turning
+   * monitoring on as well would feed the input back into the measurement.
    */
-  if (monitor_device_given && opts->click_bpm <= 0.0)
+  if (monitor_device_given && opts->click_bpm <= 0.0 &&
+      opts->command != AUD_CMD_CALIBRATE)
   {
     opts->monitor = 1;
   }
@@ -644,9 +657,33 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * writes a file and could plausibly be thought to honour --dir; it does not,
    * and -o is how that one is placed.
    */
-  if (store_given && opts->command != AUD_CMD_RECORD)
+  if (dir_given && opts->command != AUD_CMD_RECORD)
   {
-    aud_error("--dir, --prompt and --no-prompt only apply when recording");
+    aud_error("--dir only applies when recording");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * The pair say whether audiaki may stop and ask a person something, so they
+   * apply wherever there is a question. Recording asks where to keep the take;
+   * --calibrate asks whether to write what it measured to the config file.
+   */
+  if (prompt_given && opts->command != AUD_CMD_RECORD &&
+      opts->command != AUD_CMD_CALIBRATE)
+  {
+    aud_error("--prompt and --no-prompt only apply when recording or calibrating");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
+   * Caught before the metronome check below, which would otherwise answer a
+   * question about calibration by talking about a click. --latency is the one
+   * number --calibrate exists to produce, so being given it is a contradiction
+   * rather than a spare option.
+   */
+  if (latency_given && opts->command == AUD_CMD_CALIBRATE)
+  {
+    aud_error("--calibrate measures the round trip; --latency is what it measures");
     return CLI_EXIT_USAGE;
   }
 
@@ -745,6 +782,26 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     if (opts->output_path != NULL)
     {
       aud_error("--tune records nothing, so there is no output file to write");
+      return CLI_EXIT_USAGE;
+    }
+    return 0;
+  }
+
+  /*
+   * Nor does --calibrate. The one file it may write is the config file, and
+   * that is asked about afterwards rather than named on the command line -
+   * there is only one of it, and audiaki already knows where it is.
+   */
+  if (opts->command == AUD_CMD_CALIBRATE)
+  {
+    if (optind < argc)
+    {
+      aud_error("unexpected argument '%s' (--calibrate records nothing)", argv[optind]);
+      return CLI_EXIT_USAGE;
+    }
+    if (opts->output_path != NULL)
+    {
+      aud_error("--calibrate records nothing, so there is no output file to write");
       return CLI_EXIT_USAGE;
     }
     return 0;

@@ -78,6 +78,7 @@ desktop app additionally needs the vendored raylib submodule — see [docs/DESKT
 ```sh
 audiaki --list                       # which capture devices exist
 audiaki --tune                       # tune up before playing anything
+audiaki --calibrate                  # measure the round trip, once per machine
 audiaki take01.wav                   # record until Ctrl+C
 audiaki --spectrum -t 1:30 take02.wav  # 90 seconds, watching the spectrum
 audiaki --take session               # record the next free session-NNN.wav
@@ -165,9 +166,11 @@ itself when neither `zenity` nor `kdialog` is installed to hand the question to.
 `--no-metadata` still stops at the 4 GB RIFF limit, since a plain 44-byte header
 has nowhere to put a 64-bit size; a stamped take becomes an RF64 file instead
 and keeps going. Overdubs and the click are placed by a latency correction that
-is estimated unless you measure it, and playback and capture start within a
-drawn frame of each other rather than on the same sample, so they land close
-rather than sample locked. The full list is in
+is estimated until it is measured — `audiaki --calibrate` measures it, but needs
+a cable from the output back to the input to do so, and a microphone in front of
+a speaker is likely to be rejected rather than measured. Playback and capture
+start within a drawn frame of each other rather than on the same sample either
+way, so they land close rather than sample locked. The full list is in
 [docs/USAGE.md](docs/USAGE.md#limitations).
 
 ## Credits

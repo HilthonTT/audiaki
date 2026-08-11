@@ -449,18 +449,26 @@ does not.
 The correction is estimated from the two queues, which is a starting point and
 not a measurement: the converters, the driver and the interface all add delay
 that nothing here can see. If your overdubs land consistently late or early,
-measure it — play a click through the output into the input and see how far off
-it is — and say so:
+measure it. Connect the output to the input and let audiaki do it:
 
 ```
-audiaki-gui --latency 14
+audiaki --calibrate
 ```
 
-or put it in the config file, where it belongs, since it is a property of the
-machine rather than of the session:
+It plays a short sweep a few times, times how long each one takes to come back,
+and offers to write the answer to the config file — which is where it belongs,
+being a property of the machine rather than of the session, and where the window
+reads it from:
 
 ```
 latency_ms = 14
+```
+
+The whole of it is in [USAGE.md](USAGE.md#measuring-the-round-trip). To say it
+for one run instead, without keeping it:
+
+```
+audiaki-gui --latency 14
 ```
 
 What none of this fixes is jitter. Playback here is fed from the drawing loop

@@ -11,11 +11,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-/*
- * A config file is a handful of short lines. Anything past this is not one,
- * and reading it into memory to find that out is worse than saying so.
- */
-#define CONFIG_MAX_BYTES 65536u
+/* The size limit lives in the header, where a caller sizing a buffer can see it. */
+#define CONFIG_MAX_BYTES AUD_CONFIG_MAX_BYTES
 
 /* The longest key or value a line may carry, terminator included. */
 #define CONFIG_FIELD_MAX AUD_PATH_MAX
@@ -322,4 +319,259 @@ int aud_config_load(aud_config *cfg)
   aud_config_parse(cfg, text, path);
   free(text);
   return 0;
+}
+
+/*
+ * Whether two spellings name the same setting. '_' and '-' are interchangeable
+ * throughout, because aud_config_parse() accepts both and a rewrite that only
+ * recognised one would leave the other in place and append a second copy.
+ */
+static int key_matches(const char *a, const char *b)
+{
+  for (; *a != '\0' && *b != '\0'; a++, b++)
+  {
+    char ca = *a == '-' ? '_' : *a;
+    char cb = *b == '-' ? '_' : *b;
+
+    if (ca != cb)
+    {
+      return 0;
+    }
+  }
+  return *a == *b;
+}
+
+/* Add `n` bytes to `dst`, keeping it terminated. Returns -1 when it will not fit. */
+static int append(char *dst, size_t size, size_t *used, const char *text, size_t n)
+{
+  if (*used + n + 1 > size)
+  {
+    return -1;
+  }
+
+  memcpy(dst + *used, text, n);
+  *used += n;
+  dst[*used] = '\0';
+  return 0;
+}
+
+int aud_config_set(char *dst, size_t size, const char *text, const char *key,
+                   const char *value)
+{
+  const char *at = text != NULL ? text : "";
+  size_t used = 0;
+  int replaced = 0;
+
+  if (dst == NULL || size == 0 || key == NULL || value == NULL)
+  {
+    return -1;
+  }
+  dst[0] = '\0';
+
+  while (*at != '\0')
+  {
+    const char *line = at;
+    const char *end = strchr(line, '\n');
+    const char *stop;
+    const char *body;
+    const char *equals;
+    char found[CONFIG_FIELD_MAX];
+    int ours = 0;
+
+    if (end == NULL)
+    {
+      stop = line + strlen(line);
+      at = stop;
+    }
+    else
+    {
+      stop = end;
+      at = end + 1;
+    }
+
+    body = skip_space(line);
+    if (body < stop && *body != '#' && *body != ';')
+    {
+      equals = memchr(body, '=', (size_t)(stop - body));
+      if (equals != NULL && trimmed(found, sizeof(found), body, equals) == 0 &&
+          key_matches(found, key))
+      {
+        ours = 1;
+      }
+    }
+
+    if (ours)
+    {
+      char line_text[CONFIG_FIELD_MAX];
+      int n = snprintf(line_text, sizeof(line_text), "%s = %s\n", key, value);
+
+      if (n < 0 || (size_t)n >= sizeof(line_text) ||
+          append(dst, size, &used, line_text, (size_t)n) != 0)
+      {
+        return -1;
+      }
+      replaced = 1;
+      continue;
+    }
+
+    /*
+     * The line as it stands, and then a newline whether or not it had one. A
+     * file whose last line was unterminated is left terminated, which is the
+     * one change to somebody else's text worth making: the next append would
+     * otherwise land on the end of their last setting.
+     */
+    if (append(dst, size, &used, line, (size_t)(stop - line)) != 0 ||
+        append(dst, size, &used, "\n", 1) != 0)
+    {
+      return -1;
+    }
+  }
+
+  if (!replaced)
+  {
+    char line_text[CONFIG_FIELD_MAX];
+    int n = snprintf(line_text, sizeof(line_text), "%s = %s\n", key, value);
+
+    if (n < 0 || (size_t)n >= sizeof(line_text) ||
+        append(dst, size, &used, line_text, (size_t)n) != 0)
+    {
+      return -1;
+    }
+  }
+
+  return 0;
+}
+
+/* Read the config file into a fresh buffer, or an empty one when there is none. */
+static char *config_text(const char *path)
+{
+  char *text;
+  FILE *f = fopen(path, "rb");
+  long size;
+  size_t got;
+
+  if (f == NULL)
+  {
+    /* not having one yet is the ordinary case for the first thing written */
+    text = malloc(1);
+    if (text != NULL)
+    {
+      text[0] = '\0';
+    }
+    return text;
+  }
+
+  if (fseek(f, 0, SEEK_END) != 0 || (size = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0 ||
+      (unsigned long)size > CONFIG_MAX_BYTES)
+  {
+    aud_error("cannot read %s", path);
+    fclose(f);
+    return NULL;
+  }
+
+  text = malloc((size_t)size + 1);
+  if (text == NULL)
+  {
+    fclose(f);
+    return NULL;
+  }
+
+  got = fread(text, 1, (size_t)size, f);
+  text[got] = '\0';
+  fclose(f);
+  return text;
+}
+
+int aud_config_save(const char *key, const char *value, char *path, size_t path_size)
+{
+  char file[AUD_PATH_MAX];
+  char temp[AUD_PATH_MAX];
+  char dir[AUD_PATH_MAX];
+  char *text;
+  char *updated;
+  FILE *out;
+  int rc = -1;
+
+  if (key == NULL || value == NULL)
+  {
+    return -1;
+  }
+
+  if (aud_config_path(file, sizeof(file)) != 0)
+  {
+    aud_error("there is no home directory to keep a config file in");
+    return -1;
+  }
+
+  if (aud_path_dirname(dir, sizeof(dir), file) != 0 || aud_path_mkdirs(dir) != 0)
+  {
+    aud_perror("cannot create %s", dir);
+    return -1;
+  }
+
+  if (snprintf(temp, sizeof(temp), "%s.new", file) >= (int)sizeof(temp))
+  {
+    aud_error("the path to %s is too long to write beside", file);
+    return -1;
+  }
+
+  text = config_text(file);
+  if (text == NULL)
+  {
+    return -1;
+  }
+
+  /* room for the file as it stands plus the line being added to it */
+  updated = malloc(CONFIG_MAX_BYTES + CONFIG_FIELD_MAX);
+  if (updated == NULL)
+  {
+    aud_error("cannot rewrite %s: out of memory", file);
+    free(text);
+    return -1;
+  }
+
+  if (aud_config_set(updated, CONFIG_MAX_BYTES + CONFIG_FIELD_MAX, text, key, value) != 0)
+  {
+    aud_error("%s is too long to add a setting to", file);
+    goto out;
+  }
+
+  out = fopen(temp, "wb");
+  if (out == NULL)
+  {
+    aud_perror("cannot write %s", temp);
+    goto out;
+  }
+
+  if (fputs(updated, out) == EOF || fclose(out) != 0)
+  {
+    aud_perror("cannot write %s", temp);
+    remove(temp);
+    goto out;
+  }
+
+  /*
+   * rename(2) rather than aud_path_move(), which is the one place in audiaki
+   * that wants the behaviour path.h deliberately refuses: replacing what is
+   * already there. A take must never land on an older take, but this file is
+   * meant to be replaced, and doing it in one step is what keeps a config that
+   * exists from ever being half written.
+   */
+  if (rename(temp, file) != 0)
+  {
+    aud_perror("cannot replace %s", file);
+    remove(temp);
+    goto out;
+  }
+
+  if (path != NULL && path_size > 0)
+  {
+    snprintf(path, path_size, "%s", file);
+  }
+  rc = 0;
+
+out:
+  free(updated);
+  free(text);
+  return rc;
 }

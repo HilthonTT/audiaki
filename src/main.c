@@ -32,6 +32,7 @@ static int needs_a_backend(aud_command command)
   case AUD_CMD_LIST:
   case AUD_CMD_PROBE:
   case AUD_CMD_TUNE:
+  case AUD_CMD_CALIBRATE:
   case AUD_CMD_PLAY:
   case AUD_CMD_RECORD:
     return 1;
@@ -79,6 +80,8 @@ int main(int argc, char *argv[])
     return aud_cmd_play(&opts);
   case AUD_CMD_TUNE:
     return aud_cmd_tune(&opts);
+  case AUD_CMD_CALIBRATE:
+    return aud_cmd_calibrate(&opts);
   case AUD_CMD_RECORD:
   default:
     return aud_cmd_record(&opts);

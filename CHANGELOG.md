@@ -9,6 +9,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **`--calibrate` measures the round trip**, instead of telling you to go and
+  measure it somewhere else.
+
+  Everything that places a take against a grid corrects for the same number: the
+  click is struck that far ahead of the beat, and the desktop app places an
+  overdub that far earlier than Record was pressed. Both read it from
+  `latency_ms`, and without one it is estimated from the two buffer sizes - a
+  starting point and not a measurement, since the converters, the driver and the
+  interface all add delay that no buffer size describes. The documentation has
+  always said so, and has always followed it with an instruction to play a click
+  into a loopback and look at where it lands in the file. That is the right
+  instruction and a poor thing to ask anybody to carry out by hand in another
+  program.
+
+  Connect the output to the input and audiaki does it: a short sweep, five
+  times, and the frames between each one going out and coming back. `-D` names
+  the input and `--monitor-device` the output; the answer is reported with the
+  spread of the readings beside it, and against what the buffers alone would
+  have guessed, which is usually most of the point.
+
+  It offers to write the number to the config file when there is a terminal to
+  ask at, because `latency_ms` is a property of the interface and the machine
+  rather than of today's session - measured once and true from then on.
+  Everything else in the file survives exactly as it was, comments included, and
+  an existing `latency_ms` is replaced rather than joined by a second one. A run
+  with no terminal, or with `--no-prompt`, prints the line instead of writing
+  anything.
+
+  The measurement counts both directions on one clock - `aud_calibrate_step()`
+  takes the captured period and fills the playback period in the same call - so
+  what comes out is the correction the click already wanted rather than a
+  separate fact about the hardware. It is a sweep rather than a click because
+  the search is a correlation and a tone correlates with itself once per cycle,
+  so a reading could land a whole cycle out with nothing looking wrong. The
+  match is normalised, so a quiet return is as findable as a loud one, and taken
+  on the absolute value, so a cable that returns it upside down is still a
+  match. Five bursts rather than one because playback is fed from the capture
+  loop and the two clocks are not the same crystal: the median carries it, a
+  reading far from the rest is discarded rather than averaged in, and when too
+  few agree the run says it could not tell rather than picking one.
+
+  A run that produces nothing says which of the four things went wrong - nothing
+  came back, something came back that was not the burst, the output could not
+  play them, or the readings disagreed - because they want different responses
+  and "calibration failed" wants none.
+
+  All of the arithmetic is in `take/calibrate.c`, which carries no audio system,
+  so it is unit tested against a loopback made of arithmetic rather than of
+  cable: a run is fed its own output back, delayed by a number the test chose.
+
 - **JACK and CoreAudio backends**, joining ALSA and PipeWire. `--backend jack`,
   `--backend coreaudio`, and both in `$AUDIAKI_BACKEND` and the desktop app's
   `-b`. Which ones a build has depends on where it was compiled - ALSA and

@@ -26,6 +26,12 @@
 #define AUD_CONFIG_DIR "audiaki"
 #define AUD_CONFIG_FILE "config"
 
+/*
+ * A config file is a handful of short lines. Anything past this is not one, and
+ * reading it into memory to find that out is worse than saying so.
+ */
+#define AUD_CONFIG_MAX_BYTES 65536u
+
 typedef enum
 {
   /*
@@ -98,6 +104,37 @@ int aud_config_load(aud_config *cfg);
  * a file that is entirely fine.
  */
 int aud_config_parse(aud_config *cfg, const char *text, const char *source);
+
+/*
+ * `text` with `key` set to `value`, written into `dst`.
+ *
+ * Every other line survives exactly as it was - the comments, the settings this
+ * is not about, the order they were put in. A file somebody wrote by hand is
+ * the only record of why they chose what they chose, and a program that rewrote
+ * it wholesale to change one number would throw that away to save itself the
+ * trouble of reading around it.
+ *
+ * A key that appears more than once is set on every line rather than the first,
+ * because the parser takes the last one it reads and setting only the first
+ * would leave a file that still says the old thing. A key that appears nowhere
+ * is appended.
+ *
+ * Returns 0 on success, or -1 when the result would not fit in `size`.
+ */
+int aud_config_set(char *dst, size_t size, const char *text, const char *key,
+                   const char *value);
+
+/*
+ * The same, to the config file itself, creating it and its folder if they are
+ * not there. `path` is filled with the file written, for a caller that wants to
+ * say where it went; pass NULL for none.
+ *
+ * The new text is written beside the old and renamed over it, so a file that
+ * exists is either the old one or the new one and never half of each.
+ *
+ * Returns 0 on success, or -1 after reporting the reason through log.h.
+ */
+int aud_config_save(const char *key, const char *value, char *path, size_t path_size);
 
 /* "auto", "yes" or "no" for a mode, for the help text and --help output. */
 const char *aud_config_prompt_name(aud_prompt_mode mode);

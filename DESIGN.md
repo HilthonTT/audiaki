@@ -71,6 +71,7 @@ src/
     info.c/.h     measure a finished take: levels, clipping, noise floor
     preroll.c/.h  the seconds held before a take starts, kept bit for bit
     latency.c/.h  where an overdub belongs, given how late it was heard
+    calibrate.c/.h  measuring that lateness, rather than estimating it
   media/        bytes on disk, and pipes to other programs
     wav.c/.h      streaming WAV writer, and a tolerant WAV reader
     canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
@@ -240,14 +241,21 @@ beats were generated at frames 0, 24000, 48000 and so on exactly. This is the
 same reasoning as `--play`'s backpressure: pace on the audio, never on
 `CLOCK_MONOTONIC`.
 
-What that exactness does **not** buy is a sample-aligned take. The click reaches
-the player through the output's buffer, tens of milliseconds under ALSA and
-around a tenth of a second under PipeWire, so a performance played perfectly in
-time sits that far behind the grid it was played to. Closing that gap means
-measuring the round trip and compensating, which is a different feature with a
-calibration step in it. A metronome keeps you at a tempo; it does not make the
-result line up with a timeline, and the documentation says so rather than
-letting anyone assume otherwise.
+What that exactness does **not** buy on its own is a sample-aligned take. The
+click reaches the player through the output's buffer, tens of milliseconds under
+ALSA and around a tenth of a second under PipeWire, so a performance played
+perfectly in time sits that far behind the grid it was played to. What closes
+that gap is striking the click early rather than moving the grid: the beat is
+generated `lead_frames` ahead of where it belongs so that it *arrives* where it
+belongs, and beat n is still frame n × spacing of the file. The correction is
+the same round trip an overdub is placed by, from the same number — see
+[Overdubbing](#overdubbing) and [Measuring the round
+trip](#measuring-the-round-trip).
+
+What is left after that is jitter rather than offset, and no constant removes
+it. A metronome corrected this way keeps you at a tempo and lands the take close
+to the grid; it does not sample-align it, and the documentation says so rather
+than letting anyone assume otherwise.
 
 A beat is a sine burst under an exponential decay — 50 ms over an 8 ms time
 constant — with the downbeat an octave above the others. No wavetable, so
@@ -523,6 +531,65 @@ drawn frame of each other rather than on the same sample. Overdubs land close,
 not sample locked, and that is a property of having no single clock behind both
 rather than something a constant can correct. It is worth saying plainly rather
 than pretending away.
+
+### Measuring the round trip
+
+The estimate above is made of the two buffer sizes, and it is honest about being
+an estimate: the converters, the driver and the interface all add delay that no
+buffer size describes, and on real hardware the estimate and the truth differ by
+more than half. So the instruction has always been to measure it — and an
+instruction to go and do something in another program is a feature that has not
+been finished. `--calibrate` is the rest of it.
+
+`take/calibrate.h` plays a burst, listens for it, and reports the frames between
+the two. Three decisions carry it.
+
+**One call advances the clock.** The number wanted is the distance between the
+frame a burst was written to the output and the frame it arrived back on the
+input, and that distance only means anything if both are counted on the same
+clock. So `aud_calibrate_step()` takes the captured period and fills the
+playback period in one call, and nothing else may move the frame counter. That
+also makes the result the *right* correction rather than merely a fact about the
+hardware: the click is mixed into the output for the period just captured, so
+the burst and the beat sit in the same relationship to the capture clock.
+
+**A sweep, not a click.** What happens to the return is a correlation, and a
+tone correlates with itself once per cycle — a reading can land a whole cycle out
+with nothing looking wrong. A sweep correlates with itself once and sharply, and
+spreading its energy from 300 Hz to 3 kHz means it survives a path that rolls
+off at either end. The match is normalised, so a quiet return is as findable as
+a loud one, and taken on the absolute value, so a path that inverts polarity is
+a match rather than a miss. The search is direct rather than through the FFT:
+half a second of window against twenty milliseconds of burst is a few million
+multiply-adds, less than the capture it is measuring took to arrive.
+
+The burst is twenty milliseconds rather than ten because length is what
+separates a real return from a chance one. The best match noise can manage
+against a template falls off as the square root of the template's length, and
+the search looks at half a second of noise for something short — at ten
+milliseconds the best fluke lands close enough to the accept threshold to be
+worth avoiding.
+
+**Five of them, and a median.** Playback is fed from the capture loop and the
+two are not the same crystal, so consecutive readings differ by a millisecond or
+two however good the measurement is, and one reading cannot tell that apart from
+a door slamming. Five can: the median first, then everything near it, then the
+mean of what is left. A false match lands wherever the noise happened to look
+most like a sweep, which is nowhere in particular, so it cannot drag a median
+the way it would drag a mean — and once the outliers are gone the mean of the
+survivors is the better estimate of the two. When too few agree, the run says it
+could not tell rather than choosing between them.
+
+There is no sub-sample interpolation. Resolution is a frame, 0.02 ms at 44.1
+kHz, and the jitter reported alongside it is three orders of magnitude larger; a
+number refined past its own repeatability is a false precision.
+
+None of this touches a device, so it is unit tested against synthesised returns
+— a run fed its own output back, delayed by a number the test chose — rather
+than by plugging a cable in. `cmd/calibrate.c` is the part that owns the
+streams, and it is the one place in audiaki where an output that will not open
+is fatal: everywhere else playback is the convenience and the take is the
+product, and here the output is half of what is being measured.
 
 ### Drawing it fast
 

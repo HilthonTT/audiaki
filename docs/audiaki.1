@@ -23,6 +23,9 @@ instrument on it, play a take back, and visualise it
 \fB\-\-tune\fR [\fB\-D\fR \fIDEVICE\fR]
 .br
 .B audiaki
+\fB\-\-calibrate\fR [\fB\-D\fR \fIDEVICE\fR] [\fB\-\-monitor\-device\fR \fIOUTPUT\fR]
+.br
+.B audiaki
 \fB\-\-probe\fR [\fB\-D\fR \fIDEVICE\fR]
 .br
 .B audiaki
@@ -73,6 +76,15 @@ it opens the capture device and reports the pitch of whatever is being played,
 as a note and how far off that note it is in cents, until interrupted. Nothing
 is written. See
 .B TUNER
+below.
+.PP
+With
+.B \-\-calibrate
+it plays a short sweep out of an output and listens for it on the input,
+several times, and reports the round trip between the two. That is the number
+.B latency_ms
+holds, and it offers to write it there. Nothing else is written. See
+.B CALIBRATION
 below.
 .SH OPTIONS
 .SS Recording
@@ -493,6 +505,27 @@ choose the device to listen on.
 .BR \-\-a4 " " \fIHZ\fR
 The reference pitch every note is measured against, 390 to 500 (default 440).
 Set it to play with an ensemble tuned somewhere other than concert pitch.
+.SS Calibration
+.TP
+.B \-\-calibrate
+Measure the round trip between an output and an input, and exit. No audio file
+is written, and naming one is an error.
+.IP
+.BR \-D " names the input and " \-\-monitor\-device " the output;"
+.BR \-r ", " \-c ", " \-p " and " \-n
+apply as they do when recording, and a loop between the two \(em a cable from
+the output back to the input \(em is what there is to measure.
+.IP
+The result is the number
+.BR \-\-latency " and " latency_ms
+want, and audiaki offers to write it to the configuration file when there is a
+terminal to ask at.
+.B \-\-no\-prompt
+prints the line instead of asking, and so does a run with no terminal. Giving
+.B \-\-latency
+as well is an error: it is what this measures. See
+.B CALIBRATION
+below.
 .SS Common
 .TP
 .BR \-\-backend " " \fINAME\fR
@@ -659,6 +692,81 @@ each note is reported once as it settles instead:
  audiaki: E2  \-3 cents  82.2 Hz
  audiaki: A2  +1 cents  110.1 Hz
 .fi
+.SH CALIBRATION
+.PP
+.nf
+ $ audiaki \-\-calibrate
+ audiaki: measuring the round trip out of 'default' and back into 'default': 48000 Hz, 5 burst(s)
+ audiaki: connect the output to the input, and play nothing until it is done
+ audiaki:  1/5    14.2 ms   match 0.98
+ audiaki:  2/5    14.1 ms   match 0.98
+ audiaki:  3/5    14.2 ms   match 0.97
+ audiaki:  4/5    14.2 ms   match 0.98
+ audiaki:  5/5    14.1 ms   match 0.98
+ round trip:  14.2 ms  (682 frames at 48000 Hz)
+ spread:      0.1 ms  over 5 reading(s), weakest match 0.97
+ estimate:    34.8 ms  (what the buffers alone would have guessed)
+ write 'latency_ms = 14.2' to ~/.config/audiaki/config? [y/N]
+.fi
+.PP
+The three lines of report go to standard output, as
+.BR \-\-info " and " \-\-list
+do, and everything around them to standard error \(em so
+.B \-\-quiet
+leaves the measurement and nothing else. The
+.B estimate
+line is what audiaki would have used had the round trip not been measured, and
+is there to be compared against: on most interfaces it is out by more than half.
+.PP
+The metronome is struck a round trip ahead of the beat, and the desktop
+application places an overdub a round trip earlier than Record was pressed, so
+that both land where the performer actually played. Both take that number from
+.BR latency_ms ,
+and without one it is estimated from the two buffer sizes \(em a starting point
+rather than a measurement, since the converters, the driver and the interface
+all add delay that no buffer size describes.
+.PP
+This measures it. The number reported is the distance between the frame a burst
+was written to the output and the frame it arrived back on the input, counted on
+the capture clock \(em which is the clock the beat grid is counted on, and what
+makes it the right correction rather than merely a fact about the hardware.
+.PP
+A sweep is used rather than a click because what happens to it afterwards is a
+correlation. A tone matches itself once per cycle, so a reading can land a whole
+cycle out with nothing looking wrong; a sweep matches itself once and sharply,
+and spreading its energy over a decade means it survives a path that rolls off
+at either end.
+.B match
+is how well the return fitted, from 0 to 1: down a cable it is above 0.9, and
+anything below 0.4 is taken to be something other than the burst and discarded.
+Polarity does not matter \(em a return arriving upside down is still the burst.
+.PP
+Five bursts are fired rather than one because playback is fed from the capture
+loop and the two are not the same crystal.
+.B spread
+is how far apart the readings landed, which is the jitter no correction removes.
+A reading far from the others is discarded rather than averaged in, and when too
+few agree audiaki says so rather than choosing between them.
+.PP
+Four ways it can fail to produce a number:
+.BR "nothing came back" ,
+meaning the loop is not closed or the input is turned down;
+.BR "something came back but it was not the burst" ,
+meaning something arrived that did not fit the sweep, usually a room rather than
+a cable;
+.BR "the output could not play the bursts" ,
+meaning the output dropped the frames they were in, which a larger
+.BR \-\-period " or more " \-\-periods
+will fix; and
+.BR "the readings did not agree with each other" ,
+meaning they landed too far apart to be one measurement.
+.PP
+Writing the setting leaves the rest of the configuration file exactly as it was
+\(em the comments, the other settings, the order they were put in \(em and
+replaces an existing
+.B latency_ms
+rather than adding a second one. The file is written beside the old one and
+renamed over it, so it is never half written.
 .SH TAKE REPORT
 .PP
 .nf
@@ -970,11 +1078,14 @@ nothing was heard late and the take starts exactly where it was asked for.
 Estimated from the two queues when this is not given, which is a starting
 point and not a measurement: the converters, the driver and the interface all
 add delay nothing here can see. If overdubs land consistently late, measure the
-round trip \(em play a click through the output into the input and see how far
-off it lands \(em and set it. It belongs in
+round trip with
+.B "audiaki \-\-calibrate"
+\(em see
+.B CALIBRATION
+\(em which offers to write it to
 .B latency_ms
-in the configuration file, being a property of the machine rather than of the
-session. Zero turns the correction off.
+in the configuration file, where it belongs, being a property of the machine
+rather than of the session. Zero turns the correction off.
 .IP
 What this cannot correct for is jitter: playback is fed from the drawing loop
 and capture runs on its own thread, so the two start within a drawn frame of
@@ -1266,8 +1377,13 @@ Round-trip latency the desktop application places an overdub by, in
 milliseconds, 0 to 500. Playing along to what is already recorded means hearing
 it late, so the take is placed that much earlier than the button was pressed.
 Left out, it is estimated from the capture and playback buffers, which is a
-starting point rather than a measurement \- see
-.BR audiaki\-gui (1).
+starting point rather than a measurement.
+.B \-\-calibrate
+measures it and offers to write this line \- see
+.B CALIBRATION
+\- and
+.BR audiaki\-gui (1)
+describes what the desktop application does with it.
 .TP
 .B gain
 Gain added to the recording itself, as a multiplier from 0.0 to 16.0. The same

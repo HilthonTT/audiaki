@@ -193,6 +193,149 @@ TEST(a_file_that_is_not_there_is_not_a_failure)
   unsetenv("AUDIAKI_CONFIG");
 }
 
+/* Room for anything these tests write, well inside what aud_config_set() takes. */
+#define SET_MAX 4096u
+
+TEST(setting_a_key_that_is_there_replaces_only_that_line)
+{
+  char out[SET_MAX];
+
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out),
+                              "# where takes go\n"
+                              "take_dir = ~/Takes\n"
+                              "latency_ms = 8\n"
+                              "prompt = yes\n",
+                              "latency_ms", "14.2"),
+               0);
+  CHECK_EQ_STR(out, "# where takes go\n"
+                    "take_dir = ~/Takes\n"
+                    "latency_ms = 14.2\n"
+                    "prompt = yes\n");
+}
+
+TEST(setting_a_key_that_is_not_there_appends_it)
+{
+  char out[SET_MAX];
+
+  CHECK_EQ_INT(
+      aud_config_set(out, sizeof(out), "take_dir = ~/Takes\n", "latency_ms", "14.2"), 0);
+  CHECK_EQ_STR(out, "take_dir = ~/Takes\n"
+                    "latency_ms = 14.2\n");
+
+  /* and a file that does not exist yet is an empty one */
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out), "", "latency_ms", "14.2"), 0);
+  CHECK_EQ_STR(out, "latency_ms = 14.2\n");
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out), NULL, "latency_ms", "14.2"), 0);
+  CHECK_EQ_STR(out, "latency_ms = 14.2\n");
+}
+
+/*
+ * The comments are the only record of why somebody chose what they chose, and a
+ * commented-out setting is a decision rather than a setting.
+ */
+TEST(comments_and_blank_lines_survive_a_rewrite)
+{
+  char out[SET_MAX];
+
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out),
+                              "# measured on the Box, 2026-08-11\n"
+                              "\n"
+                              "; latency_ms = 99\n"
+                              "  latency_ms   =   8   \n"
+                              "\n"
+                              "gain = 2.0\n",
+                              "latency_ms", "14.2"),
+               0);
+  CHECK_EQ_STR(out, "# measured on the Box, 2026-08-11\n"
+                    "\n"
+                    "; latency_ms = 99\n"
+                    "latency_ms = 14.2\n"
+                    "\n"
+                    "gain = 2.0\n");
+}
+
+/*
+ * The parser takes the last spelling it reads, so setting only the first would
+ * leave a file that still says the old thing.
+ */
+TEST(a_key_written_twice_is_set_on_both_lines)
+{
+  char out[SET_MAX];
+  aud_config cfg;
+
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out),
+                              "latency_ms = 8\n"
+                              "gain = 2.0\n"
+                              "latency-ms = 9\n",
+                              "latency_ms", "14.2"),
+               0);
+  CHECK_EQ_STR(out, "latency_ms = 14.2\n"
+                    "gain = 2.0\n"
+                    "latency_ms = 14.2\n");
+
+  /* and what comes back out of the parser is what was put in */
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_parse(&cfg, out, "test"), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 14.2, 1e-9);
+}
+
+TEST(a_file_with_no_last_newline_is_left_terminated)
+{
+  char out[SET_MAX];
+
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out), "take_dir = ~/Takes", "latency_ms", "14"),
+               0);
+  CHECK_EQ_STR(out, "take_dir = ~/Takes\n"
+                    "latency_ms = 14\n");
+}
+
+TEST(a_rewrite_that_would_not_fit_is_refused)
+{
+  char out[16];
+
+  CHECK_EQ_INT(
+      aud_config_set(out, sizeof(out), "take_dir = ~/Takes\n", "latency_ms", "14.2"), -1);
+  CHECK_EQ_INT(aud_config_set(NULL, sizeof(out), "", "latency_ms", "14.2"), -1);
+  CHECK_EQ_INT(aud_config_set(out, 0, "", "latency_ms", "14.2"), -1);
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out), "", NULL, "14.2"), -1);
+  CHECK_EQ_INT(aud_config_set(out, sizeof(out), "", "latency_ms", NULL), -1);
+}
+
+/* The whole round trip, through a real file in a folder that was not there. */
+TEST(saving_writes_the_file_and_reading_it_back_agrees)
+{
+  aud_config cfg;
+  char path[AUD_PATH_MAX];
+  char written[AUD_PATH_MAX];
+
+  setenv("AUDIAKI_CONFIG", "./audiaki-test-config-dir/config", 1);
+
+  CHECK_EQ_INT(aud_config_save("latency_ms", "14.2", written, sizeof(written)), 0);
+  CHECK_EQ_INT(aud_config_path(path, sizeof(path)), 0);
+  CHECK_EQ_STR(written, path);
+
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_load(&cfg), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 14.2, 1e-9);
+
+  /* writing a second setting leaves the first alone */
+  CHECK_EQ_INT(aud_config_save("prompt", "no", NULL, 0), 0);
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_load(&cfg), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 14.2, 1e-9);
+  CHECK_EQ_INT(cfg.prompt, AUD_PROMPT_NEVER);
+
+  /* and measuring again replaces it rather than adding a second one */
+  CHECK_EQ_INT(aud_config_save("latency_ms", "9.5", NULL, 0), 0);
+  aud_config_defaults(&cfg);
+  CHECK_EQ_INT(aud_config_load(&cfg), 0);
+  CHECK_EQ_DBL(cfg.latency_ms, 9.5, 1e-9);
+
+  remove(path);
+  remove("./audiaki-test-config-dir");
+  unsetenv("AUDIAKI_CONFIG");
+}
+
 int main(void)
 {
   /* the parser reports what it could not use through log.h; the tests that
@@ -210,6 +353,13 @@ int main(void)
   RUN(a_file_with_no_last_newline_still_has_a_last_line);
   RUN(the_path_follows_the_environment);
   RUN(a_file_that_is_not_there_is_not_a_failure);
+  RUN(setting_a_key_that_is_there_replaces_only_that_line);
+  RUN(setting_a_key_that_is_not_there_appends_it);
+  RUN(comments_and_blank_lines_survive_a_rewrite);
+  RUN(a_key_written_twice_is_set_on_both_lines);
+  RUN(a_file_with_no_last_newline_is_left_terminated);
+  RUN(a_rewrite_that_would_not_fit_is_refused);
+  RUN(saving_writes_the_file_and_reading_it_back_agrees);
 
   return TEST_RESULT();
 }
