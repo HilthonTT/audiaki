@@ -725,6 +725,161 @@ int aud_track_insert_gap(aud_track *t, uint64_t at, uint64_t frames)
   return 0;
 }
 
+/*
+ * Negating `by` to subtract it would overflow at INT64_MIN, which is a value a
+ * drag cannot produce but a project file could ask for. Negating `by + 1`
+ * cannot overflow, and the frame it is short by goes back on as an unsigned one.
+ */
+uint64_t aud_frame_offset(uint64_t frame, int64_t by)
+{
+  if (by >= 0)
+  {
+    return frame + (uint64_t)by;
+  }
+  return frame - (uint64_t)(-(by + 1)) - 1u;
+}
+
+/* A distance in frames, as far as an int64_t can carry it. */
+static int64_t as_offset(uint64_t frames)
+{
+  return frames > (uint64_t)INT64_MAX ? INT64_MAX : (int64_t)frames;
+}
+
+int64_t aud_track_move_room(const aud_track *t, uint64_t from, uint64_t to, int64_t want)
+{
+  uint64_t behind = 0; /* where the last obstacle before the range ends */
+  uint64_t ahead = 0;  /* where the first one after it starts */
+  int stopped_ahead = 0;
+
+  if (t == NULL || from >= to || want == 0)
+  {
+    return 0;
+  }
+
+  for (size_t i = 0; i < t->count; i++)
+  {
+    const aud_clip *c = &t->clips[i];
+    uint64_t end = clip_end(c);
+
+    /*
+     * Each clip is looked at for the parts of it outside the range, which are
+     * the parts that stay put. A clip wholly inside has neither and is going to
+     * move; one that straddles an edge has the piece a split will leave behind,
+     * hard against that edge.
+     */
+    if (c->start < from)
+    {
+      uint64_t stops = end < from ? end : from;
+
+      behind = stops > behind ? stops : behind;
+    }
+
+    /* sorted and non-overlapping, so the first one past the range is the nearest */
+    if (!stopped_ahead && end > to)
+    {
+      ahead = c->start > to ? c->start : to;
+      stopped_ahead = 1;
+    }
+  }
+
+  if (want > 0)
+  {
+    int64_t room = stopped_ahead ? as_offset(ahead - to) : INT64_MAX;
+
+    return want < room ? want : room;
+  }
+
+  /* the clear space before the range, which is as far back as it can go */
+  {
+    int64_t room = as_offset(from - behind);
+
+    return want > -room ? want : -room;
+  }
+}
+
+int aud_track_move(aud_track *t, uint64_t from, uint64_t to, int64_t by)
+{
+  size_t first;
+  size_t past;
+  size_t moving;
+  size_t where;
+  aud_clip *lifted;
+
+  if (t == NULL || from >= to || by == 0)
+  {
+    return 0;
+  }
+
+  /*
+   * Not while a take is arriving on this lane. The clip being recorded into
+   * grows at its end and the block behind it has exactly one owner - moving
+   * either that clip or the ground under it is not something to work out
+   * halfway through a performance.
+   */
+  if (aud_track_recording(t))
+  {
+    return -1;
+  }
+
+  /* the caller makes room before asking, because a move across several tracks
+   * has to be the same distance on all of them */
+  if (aud_track_move_room(t, from, to, by) != by)
+  {
+    return -1;
+  }
+
+  if (aud_track_split(t, from) != 0 || aud_track_split(t, to) != 0)
+  {
+    return -1;
+  }
+
+  first = clip_at_or_after(t, from);
+  past = first;
+  while (past < t->count && t->clips[past].start < to)
+  {
+    past++;
+  }
+  moving = past - first;
+  if (moving == 0)
+  {
+    return 0; /* the range held nothing but silence, and silence moves by itself */
+  }
+
+  lifted = malloc(moving * sizeof(*lifted));
+  if (lifted == NULL)
+  {
+    return -1;
+  }
+  memcpy(lifted, &t->clips[first], moving * sizeof(*lifted));
+
+  /*
+   * Out of the list and back into it, rather than resorted in place: the clips
+   * keep their references throughout - they are the same clips over the same
+   * blocks, laid down somewhere else - so clip_remove(), which releases one, is
+   * not what this wants. The list has room for them by definition, having just
+   * had them taken out of it.
+   */
+  memmove(&t->clips[first], &t->clips[past], (t->count - past) * sizeof(*t->clips));
+  t->count -= moving;
+
+  for (size_t i = 0; i < moving; i++)
+  {
+    lifted[i].start = aud_frame_offset(lifted[i].start, by);
+  }
+
+  /* the ground checked clear above, so nothing here can straddle the landing */
+  where = clip_at_or_after(t, lifted[0].start);
+  memmove(&t->clips[where + moving], &t->clips[where],
+          (t->count - where) * sizeof(*t->clips));
+  memcpy(&t->clips[where], lifted, moving * sizeof(*lifted));
+  t->count += moving;
+  free(lifted);
+
+  /* a piece put back where it was split from is one clip again */
+  aud_track_tidy(t);
+  return 0;
+}
+
 int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_track *dst)
 {
   if (src == NULL || dst == NULL || from >= to)

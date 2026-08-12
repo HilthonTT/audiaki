@@ -281,6 +281,8 @@ typedef enum
   APP_EDIT_FADE_IN,
   APP_EDIT_FADE_OUT,
   APP_EDIT_SELECT_ALL,
+  /* the selection along the timeline, by app.move_by frames */
+  APP_EDIT_MOVE,
 } app_edit_action;
 
 /*
@@ -360,6 +362,14 @@ typedef struct
   aud_clipboard clipboard;
   aud_timeline timeline;
   aud_player player;
+
+  /*
+   * Frames APP_EDIT_MOVE would move the selection by. It is the one edit with
+   * an argument, and it has to survive being asked about: the question the
+   * dialog puts up is answered a frame or more later, by which time the drag
+   * that asked for it is over and the keystroke is long gone.
+   */
+  int64_t move_by;
 
   /*
    * A file being auditioned from the save dialog, which is the one thing heard
@@ -603,6 +613,9 @@ void app_load_track(app *a, const char *path);
  */
 void app_edit(app *a, app_edit_action action);
 void app_edit_now(app *a, app_edit_action action);
+
+/* Move the selection along the timeline by `by` frames; see APP_EDIT_MOVE. */
+void app_move_selection(app *a, int64_t by);
 
 /* Play from the cursor, or from the start of the selection. Stops if playing. */
 void app_toggle_play(app *a);

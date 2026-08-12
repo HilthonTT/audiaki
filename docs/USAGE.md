@@ -1079,7 +1079,13 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   reaching further down costs real work per reading.
 - The desktop app's grid does not move audio that is already on the timeline:
   turning it on, or dividing it more finely, changes where the *next* edit
-  lands and leaves every existing clip where it was.
+  lands and leaves every existing clip where it was. Dragging a selection does
+  move it, and snaps it to the grid on the way — but one selection at a time,
+  and along its lane rather than between lanes.
+- A move stops against whatever is already on the lane rather than writing over
+  it, since clips do not overlap. A selection with audio hard against both of
+  its edges — a bar taken out of the middle of a take — therefore has nowhere
+  to go until the ground it needs is cleared.
 - The system file chooser is used when `zenity` or `kdialog` is installed, and
   the built-in folder browser when neither is. That browser has no bookmarks, no
   recent places and no search — it is the fallback rather than the intent, and

@@ -206,6 +206,47 @@ int aud_track_delete(aud_track *t, uint64_t from, uint64_t to, int ripple);
 int aud_track_insert_gap(aud_track *t, uint64_t at, uint64_t frames);
 
 /*
+ * `frame` moved by `by`, which may be negative. The one place a signed offset
+ * meets an unsigned frame, so the arithmetic that has to be careful about it is
+ * written once. The caller has established that the answer is in range.
+ */
+uint64_t aud_frame_offset(uint64_t frame, int64_t by);
+
+/*
+ * How far timeline frames [from, to) could move by, given what else is on the
+ * track. `want` is the offset asked for and the answer has the same sign and no
+ * greater magnitude - it is `want` clamped by whatever the range would run into,
+ * and 0 when there is nowhere that way to go.
+ *
+ * The obstacles are the parts of clips that lie outside [from, to), because
+ * those are what stays put while the range moves. A range over the middle of a
+ * take therefore has nowhere to go at all: the rest of the take is against both
+ * of its edges.
+ *
+ * Asked before moving rather than discovered while moving, because a move
+ * across several tracks has to travel the same distance on each of them - see
+ * aud_edit_move_room().
+ */
+int64_t aud_track_move_room(const aud_track *t, uint64_t from, uint64_t to, int64_t want);
+
+/*
+ * Move timeline frames [from, to) along the track by `by` frames, leaving a gap
+ * of the same length behind. The clips at either edge are split first, so what
+ * moves is exactly the range asked for.
+ *
+ * Nothing is overwritten: the whole point of the room check is that the landing
+ * ground is clear, and a `by` that aud_track_move_room() would have clamped is
+ * refused rather than fudged. Nothing is copied either - the clips that move
+ * keep the blocks they were reading.
+ *
+ * Returns 0 on success - including when the range held no audio, which moves
+ * silence about and is a success in the same way deleting an empty range is - or
+ * -1 when there is no room for `by`, a take is open on the track, or the clip
+ * list could not grow.
+ */
+int aud_track_move(aud_track *t, uint64_t from, uint64_t to, int64_t by);
+
+/*
  * Copy timeline frames [from, to) of `src` into `dst`, which must be
  * uninitialised, with the extracted range starting at frame 0. The audio is
  * shared, not copied. Returns 0 on success, -1 on failure.

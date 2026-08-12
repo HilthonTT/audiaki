@@ -243,6 +243,8 @@ static const char *edit_name(app_edit_action action)
     return "Fade in";
   case APP_EDIT_FADE_OUT:
     return "Fade out";
+  case APP_EDIT_MOVE:
+    return "Move";
   default:
     return "That";
   }

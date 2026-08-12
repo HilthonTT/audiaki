@@ -112,7 +112,8 @@ The window records at the cursor onto whichever track is free, draws the
 waveform as it arrives, plays the project back while you record over it, counts
 it out with a metronome and rules it into bars you can snap to, loops a passage
 while you learn it, cuts,
-copies, pastes, splits, trims and fades with 64 steps of undo, saves the session
+copies, pastes, splits, trims, drags a take along its lane onto the beat and
+fades with 64 steps of undo, saves the session
 as a `.aki` file and exports a WAV. A session refers to its takes rather than
 containing them, so it is a few kilobytes of readable text that `audiaki
 --render` can mix down without a window. The visualiser is a panel of it you can

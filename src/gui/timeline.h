@@ -58,7 +58,20 @@ typedef struct
    */
   int selecting;
   uint64_t anchor; /* the frame the selection drag started at */
-  int resizing;    /* a track's bottom edge is being dragged */
+
+  /*
+   * The selection is being dragged along its lane. The project is left alone
+   * until the button comes up - what is drawn in the meantime is where it would
+   * land - so that a drag across half a session is one step of undo rather than
+   * one per frame, and so that letting go over ground it cannot have leaves
+   * nothing to put back.
+   */
+  int moving;
+  uint64_t move_anchor; /* the frame under the pointer when it was grabbed */
+  int64_t move_by;      /* as far as it has got, held to the room there is */
+  int move_blocked;     /* the pointer has asked for further than there is room */
+
+  int resizing; /* a track's bottom edge is being dragged */
   size_t resize_track;
   int resize_from_h;
   float resize_from_y;
@@ -81,6 +94,14 @@ typedef struct
    * The caller carries it out and puts this back to -1.
    */
   long close_requested;
+
+  /*
+   * Frames a finished drag is asking the selection to move by, or 0 for none.
+   * Asked for rather than done, for the same reason the close button asks: an
+   * edit belongs to the window, which is what knows whether to stop and put a
+   * question up first. The caller carries it out and puts this back to 0.
+   */
+  int64_t move_requested;
 } aud_timeline;
 
 void aud_timeline_init(aud_timeline *tl);

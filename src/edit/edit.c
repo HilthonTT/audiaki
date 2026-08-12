@@ -345,6 +345,66 @@ int aud_edit_duplicate(aud_doc *d)
   return 0;
 }
 
+int64_t aud_edit_move_room(const aud_doc *d, int64_t want)
+{
+  int64_t room = want;
+
+  if (!have_work(d))
+  {
+    return 0;
+  }
+
+  for (size_t i = 0; i < d->count && room != 0; i++)
+  {
+    const aud_track *t = &d->tracks[i];
+
+    if (!t->selected)
+    {
+      continue;
+    }
+
+    /*
+     * A take still arriving stops the whole move rather than only its own lane,
+     * for the same reason the distance is shared: what is left behind has to
+     * line up with what went with it.
+     */
+    if (aud_track_recording(t))
+    {
+      return 0;
+    }
+
+    /* each lane can only bring it closer to zero, so threading it through is
+     * the same as taking the least of them */
+    room = aud_track_move_room(t, d->sel_start, d->sel_end, room);
+  }
+
+  return room;
+}
+
+int aud_edit_move(aud_doc *d, int64_t by)
+{
+  int64_t room = aud_edit_move_room(d, by);
+
+  if (room == 0)
+  {
+    return -1;
+  }
+
+  aud_doc_checkpoint(d, "move");
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (d->tracks[i].selected)
+    {
+      aud_track_move(&d->tracks[i], d->sel_start, d->sel_end, room);
+    }
+  }
+
+  aud_doc_select(d, aud_frame_offset(d->sel_start, room),
+                 aud_frame_offset(d->sel_end, room));
+  return 0;
+}
+
 /*
  * Ramp the selection up from silence, or down into it.
  *

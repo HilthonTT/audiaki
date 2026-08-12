@@ -9,6 +9,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Audio can be moved along the timeline**, by dragging it or with `,` and `.`.
+
+  Until now the only way to put a take somewhere else was to cut it and paste it
+  back, which is three gestures for one intention and gets the position wrong
+  unless the cursor was already exactly right. Select some audio and drag it:
+  the pointer takes hold of the selection wherever it is inside one, and lets go
+  of it where you let go. The keys do the same without the pointer, by one grid
+  line at a time with the grid on and by a nudge without it.
+
+  With the grid on it is the landing edge that snaps rather than the pointer,
+  which is the difference between dragging a take *onto* the beat and dragging
+  it a whole beat further on while it stays exactly as late as it was. `alt`
+  steps off the grid here as it does everywhere else.
+
+  Nothing moves until the button comes up. What follows the pointer is an
+  outline of where it would land, so a drag across a session is one step of undo
+  rather than one per drawn frame, and so a drag that turns out to have nowhere
+  to go leaves nothing to put back.
+
+  It stops against what is already on the lane rather than writing over it:
+  clips do not overlap, and that invariant is what the whole editor is built on.
+  A take dragged towards its neighbour slides up against it and stops, the
+  outline turning amber to say so. The consequence is worth knowing rather than
+  discovering — a selection with audio hard against both of its edges, a bar out
+  of the middle of a take, cannot move at all, because the rest of the take is
+  the thing in the way.
+
+  A move across several selected lanes travels the same distance on all of them,
+  and stops where the least roomy of them stops. An overdub that moved further
+  than the take it was played against would come back out of time with it, which
+  is the one thing this must not be able to do quietly.
+
+  Like every other edit here it is clip surgery over shared blocks -
+  `aud_track_move()` lifts the run of clips out of the list, offsets their
+  starts and puts it back - so moving a forty minute take costs what moving a
+  bar does, and the undo step it takes is a clip list rather than any audio.
+
 - **`--calibrate` measures the round trip**, instead of telling you to go and
   measure it somewhere else.
 

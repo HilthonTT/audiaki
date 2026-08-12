@@ -1081,12 +1081,14 @@ static const char *const help_keys[][2] = {
     {"V", "the next visualiser style"},
     {"1 - 6", "a visualiser style outright"},
     {"drag", "select audio; ctrl+click adds a track to the selection"},
+    {"drag it again", "move the selection along its lane"},
     {"left / right", "move the cursor; ctrl steps clip to clip, shift selects"},
     {"up / down", "the track above or below; shift adds it to the selection"},
     {"home / end", "the start or the end of the project"},
     {"ctrl+A", "select everything"},
     {"ctrl+X / C / V", "cut, copy, paste"},
     {"[ / ]", "fade the selection in, or out"},
+    {", / .", "move the selection earlier or later"},
     {"del", "delete the selection and close the gap"},
     {"ctrl+Z", "undo; ctrl+shift+Z redoes"},
     {"ctrl+S / O", "save the session; ctrl+shift+S saves it as, ctrl+O opens"},
@@ -1332,6 +1334,15 @@ int app_draw_frame(app *a, const aud_engine_status *st)
 
     a->timeline.close_requested = -1;
     app_confirm_close_track(a, (size_t)index);
+  }
+
+  /* and so does a finished drag of the selection, for the same reason */
+  if (a->timeline.move_requested != 0)
+  {
+    int64_t by = a->timeline.move_requested;
+
+    a->timeline.move_requested = 0;
+    app_move_selection(a, by);
   }
 
   draw_status(a, status, st);

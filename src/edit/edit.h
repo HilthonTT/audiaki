@@ -78,6 +78,29 @@ int aud_edit_split(aud_doc *d);
 int aud_edit_duplicate(aud_doc *d);
 
 /*
+ * How far the selection could move by, which is `want` held to whatever the
+ * least roomy of the selected tracks would run into - a move that travelled
+ * further on one lane than another would take an overdub out of time with the
+ * take it was played against.
+ *
+ * Zero when there is nowhere that way to go, which the window reads as the
+ * answer to "may I drop it here": clips do not overlap, so a move onto occupied
+ * ground stops against it rather than writing over it.
+ */
+int64_t aud_edit_move_room(const aud_doc *d, int64_t want);
+
+/*
+ * Move the selection along the timeline by `by` frames, on every selected
+ * track, leaving a gap where it came from. The selection travels with the audio
+ * so that a nudge can be repeated and what moved stays picked out.
+ *
+ * `by` is clamped by aud_edit_move_room() rather than refused for being too far,
+ * so dragging hard against a neighbouring take lands against it. Returns 0 when
+ * anything moved, -1 when there was no room at all.
+ */
+int aud_edit_move(aud_doc *d, int64_t by);
+
+/*
  * Ramp the selection up out of silence, or down into it, on every selected
  * track. The selection's length is the length of the fade, and which end it
  * sits at is which of the two this is.

@@ -490,6 +490,82 @@ TEST(closing_a_track_is_undoable)
   aud_doc_free(&d);
 }
 
+TEST(moving_the_selection_takes_the_audio_and_the_selection_with_it)
+{
+  aud_doc d;
+
+  build(&d, 2, 100);
+  aud_doc_select_tracks(&d, 1);
+  aud_doc_select(&d, 0, 100);
+
+  CHECK_EQ_INT(aud_edit_move(&d, 50), 0);
+  CHECK_EQ_INT((int)aud_track_end(&d.tracks[0]), 150);
+  CHECK_EQ_INT((int)aud_track_end(&d.tracks[1]), 150);
+  CHECK_EQ_INT(aud_track_covered(&d.tracks[0], 49), 0);
+  CHECK(at(&d.tracks[1], 50) == 10000.0f);
+
+  /* the selection went with it, so a second nudge carries on from here */
+  CHECK_EQ_INT((int)d.sel_start, 50);
+  CHECK_EQ_INT((int)d.sel_end, 150);
+  CHECK_EQ_INT((int)d.cursor, 50);
+
+  CHECK_EQ_INT(aud_doc_undo(&d), 0);
+  CHECK(at(&d.tracks[1], 0) == 10000.0f);
+  CHECK_EQ_INT((int)aud_track_end(&d.tracks[0]), 100);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_move_travels_the_same_distance_on_every_lane_it_covers)
+{
+  aud_doc d;
+  aud_samples *s = counted(10, 500.0f);
+
+  build(&d, 2, 100);
+  aud_track_add(&d.tracks[1], s, 200); /* something in the way, on one lane only */
+  aud_samples_release(s);
+
+  aud_doc_select_tracks(&d, 1);
+  aud_doc_select(&d, 0, 100);
+
+  /*
+   * The lane with room to spare is held to the lane without it. An overdub that
+   * travelled further than the take it was played against would be out of time
+   * with it, which is the one thing a move must not do.
+   */
+  CHECK_EQ_INT((int)aud_edit_move_room(&d, 1000), 100);
+  CHECK_EQ_INT(aud_edit_move(&d, 1000), 0);
+  CHECK(at(&d.tracks[0], 100) == 0.0f);
+  CHECK(at(&d.tracks[1], 100) == 10000.0f);
+  CHECK(at(&d.tracks[1], 200) == 500.0f); /* and what was in the way is intact */
+  CHECK_EQ_INT((int)d.sel_start, 100);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_move_with_nowhere_to_go_changes_nothing)
+{
+  aud_doc d;
+  size_t steps;
+
+  build(&d, 1, 100);
+  aud_doc_select_tracks(&d, 1);
+  aud_doc_select(&d, 40, 60);
+  steps = d.undo_count;
+
+  /* the rest of the take is against both edges: no room, and so no checkpoint */
+  CHECK_EQ_INT((int)aud_edit_move_room(&d, 10), 0);
+  CHECK_EQ_INT(aud_edit_move(&d, 10), -1);
+  CHECK_EQ_INT(d.undo_count, steps);
+  CHECK_EQ_INT(d.tracks[0].count, 1);
+
+  /* and neither does a move with nothing selected */
+  aud_doc_select_tracks(&d, 0);
+  CHECK_EQ_INT(aud_edit_move(&d, 10), -1);
+
+  aud_doc_free(&d);
+}
+
 int main(void)
 {
   RUN(an_empty_project_has_nothing_to_undo);
@@ -512,6 +588,9 @@ int main(void)
   RUN(a_new_edit_throws_the_redo_stack_away);
   RUN(the_undo_stack_stops_growing_and_keeps_the_recent_end);
   RUN(closing_a_track_is_undoable);
+  RUN(moving_the_selection_takes_the_audio_and_the_selection_with_it);
+  RUN(a_move_travels_the_same_distance_on_every_lane_it_covers);
+  RUN(a_move_with_nowhere_to_go_changes_nothing);
 
   return TEST_RESULT();
 }

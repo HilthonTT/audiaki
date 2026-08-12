@@ -277,6 +277,9 @@ TEST(the_actions_that_discard_nothing_never_ask)
   CHECK_EQ_INT(app_confirm_edit(a, APP_EDIT_SELECT_ALL), 0);
   CHECK_EQ_INT(app_confirm_edit(a, APP_EDIT_REDO), 0);
   CHECK_EQ_INT(app_confirm_edit(a, APP_EDIT_SPLIT), 0);
+  /* a move discards nothing however far it goes: it stops against what is in
+   * the way rather than writing over it */
+  CHECK_EQ_INT(app_confirm_edit(a, APP_EDIT_MOVE), 0);
   CHECK(!a->confirm.open);
 
   discard(a);

@@ -240,6 +240,7 @@ the selection as well; `ctrl+A` selects everything. Then:
 | **Split** | cuts the clips at the selection's edges without removing anything |
 | **Copy to** | the selection onto a new track of its own, at the same position |
 | **Fade in** / **Fade out** | `[` / `]` — ramps the selection out of silence, or into it |
+| **Move** | drag the selection along its lane, or `,` / `.` — see [Moving it](#moving-it) |
 | **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
 
 ### When it stops to ask
@@ -306,6 +307,50 @@ There are no crossfades. Clips on a lane do not overlap — that is the invarian
 the whole editor is built on — and a crossfade needs two pieces of audio
 sounding at once. Fading one out and the next in gives a dip, not a crossfade,
 and calling it one would be a lie.
+
+### Moving it
+
+Select some audio and then **drag it**, and it moves along the lane. The pointer
+turns into a horizontal arrow wherever it would take hold — inside the
+selection, on a lane the selection covers — the way it turns into a vertical one
+over a lane's bottom edge. A press anywhere else still starts a new selection,
+and a click inside one without dragging just puts the cursor down, the way
+clicking inside selected text does.
+
+Nothing moves until you let go. What follows the pointer is an outline of where
+it would land, so a drag across a whole session is one step of undo rather than
+one per frame, and so that letting go somewhere it cannot go leaves nothing to
+put back. `,` and `.` do the same thing without the pointer, by one grid line
+with the grid on and by a nudge without it.
+
+With the grid on it is the **landing edge** that snaps, not the pointer: drag a
+take that came in a fraction late and it goes onto the beat, rather than moving
+a whole beat and staying exactly as late as it was. `alt` steps off the grid,
+as everywhere else.
+
+A move across several selected lanes moves all of them the same distance, and
+that is the rule the rest follows from. An overdub that travelled further than
+the take it was played against would be out of time with it, so if one lane runs
+out of room they all stop there.
+
+**It stops against what is already on the lane rather than writing over it.**
+Clips do not overlap, so a take dragged towards a neighbouring one slides up
+against it and no further — the outline turns amber and the status line says
+there is no room that way. This has a consequence worth knowing before you go
+looking for the bug: **a selection with audio hard against both of its edges
+cannot move at all**. Select a bar out of the middle of a take and drag it, and
+nothing happens, because the rest of the take is on both sides of it. Delete or
+silence the ground it needs first, or move the piece to a lane of its own with
+**Copy to**, and then it has somewhere to go.
+
+Moving is along a lane and not between them: there is no dragging a take
+downwards onto another track. **Copy to** puts a selection on a new lane at the
+same position, which is the way to change which lane something is on.
+
+None of this copies audio either, so moving an hour-long take costs what moving
+a bar does. What it leaves behind is a hole rather than a gap that closes:
+everything else on the lane stays exactly where it was, which is the whole point
+of moving one piece.
 
 ## Taking the noise out
 
@@ -519,6 +564,7 @@ and stereo unless every track in it is mono.
 | `I` / `ctrl+E` | Import a WAV / export a mix |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
+| `,` / `.` | Move the selection earlier or later, one grid line at a time while the grid is on; `alt` steps off it |
 | `←` / `→` | Move the cursor, one grid line at a time while the grid is on; `ctrl` steps clip edge to clip edge, `alt` steps off the grid |
 | `shift+←` / `→` | Extend the selection instead of moving the cursor |
 | `↑` / `↓` | Select the track above or below; `shift` adds it |

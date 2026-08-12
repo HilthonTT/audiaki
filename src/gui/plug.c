@@ -962,6 +962,25 @@ void app_edit(app *a, app_edit_action action)
   app_edit_now(a, action);
 }
 
+/*
+ * Move the selection by `by` frames, which is what a finished drag on the
+ * timeline and the nudge keys both come to.
+ *
+ * The distance goes on the app rather than through app_edit(), because the
+ * question a big move may put up is answered later and by then the drag that
+ * asked for it has ended - see app.move_by.
+ */
+void app_move_selection(app *a, int64_t by)
+{
+  if (by == 0)
+  {
+    return;
+  }
+
+  a->move_by = by;
+  app_edit(a, APP_EDIT_MOVE);
+}
+
 void app_edit_now(app *a, app_edit_action action)
 {
   aud_doc *d = &a->doc;
@@ -983,6 +1002,31 @@ void app_edit_now(app *a, app_edit_action action)
     aud_doc_select_all(d);
     app_set_status(a, "everything selected");
     return;
+  case APP_EDIT_MOVE:
+  {
+    /*
+     * Its own reply rather than the shared one below, because what anyone
+     * moving audio wants to be told is how far it went - the length of what
+     * moved is the number they were already looking at. Asked for beforehand,
+     * since a move that ran out of room went less far than it was asked to.
+     */
+    int64_t went = aud_edit_move_room(d, a->move_by);
+
+    ok = aud_edit_move(d, a->move_by);
+    a->move_by = 0;
+
+    if (ok == 0)
+    {
+      a->project_dirty = 1;
+      app_set_status(a, "moved %+.3f s", d->rate > 0 ? (double)went / d->rate : 0.0);
+      return;
+    }
+
+    app_set_status(a, aud_doc_has_range(d) && aud_doc_any_track_selected(d)
+                          ? "no room to move it that way"
+                          : "select some audio first - click and drag across a track");
+    return;
+  }
   case APP_EDIT_CUT:
     ok = aud_edit_cut(d, &a->clipboard);
     break;
@@ -1277,6 +1321,33 @@ static uint64_t app_step(uint64_t at, uint64_t by, int back)
     return at + by;
   }
   return at > by ? at - by : 0;
+}
+
+/*
+ * How far one press of a nudge key moves the selection.
+ *
+ * The same distance the arrow keys walk the cursor by, and for the same reason:
+ * on the grid it is a grid line, so a take lands where the bars are, and off it
+ * a fixed number of pixels, which is the same gesture at every zoom. Landing on
+ * the line rather than stepping by its length is what puts a take that came in
+ * late onto the beat rather than moving it a beat further on.
+ */
+static int64_t app_move_step(const app *a, int back)
+{
+  const aud_doc *d = &a->doc;
+  uint64_t by;
+
+  if (a->timeline.grid && !IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT) &&
+      aud_doc_grid_frames(d) > 0.0)
+  {
+    uint64_t to = aud_doc_grid_step(d, d->sel_start, back);
+
+    return to >= d->sel_start ? (int64_t)(to - d->sel_start)
+                              : -(int64_t)(d->sel_start - to);
+  }
+
+  by = app_nudge(a);
+  return back ? -(int64_t)by : (int64_t)by;
 }
 
 /*
@@ -1594,6 +1665,16 @@ static void handle_keys(app *a, const aud_engine_status *st)
   if (IsKeyPressed(KEY_RIGHT_BRACKET))
   {
     app_edit(a, APP_EDIT_FADE_OUT);
+  }
+
+  /* and the nudge, on the two keys that already point either way */
+  if (IsKeyPressed(KEY_COMMA) || IsKeyPressedRepeat(KEY_COMMA))
+  {
+    app_move_selection(a, app_move_step(a, 1));
+  }
+  if (IsKeyPressed(KEY_PERIOD) || IsKeyPressedRepeat(KEY_PERIOD))
+  {
+    app_move_selection(a, app_move_step(a, 0));
   }
 
   if (IsKeyPressed(KEY_DELETE) || IsKeyPressed(KEY_BACKSPACE))

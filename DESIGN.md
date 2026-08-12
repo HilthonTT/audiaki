@@ -428,6 +428,41 @@ audio sounding at once. A split inside a ramp truncates it, because a clip can
 say "ramp up from silence" and has no way to say "carry on from half way up one
 that started in the clip before".
 
+### Moving a piece of it
+
+Moving audio along a lane is the same trick once more: the clips inside the
+range keep the blocks they were reading and are laid down at a different frame.
+`aud_track_move()` splits at both edges so what moves is exactly the range asked
+for, lifts that run of clips out of the list without touching their references,
+adds the offset to each start, and puts the run back where the sort order now
+wants it. Nothing is copied and nothing is freed, so moving a forty minute take
+costs what moving a bar does — and the undo step it takes is a clip list, like
+every other one.
+
+What the model decides for us is what happens at the far end. Clips on a lane do
+not overlap, so a move onto occupied ground is not a move that overwrites: it is
+one that cannot happen. `aud_track_move_room()` answers how far the range could
+go before it meets something, by looking at the parts of clips that lie
+*outside* it — those are the parts that stay put — and the move refuses any
+offset that is further than that. The window asks the same question every frame
+of a drag and draws the outline where the answer says, so what you see the
+pointer doing is what letting go will do.
+
+Two things fall out of that, and both are honest rather than convenient. A range
+with audio hard against both edges — a bar out of the middle of a take — has
+nowhere to go at all, because the rest of the take is the obstacle. And the
+distance is shared across every selected lane: `aud_edit_move_room()` threads
+one offset through all of them and takes the least, because an overdub that
+travelled further than the take it was played against would come back out of
+time with it. A move that went as far as each lane individually allowed would be
+the one edit here that could silently ruin a session.
+
+The drag itself changes nothing until the button comes up. That is not
+squeamishness about mutation — the project is only ever touched by the drawing
+thread — but about undo: a move applied per frame would be a hundred steps deep
+by the time it arrived, and one that turned out to have nowhere to go would have
+to be unwound rather than simply never made.
+
 ### Taking the hum out
 
 Every edit above is a window moving over audio that never changes. Spectral

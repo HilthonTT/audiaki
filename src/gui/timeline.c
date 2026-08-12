@@ -347,24 +347,38 @@ static void label_time(char *dst, size_t size, double seconds, double step)
   snprintf(dst, size, "%u:%02u", m, (unsigned)(s + 0.5));
 }
 
-static uint64_t frame_at(const aud_timeline *tl, const aud_doc *d, float x)
+/* Where the pointer is, in frames, before anything is snapped to anything. */
+static uint64_t frame_at_raw(const aud_timeline *tl, const aud_doc *d, float x)
 {
   double seconds = aud_timeline_seconds_at(tl, x);
-  uint64_t frame;
 
   if (seconds < 0.0)
   {
     return 0;
   }
-  frame = (uint64_t)(seconds * d->rate + 0.5);
+  return (uint64_t)(seconds * d->rate + 0.5);
+}
+
+/* Whether the grid is on and the key that steps off it is not held down. */
+static int snapping(const aud_timeline *tl)
+{
+  return tl->grid && !IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT);
+}
+
+static uint64_t frame_at(const aud_timeline *tl, const aud_doc *d, float x)
+{
+  uint64_t frame = frame_at_raw(tl, d, x);
 
   /*
    * The one place the pointer becomes a position, so the one place snapping
    * belongs: clicking, scrubbing and dragging a selection all arrive here and
    * all land on the grid together. Alt steps off it - a cut that has to go
    * between two beats should not need the grid turned off and back on.
+   *
+   * A move is the exception, and snaps its landing edge rather than the pointer
+   * - see move_offset(), which is where dragging a take onto the beat happens.
    */
-  if (tl->grid && !IsKeyDown(KEY_LEFT_ALT) && !IsKeyDown(KEY_RIGHT_ALT))
+  if (snapping(tl))
   {
     frame = aud_doc_snap(d, frame);
   }
@@ -383,6 +397,100 @@ static Rectangle wave_bounds(Rectangle area)
     w.width = 1.0f;
   }
   return w;
+}
+
+/*
+ * How far a move drag has come, in frames: from where it took hold to where the
+ * pointer is now, held to the room the selection has to move in.
+ *
+ * What is snapped is the landing edge rather than the pointer, and that is the
+ * whole difference between a grid that puts a take on the beat and one that
+ * does not: snapping the pointer would move a take that came in late by a whole
+ * number of beats and leave it exactly as late as it was.
+ */
+static int64_t move_offset(const aud_timeline *tl, const aud_doc *d, float x,
+                           int64_t *asked)
+{
+  uint64_t now = frame_at_raw(tl, d, x);
+  int64_t want = now >= tl->move_anchor ? (int64_t)(now - tl->move_anchor)
+                                        : -(int64_t)(tl->move_anchor - now);
+
+  /* the timeline has no frames before its first one to be dragged back into */
+  if (want < 0 && (uint64_t)(-(want + 1)) + 1u > d->sel_start)
+  {
+    want = -(int64_t)d->sel_start;
+  }
+
+  if (snapping(tl))
+  {
+    uint64_t landing = aud_doc_snap(d, aud_frame_offset(d->sel_start, want));
+
+    want = landing >= d->sel_start ? (int64_t)(landing - d->sel_start)
+                                   : -(int64_t)(d->sel_start - landing);
+  }
+
+  *asked = want;
+  return aud_edit_move_room(d, want);
+}
+
+/* Non-zero when the pointer is inside the selection, which is what takes hold. */
+static int over_selection(const aud_timeline *tl, const aud_doc *d, Rectangle lane)
+{
+  uint64_t at;
+
+  if (!aud_doc_has_range(d) || d->rate == 0 ||
+      !CheckCollisionPointRec(GetMousePosition(), lane))
+  {
+    return 0;
+  }
+
+  at = frame_at_raw(tl, d, GetMousePosition().x - lane.x);
+  return at >= d->sel_start && at < d->sel_end;
+}
+
+/*
+ * Where the selection would land, over the lane it would land on.
+ *
+ * An outline rather than the audio itself: what moves is decided when the
+ * button comes up, so until then this is a promise about where it is going and
+ * drawing the waveform there would be a claim that it had already gone. A drag
+ * that has run out of room sits over the selection in the colour of a warning,
+ * which is the honest answer to a pointer that has gone further than the audio
+ * can.
+ */
+static void draw_move_ghost(Rectangle lane, const aud_doc *d, const aud_timeline *tl)
+{
+  float from;
+  float to;
+  Rectangle box;
+  Color tint = tl->move_blocked ? AUD_UI_WARN : AUD_UI_ACCENT;
+
+  if (d->rate == 0)
+  {
+    return;
+  }
+
+  from = lane.x + aud_timeline_x_of(
+                      tl, (double)aud_frame_offset(d->sel_start, tl->move_by) / d->rate);
+  to = lane.x +
+       aud_timeline_x_of(tl, (double)aud_frame_offset(d->sel_end, tl->move_by) / d->rate);
+
+  if (to <= lane.x || from >= lane.x + lane.width)
+  {
+    return;
+  }
+
+  box.x = from < lane.x ? lane.x : from;
+  box.y = lane.y + 1.0f;
+  box.width = (to > lane.x + lane.width ? lane.x + lane.width : to) - box.x;
+  box.height = lane.height - 2.0f;
+  if (box.width < 1.0f)
+  {
+    box.width = 1.0f;
+  }
+
+  DrawRectangleRec(box, Fade(tint, 0.16f));
+  DrawRectangleLinesEx(box, 1.0f, Fade(tint, 0.9f));
 }
 
 /* The ruler counted in minutes and seconds, which is what it says with no grid. */
@@ -941,6 +1049,18 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
 
   tl->hint[0] = '\0';
 
+  /*
+   * Before the lanes rather than after them, so the outline drawn on each lane
+   * is where the pointer is now and not where it was a frame ago.
+   */
+  if (tl->moving)
+  {
+    int64_t asked = 0;
+
+    tl->move_by = move_offset(tl, d, GetMousePosition().x - wave.x, &asked);
+    tl->move_blocked = asked != 0 && tl->move_by == 0;
+  }
+
   draw_ruler(tl, d, ruler, playhead, enabled);
 
   DrawRectangleRec(area, AUD_UI_BG);
@@ -1007,6 +1127,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
     Rectangle scale = {rows.x + AUD_TIMELINE_PANEL_W, y, AUD_TIMELINE_SCALE_W, h};
     Rectangle lane = {wave.x, y, wave.width, h};
     size_t before = d->count;
+    int grab;
 
     if (y > rows.y + rows.height || y + h < rows.y)
     {
@@ -1066,6 +1187,11 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       draw_clip_edges(t, lane, d->rate, tl);
     }
 
+    if (tl->moving && t->selected)
+    {
+      draw_move_ghost(lane, d, tl);
+    }
+
     DrawLine((int)lane.x, (int)(y + h), (int)(lane.x + lane.width), (int)(y + h),
              AUD_UI_EDGE);
 
@@ -1088,8 +1214,29 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       }
     }
 
+    /*
+     * A press inside the selection takes hold of it rather than starting
+     * another one, the way dragging selected text moves it rather than
+     * reselecting it. Ctrl is left out of it: that is how a second lane is
+     * added to the selection, and adding one is not grabbing it.
+     */
+    grab = enabled && !tl->resizing && !tl->scrubbing && !tl->selecting && !tl->moving &&
+           t->selected && !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL) &&
+           over_selection(tl, d, lane);
+
+    if (grab)
+    {
+      SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+      {
+        tl->moving = 1;
+        tl->move_anchor = frame_at_raw(tl, d, GetMousePosition().x - lane.x);
+        tl->move_by = 0;
+      }
+    }
+
     /* a click in the waveform picks the track and starts a selection */
-    if (enabled && !tl->resizing && !tl->scrubbing &&
+    if (enabled && !tl->resizing && !tl->scrubbing && !tl->moving &&
         CheckCollisionPointRec(GetMousePosition(), lane) &&
         IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
@@ -1103,9 +1250,12 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       aud_doc_set_cursor(d, tl->anchor);
     }
 
-    if (enabled && CheckCollisionPointRec(GetMousePosition(), lane) && !tl->selecting)
+    if (enabled && CheckCollisionPointRec(GetMousePosition(), lane) && !tl->selecting &&
+        !tl->moving)
     {
-      snprintf(tl->hint, sizeof(tl->hint), "click and drag to select audio");
+      snprintf(tl->hint, sizeof(tl->hint),
+               grab ? "drag to move the selection along the lane"
+                    : "click and drag to select audio");
     }
 
     y += h + 1.0f;
@@ -1205,6 +1355,59 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
     if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT))
     {
       tl->selecting = 0;
+    }
+  }
+
+  if (tl->moving)
+  {
+    SetMouseCursor(MOUSE_CURSOR_RESIZE_EW);
+
+    if (tl->move_blocked)
+    {
+      snprintf(tl->hint, sizeof(tl->hint), "no room to move it that way");
+    }
+    else
+    {
+      snprintf(tl->hint, sizeof(tl->hint), "moving %+.3f s",
+               d->rate > 0 ? (double)tl->move_by / d->rate : 0.0);
+    }
+
+    /* the same scroll a selection drag gets, so a take can be moved further
+     * than the window is wide without letting go of it */
+    if (GetMousePosition().x > wave.x + wave.width)
+    {
+      tl->scroll += 30.0 / tl->zoom;
+    }
+    else if (GetMousePosition().x < wave.x && tl->scroll > 0.0)
+    {
+      tl->scroll -= 30.0 / tl->zoom;
+      if (tl->scroll < 0.0)
+      {
+        tl->scroll = 0.0;
+      }
+    }
+
+    if (!IsMouseButtonDown(MOUSE_BUTTON_LEFT))
+    {
+      /*
+       * A press that never went anywhere is a click, and a click inside a
+       * selection is how anyone puts the cursor down in the middle of one -
+       * the grab intercepted it, so it is answered here rather than lost.
+       */
+      if (tl->move_by == 0 &&
+          frame_at_raw(tl, d, GetMousePosition().x - wave.x) == tl->move_anchor)
+      {
+        aud_doc_set_cursor(d, frame_at(tl, d, GetMousePosition().x - wave.x));
+      }
+      else
+      {
+        /* asked for, not done: see aud_timeline.move_requested */
+        tl->move_requested = tl->move_by;
+      }
+
+      tl->moving = 0;
+      tl->move_by = 0;
+      tl->move_blocked = 0;
     }
   }
 

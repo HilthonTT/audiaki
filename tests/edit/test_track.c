@@ -867,6 +867,182 @@ TEST(an_empty_track_has_nowhere_to_step_to)
   aud_track_free(&t);
 }
 
+TEST(moving_a_range_takes_the_audio_with_it)
+{
+  aud_track t;
+  aud_samples *s = counted(20, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 100);
+  aud_samples_release(s);
+
+  /* a take on a lane of its own, two hundred frames later */
+  CHECK_EQ_INT(aud_track_move(&t, 100, 120, 200), 0);
+  CHECK(well_formed(&t));
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(at(&t, 100) == 0.0f); /* nothing left where it was */
+  CHECK(at(&t, 300) == 1.0f);
+  CHECK(at(&t, 319) == 20.0f);
+  CHECK_EQ_INT((int)aud_track_end(&t), 320);
+
+  /* and back the way it came, which is as far as frame 0 and no further */
+  CHECK_EQ_INT(aud_track_move(&t, 300, 320, -1000), -1);
+  CHECK_EQ_INT(aud_track_move(&t, 300, 320, -200), 0);
+  CHECK(at(&t, 100) == 1.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_move_leaves_a_hole_where_it_came_from)
+{
+  aud_track t;
+  aud_samples *s = counted(20, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  /* the tail of a take, moved off the end of it: the take is shorter and the
+   * piece is out on its own with silence in between */
+  CHECK_EQ_INT(aud_track_move(&t, 10, 20, 100), 0);
+  CHECK(well_formed(&t));
+  CHECK_EQ_INT(t.count, 2);
+  CHECK(at(&t, 9) == 10.0f);
+  CHECK(at(&t, 10) == 0.0f); /* the hole it left */
+  CHECK(at(&t, 109) == 0.0f);
+  CHECK(at(&t, 110) == 11.0f);
+  CHECK(at(&t, 119) == 20.0f);
+  CHECK_EQ_INT((int)aud_track_end(&t), 120);
+
+  aud_track_free(&t);
+}
+
+TEST(a_move_back_to_where_it_was_joins_the_take_up_again)
+{
+  aud_track t;
+  aud_samples *s = counted(50, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT(aud_track_move(&t, 10, 50, 500), 0);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK_EQ_INT(aud_track_move(&t, 510, 550, -500), 0);
+  CHECK(well_formed(&t));
+
+  /* one clip again, because tidy joins what reads straight through */
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(at(&t, 0) == 1.0f);
+  CHECK(at(&t, 49) == 50.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_move_stops_against_what_is_already_there)
+{
+  aud_track t;
+  aud_samples *one = counted(10, 1.0f);
+  aud_samples *two = counted(10, 100.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, one, 0);
+  aud_track_add(&t, two, 40);
+  aud_samples_release(one);
+  aud_samples_release(two);
+
+  /* thirty frames of clear ground between the two, and no more than that */
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 0, 10, 100), 30);
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 0, 10, 12), 12);
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 0, 10, -5), 0);
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 40, 50, -100), -30);
+
+  /* and a move further than the room is refused rather than overwriting */
+  CHECK_EQ_INT(aud_track_move(&t, 0, 10, 100), -1);
+  CHECK(at(&t, 40) == 100.0f);
+  CHECK_EQ_INT(aud_track_move(&t, 0, 10, 30), 0);
+  CHECK(well_formed(&t));
+  CHECK(at(&t, 30) == 1.0f);
+  CHECK(at(&t, 40) == 100.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(the_middle_of_a_take_has_nowhere_to_move_to)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  /* the rest of the take is against both edges of the range */
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 40, 50, 10), 0);
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 40, 50, -10), 0);
+  CHECK_EQ_INT(aud_track_move(&t, 40, 50, 10), -1);
+  CHECK_EQ_INT(t.count, 1);
+
+  aud_track_free(&t);
+}
+
+TEST(a_move_cannot_go_back_past_the_start_of_the_timeline)
+{
+  aud_track t;
+  aud_samples *s = counted(10, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 20);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT((int)aud_track_move_room(&t, 20, 30, -1000), -20);
+  CHECK_EQ_INT(aud_track_move(&t, 20, 30, -20), 0);
+  CHECK(well_formed(&t));
+  CHECK(at(&t, 0) == 1.0f);
+  CHECK_EQ_INT((int)aud_track_end(&t), 10);
+
+  aud_track_free(&t);
+}
+
+TEST(a_move_keeps_the_fades_on_the_piece_that_moved)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 1.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT(aud_track_split(&t, 20), 0);
+  CHECK_EQ_INT(aud_track_fade_in_at(&t, 20, 4), 0);
+  CHECK_EQ_INT(aud_track_move(&t, 20, 100, 400), 0);
+  CHECK(well_formed(&t));
+
+  CHECK(at(&t, 420) == 0.0f); /* still ramping out of silence at its new head */
+  CHECK(at(&t, 424) == 25.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_take_that_is_still_running_is_not_moved)
+{
+  aud_track t;
+  float block[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+
+  aud_track_init(&t, "t", 1);
+  CHECK_EQ_INT(aud_track_record_begin(&t, 0, 4), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, block, 4), 4);
+
+  CHECK_EQ_INT(aud_track_move(&t, 0, 4, 100), -1);
+  CHECK(at(&t, 0) == 1.0f);
+
+  aud_track_record_end(&t);
+  CHECK_EQ_INT(aud_track_move(&t, 0, 4, 100), 0);
+  CHECK(at(&t, 100) == 1.0f);
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -903,6 +1079,14 @@ int main(void)
   RUN(carrying_a_take_on_is_refused_when_the_audio_is_shared);
   RUN(carrying_a_take_on_is_refused_when_the_block_is_not_the_lanes_width);
   RUN(a_clip_that_would_run_off_the_end_of_the_timeline_is_refused);
+  RUN(moving_a_range_takes_the_audio_with_it);
+  RUN(a_move_leaves_a_hole_where_it_came_from);
+  RUN(a_move_back_to_where_it_was_joins_the_take_up_again);
+  RUN(a_move_stops_against_what_is_already_there);
+  RUN(the_middle_of_a_take_has_nowhere_to_move_to);
+  RUN(a_move_cannot_go_back_past_the_start_of_the_timeline);
+  RUN(a_move_keeps_the_fades_on_the_piece_that_moved);
+  RUN(a_take_that_is_still_running_is_not_moved);
 
   return TEST_RESULT();
 }
