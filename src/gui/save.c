@@ -25,6 +25,7 @@
 #include "gui/chooser.h"
 #include "gui/ui.h"
 
+#include "edit/export.h"
 #include "edit/project.h"
 #include "util/log.h"
 #include "util/path.h"
@@ -84,6 +85,7 @@ static int lists_file(const app_save *s, const char *name)
   case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_OPEN:
   case APP_SAVE_MODE_EXPORT:
+  case APP_SAVE_MODE_STEMS:
     return is_wav(name);
   /* a session is opened by name, and saved over an existing one knowingly */
   case APP_SAVE_MODE_PROJECT_OPEN:
@@ -311,7 +313,7 @@ void app_open_dialog(app *a)
  * take folder with a name derived from the take prefix, so the common answer is
  * already filled in.
  */
-void app_export_dialog(app *a)
+void app_export_dialog(app *a, int stems)
 {
   app_save *s = &a->save;
   const char *base;
@@ -323,7 +325,7 @@ void app_export_dialog(app *a)
   }
 
   memset(s, 0, sizeof(*s));
-  s->mode = APP_SAVE_MODE_EXPORT;
+  s->mode = stems ? APP_SAVE_MODE_STEMS : APP_SAVE_MODE_EXPORT;
   s->focus = APP_SAVE_FIELD_NAME;
   s->open = 1;
   s->seconds = a->doc.rate > 0 ? (double)(aud_doc_has_range(&a->doc)
@@ -333,7 +335,14 @@ void app_export_dialog(app *a)
                                : 0.0;
 
   base = aud_path_basename(a->prefix);
-  snprintf(s->name, sizeof(s->name), "%s-mix.wav", base[0] != '\0' ? base : "project");
+
+  /*
+   * A set is named for what it is a set of rather than for a mix it is not:
+   * "song-stems.wav" is not a file that gets written, it is what every file in
+   * the set is named after.
+   */
+  snprintf(s->name, sizeof(s->name), "%s-%s.wav", base[0] != '\0' ? base : "project",
+           stems ? "stems" : "mix");
 
   if (a->take_dir[0] != '\0')
   {
@@ -436,6 +445,7 @@ static aud_chooser_mode chooser_mode_of(app_save_mode mode)
   {
   case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_EXPORT:
+  case APP_SAVE_MODE_STEMS:
   case APP_SAVE_MODE_PROJECT_SAVE:
     return AUD_CHOOSER_SAVE;
   case APP_SAVE_MODE_OPEN:
@@ -588,6 +598,42 @@ void app_save_dismiss(app *a)
 }
 
 /*
+ * The name of the first file an export to `target` would land on, or NULL when
+ * the ground is clear. For a mixdown that is `target` itself; for a set of
+ * stems it is any one of the files the set is about to become.
+ *
+ * The answer is what the dialog says out loud, so it is the basename rather
+ * than the path - the folder is already on screen above it.
+ */
+static const char *in_the_way(const app *a, app_save_mode mode, const char *target)
+{
+  static char taken[AUD_PATH_MAX];
+
+  if (mode != APP_SAVE_MODE_STEMS)
+  {
+    return access(target, F_OK) == 0 ? aud_path_basename(target) : NULL;
+  }
+
+  for (size_t i = 0; i < a->doc.count; i++)
+  {
+    if (!aud_export_is_stem(&a->doc, i))
+    {
+      continue;
+    }
+    if (aud_export_stem_path(taken, sizeof(taken), target, i, a->doc.tracks[i].name) != 0)
+    {
+      continue; /* the export refuses it too, and says so better than here */
+    }
+    if (access(taken, F_OK) == 0)
+    {
+      return aud_path_basename(taken);
+    }
+  }
+
+  return NULL;
+}
+
+/*
  * Put the take where the dialog now says. Returns 0 when it worked, leaving
  * the dialog closed and the video started on wherever it ended up.
  *
@@ -720,19 +766,25 @@ static int save_confirm(app *a)
     return 0;
   }
 
-  if (s->mode == APP_SAVE_MODE_EXPORT)
+  if (APP_SAVE_IS_EXPORT(s->mode))
   {
+    const char *taken = in_the_way(a, s->mode, target);
+
     /*
      * Asked before writing rather than refused afterwards. An export is
      * something you do repeatedly to the same name while you get a mix right,
      * so replacing one has to be possible - but not by accident.
+     *
+     * A set of stems asks about the whole set at once, and names the first file
+     * of it that is in the way: finding out at the fourth that the third was
+     * there would have left two of them replaced already.
      */
-    if (access(target, F_OK) == 0 && !s->confirmed)
+    if (taken != NULL && !s->confirmed)
     {
       snprintf(s->note, sizeof(s->note),
                "%.140s is already there - Export again to "
                "replace it",
-               aud_path_basename(target));
+               taken);
       s->confirmed = 1;
       return -1;
     }
@@ -744,7 +796,14 @@ static int save_confirm(app *a)
     }
 
     s->open = 0;
-    app_export(a, target);
+    if (s->mode == APP_SAVE_MODE_STEMS)
+    {
+      app_export_stems(a, target);
+    }
+    else
+    {
+      app_export(a, target);
+    }
     return 0;
   }
 
@@ -798,6 +857,8 @@ static const char *save_title(app_save_mode mode)
     return "Open a WAV";
   case APP_SAVE_MODE_EXPORT:
     return "Export a mix";
+  case APP_SAVE_MODE_STEMS:
+    return "Export the stems";
   case APP_SAVE_MODE_PROJECT_SAVE:
     return "Save the session";
   case APP_SAVE_MODE_PROJECT_OPEN:
@@ -816,6 +877,7 @@ static const char *save_action(app_save_mode mode)
   case APP_SAVE_MODE_PROJECT_OPEN:
     return "Open";
   case APP_SAVE_MODE_EXPORT:
+  case APP_SAVE_MODE_STEMS:
     return "Export";
   case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_PROJECT_SAVE:
@@ -832,6 +894,8 @@ static const char *save_hint(app_save_mode mode)
     return "click a folder to go in, a file to pick it; Enter opens";
   case APP_SAVE_MODE_EXPORT:
     return "the selection if there is one, the whole project if not";
+  case APP_SAVE_MODE_STEMS:
+    return "one WAV a track, named after this; they add back up to the mix";
   case APP_SAVE_MODE_PROJECT_SAVE:
     return "the takes stay where they are; this writes what was done to them";
   case APP_SAVE_MODE_PROJECT_OPEN:
@@ -982,7 +1046,7 @@ void app_save_draw(app *a)
   aud_ui_text(panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT, save_title(s->mode));
 
   /* how long it was, so the dialog says which take it is asking about */
-  if (s->mode == APP_SAVE_MODE_KEEP || s->mode == APP_SAVE_MODE_EXPORT)
+  if (s->mode == APP_SAVE_MODE_KEEP || APP_SAVE_IS_EXPORT(s->mode))
   {
     char detail[32];
 

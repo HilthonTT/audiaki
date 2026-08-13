@@ -89,6 +89,7 @@ enum
   OPT_NO_PROMPT,
   OPT_RENDER,
   OPT_BITS,
+  OPT_STEMS,
 };
 
 static const struct option long_options[] = {
@@ -135,6 +136,7 @@ static const struct option long_options[] = {
     {"repeat-one", no_argument, NULL, OPT_REPEAT_ONE},
     {"render", required_argument, NULL, OPT_RENDER},
     {"bits", required_argument, NULL, OPT_BITS},
+    {"stems", no_argument, NULL, OPT_STEMS},
     {"take", required_argument, NULL, OPT_TAKE},
     {"preroll", required_argument, NULL, OPT_PREROLL},
     {"pre-roll", required_argument, NULL, OPT_PREROLL},
@@ -537,6 +539,9 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         return CLI_EXIT_USAGE;
       }
       break;
+    case OPT_STEMS:
+      opts->export_stems = 1;
+      break;
     case OPT_TAKE:
       opts->take_prefix = optarg;
       break;
@@ -768,6 +773,25 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   }
 
   /*
+   * Up here with the other cross-command checks rather than further down among
+   * the per-command ones, because every command that is not --render has to be
+   * caught by them - and the ones below return before a check placed after them
+   * is ever reached. --bits with --info used to be accepted in silence for
+   * exactly that reason.
+   */
+  if (opts->export_bits != 0 && opts->command != AUD_CMD_RENDER)
+  {
+    aud_error("--bits only applies to --render");
+    return CLI_EXIT_USAGE;
+  }
+
+  if (opts->export_stems && opts->command != AUD_CMD_RENDER)
+  {
+    aud_error("--stems only applies to --render");
+    return CLI_EXIT_USAGE;
+  }
+
+  /*
    * --tune writes nothing, so an output file passed with it is either a
    * mistyped recording or a file the user expects to be created. Neither is
    * what will happen, and saying so beats tuning up next to a silent surprise.
@@ -831,8 +855,8 @@ int cli_parse(int argc, char **argv, aud_options *opts)
 
   /*
    * A mix is written, so -o names it and everything left over is a mistake.
-   * --bits belongs to this one alone: a take is written at whatever the device
-   * gave, and there is nothing to choose.
+   * --bits and --stems belong to this one alone, and are refused for every
+   * other command up with the cross-command checks.
    */
   if (opts->command == AUD_CMD_RENDER)
   {
@@ -844,12 +868,6 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       return CLI_EXIT_USAGE;
     }
     return 0;
-  }
-
-  if (opts->export_bits != 0)
-  {
-    aud_error("--bits only applies to --render");
-    return CLI_EXIT_USAGE;
   }
 
   if (opts->command == AUD_CMD_VISUALIZE)

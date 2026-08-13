@@ -100,6 +100,87 @@ static void pan_gains(float pan, float *left, float *right)
   *right = pan < 0.0f ? 1.0f + pan : 1.0f;
 }
 
+/*
+ * Add what `t` puts into the mix onto `out`, which the caller has cleared.
+ *
+ * The only place a track becomes sound, so that the mixdown and a single
+ * exported stem cannot drift apart: both get here, and there is nowhere else
+ * for either of them to go. Returns 0, or -1 when the scratch would not grow.
+ */
+static int add_track(aud_mixer *m, const aud_doc *d, const aud_track *t, uint64_t at,
+                     float *out, size_t frames, unsigned channels)
+{
+  float left;
+  float right;
+
+  if (!aud_mix_audible(d, t) || t->count == 0)
+  {
+    return 0;
+  }
+
+  /* nothing of this track is anywhere near the window being asked for */
+  if (at >= aud_track_end(t))
+  {
+    return 0;
+  }
+
+  if (scratch_for(m, frames, t->channels) != 0)
+  {
+    return -1;
+  }
+
+  aud_track_read(t, at, m->scratch, frames);
+  pan_gains(t->pan, &left, &right);
+
+  /*
+   * A mono mix has nowhere to pan to, so panning it would only turn the
+   * track down - which is what applying the left leg alone to the one
+   * channel would do. See track.h, which says pan is ignored here.
+   */
+  if (channels == 1u)
+  {
+    left = 1.0f;
+    right = 1.0f;
+  }
+
+  left *= t->gain;
+  right *= t->gain;
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    const float *src = m->scratch + f * t->channels;
+    float *dst = out + f * channels;
+
+    for (unsigned ch = 0; ch < channels; ch++)
+    {
+      /*
+       * A track narrower than the mix is heard on every channel of it - a
+       * mono take belongs in the middle of a stereo mix, not in its left
+       * side. A wider one has its extra channels folded onto the last one
+       * rather than dropped, which is crude but is at least audible.
+       */
+      float v;
+
+      if (t->channels == 1u)
+      {
+        v = src[0];
+      }
+      else if (ch < t->channels)
+      {
+        v = src[ch];
+      }
+      else
+      {
+        v = src[t->channels - 1u];
+      }
+
+      dst[ch] += v * ((ch % 2u) == 0 ? left : right);
+    }
+  }
+
+  return 0;
+}
+
 int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t frames,
                  unsigned channels)
 {
@@ -112,75 +193,34 @@ int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t
 
   for (size_t i = 0; i < d->count; i++)
   {
-    const aud_track *t = &d->tracks[i];
-    float left;
-    float right;
-
-    if (!aud_mix_audible(d, t) || t->count == 0)
-    {
-      continue;
-    }
-
-    /* nothing of this track is anywhere near the window being asked for */
-    if (at >= aud_track_end(t))
-    {
-      continue;
-    }
-
-    if (scratch_for(m, frames, t->channels) != 0)
+    if (add_track(m, d, &d->tracks[i], at, out, frames, channels) != 0)
     {
       memset(out, 0, frames * channels * sizeof(float));
       return -1;
     }
+  }
 
-    aud_track_read(t, at, m->scratch, frames);
-    pan_gains(t->pan, &left, &right);
+  return 0;
+}
 
-    /*
-     * A mono mix has nowhere to pan to, so panning it would only turn the
-     * track down - which is what applying the left leg alone to the one
-     * channel would do. See track.h, which says pan is ignored here.
-     */
-    if (channels == 1u)
-    {
-      left = 1.0f;
-      right = 1.0f;
-    }
+int aud_mix_read_track(aud_mixer *m, const aud_doc *d, size_t index, uint64_t at,
+                       float *out, size_t frames, unsigned channels)
+{
+  if (m == NULL || d == NULL || out == NULL || frames == 0 || channels == 0)
+  {
+    return -1;
+  }
+  if (index >= d->count)
+  {
+    return -1;
+  }
 
-    left *= t->gain;
-    right *= t->gain;
+  memset(out, 0, frames * channels * sizeof(float));
 
-    for (size_t f = 0; f < frames; f++)
-    {
-      const float *src = m->scratch + f * t->channels;
-      float *dst = out + f * channels;
-
-      for (unsigned ch = 0; ch < channels; ch++)
-      {
-        /*
-         * A track narrower than the mix is heard on every channel of it - a
-         * mono take belongs in the middle of a stereo mix, not in its left
-         * side. A wider one has its extra channels folded onto the last one
-         * rather than dropped, which is crude but is at least audible.
-         */
-        float v;
-
-        if (t->channels == 1u)
-        {
-          v = src[0];
-        }
-        else if (ch < t->channels)
-        {
-          v = src[ch];
-        }
-        else
-        {
-          v = src[t->channels - 1u];
-        }
-
-        dst[ch] += v * ((ch % 2u) == 0 ? left : right);
-      }
-    }
+  if (add_track(m, d, &d->tracks[index], at, out, frames, channels) != 0)
+  {
+    memset(out, 0, frames * channels * sizeof(float));
+    return -1;
   }
 
   return 0;

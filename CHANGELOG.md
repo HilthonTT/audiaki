@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Stems**, so a session can leave audiaki without becoming a mixdown.
+
+  **Stems** in the window, `ctrl+shift+E`, or `audiaki --render session.aki
+  --stems` writes one WAV a track instead of one mix. A mixdown is the end of
+  the road: it is the one thing you cannot take back apart. A folder of WAVs
+  that line up is the opposite — every other program can open it, and whoever
+  gets it can still change their mind about the balance.
+
+  `-o` names the set rather than a file. Each stem is that name without its
+  extension, then the track's number and name, then `.wav`, so `-o song.wav`
+  gives `song-01-Rhythm.wav`, `song-02-Lead.wav` and so on. The number is the
+  lane's place in the session, so a gap in the numbering is a muted track rather
+  than a miscount, and two tracks called the same thing are still two files. A
+  name is reduced to letters, digits, dashes and underscores on the way into a
+  filename — a track called `Gtr / DI` exports as `-02-Gtr-DI.wav` rather than
+  into a folder called `Gtr`.
+
+  They add back up to the mixdown, sample for sample. Every stem covers the same
+  range at the same rate, depth and channel count, and carries the gain and pan
+  that track sits in the mix with, so laying them side by side and starting them
+  together gives exactly what Export would have written. That is not a promise
+  kept by care: the mixer that adds every track together and the one that adds a
+  single track reach the same code, and there is nowhere for a gain or a pan law
+  to be applied differently to one than to the other.
+
+  What the mix cannot hear is not written — a muted track, one silenced by
+  another's solo, an empty lane — because a stem of silence is a file to notice
+  and delete rather than information. A session where that leaves nothing at all
+  says so instead of writing no files. The overwrite question is asked about the
+  whole set before any of it is written, and a failure part way through takes
+  back the stems already written: half a set looks like a whole one in a
+  directory listing.
+
 - **Audio can be moved along the timeline**, by dragging it or with `,` and `.`.
 
   Until now the only way to put a take somewhere else was to cut it and paste it
@@ -529,6 +562,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   and one being recorded is indexed as it arrives.
 
 ### Fixed
+
+- **`--bits` and `--stems` are refused wherever they do not apply**, rather than
+  only for some of the commands they do not apply to.
+
+  Both belong to `--render` alone, and the parser said so — but the check sat
+  below the per-command handling, and `--info`, `--play`, `--tune` and
+  `--calibrate` all return before reaching it. So `audiaki --bits 16 take.wav`
+  was rejected while `audiaki --info take.wav --bits 16` was accepted in
+  silence, having ignored the option entirely. The two checks have moved up
+  with the other cross-command ones, where every command reaches them.
+
+- **An export is refused a channel count the mixer cannot pan**, instead of
+  writing the header anyway. The depth was already checked this way; the width
+  beside it was documented as mono or stereo and enforced nowhere, so a caller
+  asking for six got a six-channel file the mix had no pan law for. No
+  in-tree caller asked for one — this closes the gap rather than fixing a
+  broken export.
 
 - **The toolbars fit the window they are in**, instead of only fitting a
   full-screen one. The desktop app opens at 1100 by 680 and the two rows of

@@ -17,7 +17,7 @@ instrument on it, play a take back, and visualise it
 \fB\-\-play\fR \fIINPUT.WAV\fR [\fIMORE.WAV\fR ...] [\fB\-D\fR \fIOUTPUT\fR]
 .br
 .B audiaki
-\fB\-\-render\fR \fIPROJECT.AKI\fR [\fB\-o\fR \fIMIX.WAV\fR]
+\fB\-\-render\fR \fIPROJECT.AKI\fR [\fB\-o\fR \fIMIX.WAV\fR] [\fB\-\-stems\fR]
 .br
 .B audiaki
 \fB\-\-tune\fR [\fB\-D\fR \fIDEVICE\fR]
@@ -492,6 +492,32 @@ writes:
 .BR 16 ", " 24 " or " 32
 (default 24). Applies to no other command, a take being written at whatever
 the device gave.
+.TP
+.B \-\-stems
+Write one WAV a track rather than one mix.
+.B \-o
+names the set rather than a file: every stem is that name without its
+extension, then the track's number and name, then
+.BR .wav ,
+so
+.B \-o song.wav
+gives
+.IR song\-01\-Rhythm.wav ", " song\-02\-Lead.wav
+and so on. The number is the lane's place in the session, so a gap in it is a
+muted track rather than a miscount. A track's name is reduced to letters,
+digits, dashes and underscores on the way into a filename.
+.IP
+The set adds back up to the mixdown, sample for sample: every stem covers the
+same range at the same rate, depth and channel count, and carries the gain and
+pan that track sits in the mix with. What the mix cannot hear is not written \-
+a muted track, one silenced by another's solo, or a lane with nothing on it \-
+and a session where that leaves nothing is an error rather than an empty
+folder.
+.IP
+.B \-y
+is checked against the whole set before any of it is written, and a failure
+part way through takes back the stems already written: half a set looks like a
+whole one in a directory listing.
 .SS Tuner
 .TP
 .B \-\-tune

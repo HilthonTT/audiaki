@@ -961,6 +961,38 @@ sound server at all. A session refers to its takes rather than containing them,
 so they have to be where it says they are; if one has moved, `--render` names it
 and stops rather than writing a mix with a hole in it.
 
+### Stems
+
+`--stems` writes one WAV a track instead of one mix, which is how a session
+leaves audiaki for something else without ceasing to be something you can still
+change:
+
+```sh
+audiaki --render session.aki --stems          # -> session-01-Rhythm.wav, ...
+audiaki --render session.aki --stems -o ~/Stems/song.wav --bits 16
+```
+
+`-o` names the set rather than a file: every stem is that name without its
+extension, then the track's number and name, then `.wav`. The number is the
+lane's place in the project, so a gap in the numbering is a muted track rather
+than a miscount, and two tracks of the same name are still two files. A name is
+reduced to letters, digits, dashes and underscores on the way into a filename —
+a track called `Gtr / DI` exports as `-02-Gtr-DI.wav` rather than into a folder
+called `Gtr`.
+
+The set adds back up to the mixdown, sample for sample. Every stem covers the
+same range at the same rate, depth and channel count, and carries the gain and
+pan that track sits in the mix with, so laying them down side by side and
+starting them together gives what `--render` on its own would have written.
+That is the whole point of them, and it is what the unit tests assert.
+
+What the mix cannot hear is not written: a muted track, a track silenced by
+another one's solo, and a lane with nothing on it. A session where that leaves
+nothing at all is an error rather than an empty folder. `--force` is checked
+against the whole set before any of it is written, and a failure part way
+through takes back the stems already written — half a set looks like a whole one
+in a directory listing.
+
 ## Rendering a video
 
 ```sh

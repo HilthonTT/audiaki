@@ -528,6 +528,25 @@ for the room to get into the take.
 the whole project if not. 24-bit by default, at the project's own sample rate,
 and stereo unless every track in it is mono.
 
+**Stems**, or `ctrl+shift+E`, asks the same question about the same range and
+writes one WAV a track instead of one mix. What you type names the set rather
+than a file: every stem is that name without its extension, then the track's
+number and name, then `.wav`, so `song-stems.wav` gives
+`song-stems-01-Rhythm.wav`, `song-stems-02-Lead.wav` and so on. The number is
+the lane, so a gap in it is a muted track rather than a miscount.
+
+The set adds back up to the mix, sample for sample — same range, same rate,
+depth and width, each stem carrying the gain and pan its track sits in the mix
+with. Drop them into anything else, line them up at the start, and the sum is
+what **Export** would have written. That is what they are for: a mixdown is the
+end of the road, and a folder of WAVs that line up is the one thing every other
+program can open.
+
+Tracks the mix cannot hear are not written — muted, silenced by another track's
+solo, or empty. A project where that leaves nothing says so rather than writing
+no files, the dialog asks once before replacing any of a set, and a failure part
+way through takes back the stems it had already written.
+
 ## Controls
 
 | Control | Does |
@@ -539,6 +558,7 @@ and stereo unless every track in it is mono.
 | **Stop** | Closes the take; it is already on the timeline |
 | **Import** | Opens a WAV as a new track |
 | **Export** | Mixes down to a WAV |
+| **Stems** | Writes one WAV a track, adding up to that mix |
 | **Open** / **Save** | Opens a session, or writes this one out |
 | **Click** | Plays a metronome at the session's tempo; heard, never recorded |
 | `− BPM +` | The tempo, a beat at a time; `shift` for ten |
@@ -562,6 +582,7 @@ and stereo unless every track in it is mono.
 | `shift+G` | Divides the grid: bars, beats, halves, thirds, quarters |
 | `-` / `+` | The tempo, a beat at a time; `shift` for ten |
 | `I` / `ctrl+E` | Import a WAV / export a mix |
+| `ctrl+shift+E` | Export one WAV a track instead |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
 | `,` / `.` | Move the selection earlier or later, one grid line at a time while the grid is on; `alt` steps off it |

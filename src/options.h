@@ -128,7 +128,12 @@ typedef struct
    */
   double tune_min_hz;
   double tune_max_hz;
-  unsigned export_bits;     /* bit depth --render writes; 0 takes the default */
+  unsigned export_bits; /* bit depth --render writes; 0 takes the default */
+  /*
+   * Whether --render writes one file per track rather than one mix. -o names
+   * the set rather than a file when it does; see edit/export.h.
+   */
+  int export_stems;
   int json;                 /* machine readable output for --list, --probe and --info */
   aud_backend_kind backend; /* which audio system to talk to */
   aud_log_level log_level;

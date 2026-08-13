@@ -51,6 +51,25 @@ int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t
                  unsigned channels);
 
 /*
+ * The same, for track `index` on its own: what that one track puts into the
+ * mix, at the gain and pan it sits there with.
+ *
+ * Every track of a project read this way and added back together gives exactly
+ * what aud_mix_read() gives, because both reach the same per-track code - which
+ * is the whole reason exported stems are worth anything. A set of stems that
+ * did not add up to the mixdown would be a set nobody could use.
+ *
+ * A track that would not be heard at all - muted, or not soloed when something
+ * else is - comes back silent rather than audible, for the same reason: the
+ * mix does not have it either.
+ *
+ * Returns 0, or -1 when `index` is past the last track or the scratch would
+ * not stretch, having left `out` silent rather than half mixed.
+ */
+int aud_mix_read_track(aud_mixer *m, const aud_doc *d, size_t index, uint64_t at,
+                       float *out, size_t frames, unsigned channels);
+
+/*
  * Whether anything would be heard from `t` at all: not muted, and soloed if
  * anything is. Exposed because the view greys out what it would not play.
  */

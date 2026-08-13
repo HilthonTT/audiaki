@@ -136,7 +136,7 @@ _audiaki()
               --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
               --calibrate
               --info --play --shuffle --repeat --repeat-one --json
-              --render --bits
+              --render --bits --stems
               --quiet --verbose --list --probe --help --version"
         mapfile -t COMPREPLY < <(compgen -W "$opts" -- "$cur")
         return

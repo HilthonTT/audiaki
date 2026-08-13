@@ -1190,14 +1190,12 @@ void app_toggle_play(app *a)
   app_set_status(a, "playing %.2f s", (double)(to - from) / a->doc.rate);
 }
 
-void app_export(app *a, const char *path)
+/* What both of the exports below are asked for, which is the same request. */
+static void app_export_options(const app *a, const char *path, aud_export_options *opts)
 {
-  aud_export_options opts;
-  const char *why = NULL;
-
-  aud_export_defaults(&opts);
-  opts.path = path;
-  opts.overwrite = 1; /* the browser already asked, and said so if it existed */
+  aud_export_defaults(opts);
+  opts->path = path;
+  opts->overwrite = 1; /* the browser already asked, and said so if it existed */
 
   /*
    * The selection when there is one. Exporting a chorus you have just cut down
@@ -1206,9 +1204,17 @@ void app_export(app *a, const char *path)
    */
   if (aud_doc_has_range(&a->doc))
   {
-    opts.from = a->doc.sel_start;
-    opts.to = a->doc.sel_end;
+    opts->from = a->doc.sel_start;
+    opts->to = a->doc.sel_end;
   }
+}
+
+void app_export(app *a, const char *path)
+{
+  aud_export_options opts;
+  const char *why = NULL;
+
+  app_export_options(a, path, &opts);
 
   if (aud_export_wav(&a->doc, &opts, &why) != 0)
   {
@@ -1217,6 +1223,27 @@ void app_export(app *a, const char *path)
   }
 
   app_set_status(a, "wrote %.80s", aud_path_basename(path));
+}
+
+void app_export_stems(app *a, const char *path)
+{
+  aud_export_options opts;
+  const char *why = NULL;
+  size_t written = 0;
+
+  app_export_options(a, path, &opts);
+
+  if (aud_export_stems(&a->doc, &opts, &written, &why) != 0)
+  {
+    app_set_status(a, "cannot export stems: %s", why != NULL ? why : "unknown");
+    return;
+  }
+
+  /*
+   * The count rather than the names: there are as many as there are lanes, and
+   * they are all named after what was typed into the dialog a moment ago.
+   */
+  app_set_status(a, "wrote %zu stem(s) beside %.60s", written, aud_path_basename(path));
 }
 
 void app_toggle_record(app *a, const aud_engine_status *st)
@@ -1625,9 +1652,10 @@ static void handle_keys(app *a, const aud_engine_status *st)
     {
       app_edit(a, APP_EDIT_SPLIT);
     }
+    /* E mixes it down, shift+E writes one WAV a track instead */
     if (IsKeyPressed(KEY_E))
     {
-      app_export_dialog(a);
+      app_export_dialog(a, shift);
     }
     /* the session itself: S writes it, shift+S asks where, O opens one */
     if (IsKeyPressed(KEY_S))

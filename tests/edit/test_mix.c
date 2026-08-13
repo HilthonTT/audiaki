@@ -237,6 +237,193 @@ TEST(an_export_that_refuses_leaves_no_file)
   CHECK_EQ_INT(aud_export_wav(&d, &opts, &why), -1);
   CHECK(access(g_path, F_OK) != 0);
 
+  /* as is a width the mixer has no pan law for */
+  aud_export_defaults(&opts);
+  opts.path = g_path;
+  opts.channels = 6;
+  CHECK_EQ_INT(aud_export_wav(&d, &opts, &why), -1);
+  CHECK(access(g_path, F_OK) != 0);
+
+  aud_doc_free(&d);
+}
+
+/* Where stem `index` of a set based at g_path lands, for the checks below. */
+static const char *stem_path(size_t index, const char *name)
+{
+  static char path[512];
+
+  if (aud_export_stem_path(path, sizeof(path), g_path, index, name) != 0)
+  {
+    path[0] = '\0';
+  }
+  return path;
+}
+
+/*
+ * The property the whole feature rests on: the stems, added back together the
+ * way anything else would add them, are the mixdown. Gains and pans that differ
+ * per track, so a stem that ignored either would be caught.
+ */
+TEST(stems_add_up_to_the_mix)
+{
+  aud_doc d;
+  aud_export_options opts;
+  wav_reader r;
+  const char *why = NULL;
+  size_t written = 0;
+  float mixdown[64];
+  float one[64];
+  float sum[64];
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 500, 0.5f);
+  flat(&d, 1, 500, 0.25f);
+
+  /* by index rather than by the pointer flat() returned: the list moves */
+  snprintf(d.tracks[0].name, sizeof(d.tracks[0].name), "Rhythm");
+  snprintf(d.tracks[1].name, sizeof(d.tracks[1].name), "Lead");
+  d.tracks[0].gain = 0.8f;
+  d.tracks[0].pan = -0.5f;
+  d.tracks[1].gain = 1.5f;
+  d.tracks[1].pan = 0.75f;
+
+  aud_export_defaults(&opts);
+  opts.path = g_path;
+  opts.channels = 2;
+  opts.overwrite = 1;
+  CHECK_EQ_INT(aud_export_wav(&d, &opts, &why), 0);
+  CHECK_EQ_INT(aud_export_stems(&d, &opts, &written, &why), 0);
+  CHECK_EQ_INT((int)written, 2);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), 0);
+  CHECK_EQ_INT((int)wav_read_frames(&r, mixdown, 32), 32);
+  wav_read_close(&r);
+
+  memset(sum, 0, sizeof(sum));
+  for (size_t i = 0; i < 2; i++)
+  {
+    const char *path = stem_path(i, d.tracks[i].name);
+
+    CHECK_EQ_INT(wav_read_open(&r, path), 0);
+    CHECK_EQ_INT(r.channels, 2); /* the set agrees on width, or it will not line up */
+    CHECK_EQ_INT(r.rate, 44100);
+    CHECK_EQ_INT((int)r.frames, 500);
+    CHECK_EQ_INT((int)wav_read_frames(&r, one, 32), 32);
+    wav_read_close(&r);
+
+    for (size_t f = 0; f < 64; f++)
+    {
+      sum[f] += one[f];
+    }
+    remove(path);
+  }
+
+  for (size_t f = 0; f < 64; f++)
+  {
+    CHECK_EQ_DBL(sum[f], mixdown[f], 1e-4);
+  }
+
+  /* and the two sides really did differ, so the check above had something to do */
+  CHECK(fabs((double)mixdown[0] - (double)mixdown[1]) > 0.01);
+
+  remove(g_path);
+  aud_doc_free(&d);
+}
+
+TEST(a_stem_is_named_after_its_track)
+{
+  char path[512];
+
+  CHECK_EQ_INT(aud_export_stem_path(path, sizeof(path), "mix.wav", 0, "Rhythm"), 0);
+  CHECK(strcmp(path, "mix-01-Rhythm.wav") == 0);
+
+  /* the base keeps its folder, and loses only its own extension */
+  CHECK_EQ_INT(aud_export_stem_path(path, sizeof(path), "a.b/take", 9, "Lead"), 0);
+  CHECK(strcmp(path, "a.b/take-10-Lead.wav") == 0);
+
+  /* a name that would reach out of the folder cannot */
+  CHECK_EQ_INT(aud_export_stem_path(path, sizeof(path), "mix.wav", 0, "../Gtr / DI"), 0);
+  CHECK(strcmp(path, "mix-01-Gtr-DI.wav") == 0);
+
+  /* and one that leaves nothing usable falls back to the number alone */
+  CHECK_EQ_INT(aud_export_stem_path(path, sizeof(path), "mix.wav", 2, "///"), 0);
+  CHECK(strcmp(path, "mix-03.wav") == 0);
+
+  CHECK_EQ_INT(aud_export_stem_path(path, sizeof(path), "mix.wav", 3, ""), 0);
+  CHECK(strcmp(path, "mix-04.wav") == 0);
+
+  /* a buffer too small to hold the answer is refused rather than truncated */
+  CHECK_EQ_INT(aud_export_stem_path(path, 8, "mix.wav", 0, "Rhythm"), -1);
+}
+
+TEST(stems_skip_what_the_mix_cannot_hear)
+{
+  aud_doc d;
+  aud_export_options opts;
+  size_t written = 0;
+  const char *why = NULL;
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 100, 0.5f);
+  flat(&d, 1, 100, 0.5f);
+  aud_doc_add_track(&d, "empty", 1); /* a lane with nothing on it is not a stem */
+  d.tracks[1].muted = 1;
+
+  aud_export_defaults(&opts);
+  opts.path = g_path;
+  opts.overwrite = 1;
+  CHECK_EQ_INT(aud_export_stems(&d, &opts, &written, &why), 0);
+  CHECK_EQ_INT((int)written, 1);
+
+  /* numbered by the lane, so the gap says which one was left out */
+  CHECK(access(stem_path(0, d.tracks[0].name), F_OK) == 0);
+  CHECK(access(stem_path(1, d.tracks[1].name), F_OK) != 0);
+  CHECK(access(stem_path(2, d.tracks[2].name), F_OK) != 0);
+  remove(stem_path(0, d.tracks[0].name));
+
+  /* a project the mix would hear nothing from is an error, not an empty folder */
+  d.tracks[0].muted = 1;
+  CHECK_EQ_INT(aud_export_stems(&d, &opts, &written, &why), -1);
+  CHECK(why != NULL);
+  CHECK_EQ_INT((int)written, 0);
+
+  aud_doc_free(&d);
+}
+
+TEST(stems_that_refuse_leave_none_behind)
+{
+  aud_doc d;
+  aud_export_options opts;
+  const char *why = NULL;
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 100, 0.5f);
+  flat(&d, 1, 100, 0.5f);
+
+  /*
+   * The second stem lands on a file that is already there and may not be
+   * replaced, so the first one - written happily a moment before - has to go
+   * back too.
+   */
+  {
+    FILE *f = fopen(stem_path(1, d.tracks[1].name), "wb");
+
+    CHECK(f != NULL);
+    if (f != NULL)
+    {
+      fputc('x', f);
+      fclose(f);
+    }
+  }
+
+  aud_export_defaults(&opts);
+  opts.path = g_path;
+  opts.overwrite = 0;
+  CHECK_EQ_INT(aud_export_stems(&d, &opts, NULL, &why), -1);
+  CHECK(why != NULL);
+  CHECK(access(stem_path(0, d.tracks[0].name), F_OK) != 0);
+
+  remove(stem_path(1, d.tracks[1].name));
   aud_doc_free(&d);
 }
 
@@ -335,6 +522,10 @@ int main(void)
   RUN(an_export_reads_back_as_what_was_mixed);
   RUN(an_export_of_the_selection_writes_only_that);
   RUN(an_export_that_refuses_leaves_no_file);
+  RUN(stems_add_up_to_the_mix);
+  RUN(a_stem_is_named_after_its_track);
+  RUN(stems_skip_what_the_mix_cannot_hear);
+  RUN(stems_that_refuse_leave_none_behind);
   RUN(a_take_recorded_into_a_track_reads_back_frame_for_frame);
   RUN(recording_nothing_leaves_no_clip_behind);
   RUN(a_growing_block_is_summarised_as_it_grows);

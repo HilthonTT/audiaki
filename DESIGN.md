@@ -659,6 +659,19 @@ Playback and export mix through the same function, deliberately: a project that
 played back differently from how it exported would be a project you could not
 trust, and one piece of code is the only way to be sure of that.
 
+Exporting stems extends that rather than working around it. `aud_mix_read()`
+adds every track together; `aud_mix_read_track()` adds one — and both reach the
+same `add_track()`, which is the only place in the program where a track becomes
+sound. So the stems add back up to the mixdown by construction rather than by
+care: there is nowhere for a per-track gain, a pan law or a solo rule to be
+applied twice or differently, because there is only one copy of each. The
+exporter settles the rate, width, depth and range once for the whole set and
+writes every file to them, and `edit/export.c` picks between the two readers on
+one argument instead of holding a second copy of the write loop. A set of stems
+that did not add up to the mix would be a set nobody could use, and that is a
+strong enough guarantee to be worth building the code around rather than
+asserting afterwards — though the test asserts it too.
+
 ### Hearing a file that is not the project
 
 The dialog asking where a finished take should go used to ask it about a file

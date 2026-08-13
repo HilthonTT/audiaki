@@ -63,6 +63,7 @@ enum
   SCREEN_STOP,
   SCREEN_IMPORT,
   SCREEN_EXPORT,
+  SCREEN_STEMS,
   SCREEN_OPEN,
   SCREEN_SAVE,
   SCREEN_TRANSPORT_COUNT
@@ -70,7 +71,7 @@ enum
 
 static const char *const screen_transport[SCREEN_TRANSPORT_COUNT] = {
     "Playing", "Loop",   "Recording", "Resume", "Cancel",
-    "Import",  "Export", "Open",      "Save *"};
+    "Import",  "Export", "Stems",     "Open",   "Save *"};
 
 /* The capture options at the other end of the same row, likewise. */
 enum
@@ -368,6 +369,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   Rectangle stop;
   Rectangle import;
   Rectangle export_to;
+  Rectangle export_stems;
   Rectangle open_project;
   Rectangle save_project;
   float filled = place_row(r, r.x, screen_transport, SCREEN_TRANSPORT_COUNT, font, slot);
@@ -379,6 +381,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   stop = slot[SCREEN_STOP];
   import = slot[SCREEN_IMPORT];
   export_to = slot[SCREEN_EXPORT];
+  export_stems = slot[SCREEN_STEMS];
   open_project = slot[SCREEN_OPEN];
   save_project = slot[SCREEN_SAVE];
 
@@ -490,11 +493,24 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   if (aud_ui_button(export_to, "Export", AUD_UI_ACCENT,
                     !covered(a) && !live && a->doc.count > 0))
   {
-    app_export_dialog(a);
+    app_export_dialog(a, 0);
   }
   tip(a, export_to,
       a->doc.count == 0 ? "nothing to export yet"
                         : "mix the project down to a WAV   ctrl+E");
+
+  /*
+   * Beside Export because it is the same question about the same range, and
+   * the answer is the only thing that differs: one file, or one a track.
+   */
+  if (aud_ui_button(export_stems, "Stems", AUD_UI_ACCENT,
+                    !covered(a) && !live && a->doc.count > 0))
+  {
+    app_export_dialog(a, 1);
+  }
+  tip(a, export_stems,
+      a->doc.count == 0 ? "nothing to export yet"
+                        : "one WAV a track, adding up to the mix   ctrl+shift+E");
 
   /*
    * The session itself, next to Export because both are about what leaves the

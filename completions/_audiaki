@@ -68,6 +68,7 @@ _audiaki() {
     '--repeat-one[start the current file again when it ends]'
     '--render[mix a saved project down to a WAV and exit]:project:_files -g "*.aki(-.)"'
     '--bits[bit depth --render writes]:depth:(16 24 32)'
+    '--stems[--render writes one WAV per track instead of one mix]'
     '--json[machine readable --list, --probe and --info]'
     '(-y --force)'{-y,--force}'[overwrite the output file if it exists]'
     '(-q --quiet -v --verbose)'{-q,--quiet}'[errors only]'

@@ -171,9 +171,14 @@ typedef enum
   APP_SAVE_MODE_KEEP = 0,     /* where should this finished take go? */
   APP_SAVE_MODE_OPEN,         /* which file should come in as a track? */
   APP_SAVE_MODE_EXPORT,       /* where should the mixed-down project be written? */
+  APP_SAVE_MODE_STEMS,        /* ...and where should one WAV a track go? */
   APP_SAVE_MODE_PROJECT_SAVE, /* where should the session itself be written? */
   APP_SAVE_MODE_PROJECT_OPEN, /* which session should be opened? */
 } app_save_mode;
+
+/* Whether `mode` writes audio out of the project, as one file or as many. */
+#define APP_SAVE_IS_EXPORT(mode) \
+  ((mode) == APP_SAVE_MODE_EXPORT || (mode) == APP_SAVE_MODE_STEMS)
 
 /* Whether `mode` is about a project file rather than about audio. */
 #define APP_SAVE_IS_PROJECT(mode) \
@@ -634,6 +639,14 @@ void app_nudge_tempo(app *a, double beats);
 /* Mix the project - or the selection - down to a WAV. */
 void app_export(app *a, const char *path);
 
+/*
+ * The same range, written as one WAV a track rather than one mix. `path` names
+ * the set: every file is that name with a track's number and name on it. See
+ * edit/export.h for what the set is worth, which is that it adds back up to
+ * what app_export() would have written.
+ */
+void app_export_stems(app *a, const char *path);
+
 /* Set the bottom line. Printf-style, because most callers have a value in it. */
 void app_set_status(app *a, const char *fmt, ...) AUD_PRINTF(2, 3);
 
@@ -645,8 +658,12 @@ void app_save_open(app *a, const char *path, double seconds);
 /* The same browser, asking which WAV to bring in rather than where to put one. */
 void app_open_dialog(app *a);
 
-/* ...and asking where the mixed-down project should be written. */
-void app_export_dialog(app *a);
+/*
+ * ...and asking where the mixed-down project should be written. With `stems`
+ * it asks for the set of one-WAV-a-track instead, which is the same question
+ * about the same range and so the same dialog.
+ */
+void app_export_dialog(app *a, int stems);
 
 /*
  * Write the session out. With a project file already named this writes it
