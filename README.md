@@ -47,8 +47,9 @@ instrument, plays the input back so you hear the take as you make it, counts you
 in and keeps time with a metronome only you can hear, keeps the
 seconds before you pressed record, stamps each take with what made it and when,
 numbers takes so it
-cannot overwrite one, stops on an exact frame count so a 30 second take is
-30.000 seconds, and patches the WAV header on exit — including on Ctrl+C, so
+cannot overwrite one, measures a finished take the way a broadcaster would so
+two of them can be compared, stops on an exact frame count so a 30 second take
+is 30.000 seconds, and patches the WAV header on exit — including on Ctrl+C, so
 interrupted recordings are still valid files.
 
 ## Install

@@ -9,6 +9,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Loudness and true peak in `--info`**, so two takes can be compared by how
+  loud they are rather than by how large their samples are.
+
+  ```
+  peak:        -4.4 dBFS
+  true peak:   -4.2 dBTP
+  rms:         -10.7 dBFS
+  loudness:    -18.4 LUFS
+  range:       6.2 LU
+  momentary:   -14.1 LUFS
+  short-term:  -15.3 LUFS
+  ```
+
+  `loudness` is ITU-R BS.1770-4, the measurement EBU R 128 and every broadcaster
+  and streaming service is written in terms of: two filters standing in for the
+  ear, a mean square over overlapping 400 ms blocks, and a gate that throws away
+  the silence between the notes so a take with long gaps in it is not rated
+  quieter than the same playing without them. Neither peak nor RMS could answer
+  that question — peak is headroom alone, and RMS weights 50 Hz the same as
+  3 kHz, which the ear does not. `range` is how far the quiet parts sit below the
+  loud ones, by EBU Tech 3342; `momentary` and `short-term` are the loudest
+  400 ms and the loudest 3 s.
+
+  `true peak` is where the waveform actually goes, which is not where the samples
+  are. The signal between two samples routinely rises above both, so a take that
+  reads -3.7 dBFS can be +0.2 dBTP and clip on the way out to MP3 or AAC while
+  `peak` still reports headroom to spare. Four times oversampling, as BS.1770-4
+  Annex 2 specifies.
+
+  The coefficients are derived at the file's own rate rather than tabulated at
+  48 kHz, so the same performance recorded at 44.1 reads the same. A take shorter
+  than the window a figure is measured over does not get that figure rather than
+  one measured over less — under 400 ms there is no loudness, under 3 s no range
+  — and says which it was. Every channel counts at full weight, since a WAV does
+  not carry the layout that would say which one is an LFE.
+
+  The row `--info` prints for each of several files gains a `LUFS` column beside
+  `PEAK`, because those answer different halves of "which take do I keep". With
+  `--json` every report carries a `loudness` object and a `true_peak_dbtp`, with
+  `null` where a take was too short or too quiet to measure.
+
+  It rides on the pass that was already reading the file, so it costs a read
+  rather than a second one.
+
 - **Stems**, so a session can leave audiaki without becoming a mixdown.
 
   **Stems** in the window, `ctrl+shift+E`, or `audiaki --render session.aki

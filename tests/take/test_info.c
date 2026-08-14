@@ -4,6 +4,7 @@
 #include "media/wav.h"
 #include "take/info.h"
 
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -163,6 +164,83 @@ TEST(a_truncated_take_is_reported_as_short)
   CHECK_EQ_DBL(r.duration, 2.0 / 44100.0, 1e-9);
 }
 
+/*
+ * The loudness rides along on the pass that measures everything else, so what
+ * matters here is that it reaches the report intact rather than that BS.1770 is
+ * right - tests/audio/test_loudness.c settles that. A stereo 1 kHz sine reads
+ * its own dBFS as LUFS, which makes the expected figure something this test can
+ * state rather than copy.
+ */
+TEST(a_take_carries_its_loudness)
+{
+  aud_info_report r;
+  const double pi = 3.14159265358979323846;
+  const uint32_t rate = 48000;
+  const size_t frames = 5u * 48000u;
+  int16_t *samples = malloc(frames * 2u * sizeof(*samples));
+
+  CHECK(samples != NULL);
+  if (samples == NULL)
+  {
+    return;
+  }
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    double t = (double)f / (double)rate;
+    int16_t v = (int16_t)(pow(10.0, -23.0 / 20.0) * sin(2.0 * pi * 1000.0 * t) * 32767.0);
+
+    samples[f * 2u] = v;
+    samples[f * 2u + 1u] = v;
+  }
+
+  CHECK_EQ_INT(write_take(rate, 2, 16, samples, frames * 2u * sizeof(*samples)), 0);
+  CHECK_EQ_INT(aud_info_analyse(g_path, &r), 0);
+
+  CHECK(aud_loudness_measured(r.loudness.integrated));
+  CHECK_EQ_DBL(r.loudness.integrated, -23.0, 0.2);
+  CHECK_EQ_DBL(r.loudness.short_max, -23.0, 0.2);
+  CHECK_EQ_DBL(r.loudness.range, 0.0, 0.2);
+
+  /* a sine at 48 samples a cycle puts a sample on each crest, so there is
+   * nothing between them to find and the two peaks agree */
+  CHECK_EQ_DBL(r.loudness.true_peak, r.peak, 0.002);
+
+  free(samples);
+}
+
+/* A take too short for the windows is not a failure to measure - everything
+ * else about it is still reported, and the loudness says it has none. */
+TEST(a_take_too_short_to_measure_is_still_reported)
+{
+  aud_info_report r;
+  int16_t samples[8] = {0, 0, 16384, 16384, -16384, -16384, 0, 0};
+
+  CHECK_EQ_INT(write_take(48000, 2, 16, samples, sizeof(samples)), 0);
+  CHECK_EQ_INT(aud_info_analyse(g_path, &r), 0);
+
+  CHECK_EQ_INT(r.frames, 4);
+  CHECK_EQ_DBL(r.peak, 0.5, 1e-3);
+  CHECK(!aud_loudness_measured(r.loudness.integrated));
+  CHECK(!aud_loudness_measured(r.loudness.range));
+}
+
+/* A rate BS.1770 is not defined at leaves the loudness empty and everything
+ * else exactly as it was. */
+TEST(a_rate_too_low_to_measure_leaves_the_rest_alone)
+{
+  aud_info_report r;
+  int16_t samples[8] = {0, 0, 16384, 16384, -16384, -16384, 0, 0};
+
+  CHECK_EQ_INT(write_take(4000, 2, 16, samples, sizeof(samples)), 0);
+  CHECK_EQ_INT(aud_info_analyse(g_path, &r), 0);
+
+  CHECK_EQ_INT(r.rate, 4000);
+  CHECK_EQ_DBL(r.peak, 0.5, 1e-3);
+  CHECK(!aud_loudness_measured(r.loudness.integrated));
+  CHECK_EQ_DBL(r.loudness.true_peak, 0.0, 1e-12);
+}
+
 TEST(a_file_it_cannot_read_is_an_error)
 {
   aud_info_report r;
@@ -184,6 +262,9 @@ int main(void)
   RUN(clipping_is_judged_at_the_files_own_depth);
   RUN(the_noise_floor_ignores_the_loud_part);
   RUN(a_truncated_take_is_reported_as_short);
+  RUN(a_take_carries_its_loudness);
+  RUN(a_take_too_short_to_measure_is_still_reported);
+  RUN(a_rate_too_low_to_measure_leaves_the_rest_alone);
   RUN(a_file_it_cannot_read_is_an_error);
 
   rc = TEST_RESULT();

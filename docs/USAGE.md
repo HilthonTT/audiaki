@@ -816,7 +816,12 @@ channels:    2
 rate:        48000 Hz
 duration:    01:12.34  (3472320 frames)
 peak:        -4.4 dBFS
+true peak:   -4.2 dBTP
 rms:         -10.7 dBFS
+loudness:    -18.4 LUFS
+range:       6.2 LU
+momentary:   -14.1 LUFS
+short-term:  -15.3 LUFS
 noise floor: -68.2 dBFS
 clipped:     0 sample(s)
 channels:    ch 1: peak   -4.4 dBFS  rms   -8.7 dBFS  dc +0.00000
@@ -828,16 +833,79 @@ sat at full scale and the take is distorted. `--info` reads whatever the reader
 accepts, including files other tools wrote. What the noise floor and DC figures
 mean: [DESIGN.md](../DESIGN.md#measuring-a-take).
 
+### How loud it came out
+
+`loudness` is the one to compare two takes by, and neither peak nor RMS is.
+Peak is about headroom alone — a bass note and a cymbal that both stop at
+-0.1 dBFS are nowhere near equally loud. RMS averages every sample equally,
+which the ear does not, so it rates a boomy take above a bright one that sounds
+twice as loud beside it.
+
+The measurement is [ITU-R BS.1770-4][bs1770], the one EBU R 128 and every
+broadcaster and streaming service is written in terms of. Two filters standing
+in for the ear, a mean square over overlapping 400 ms blocks, and a gate that
+throws away the silence between the notes — so a take with long gaps in it is
+not rated quieter than the same playing without them.
+
+| | |
+| --- | --- |
+| `loudness` | One figure for the whole take, gated. What to compare takes by, and what a streaming service normalises to |
+| `range` | How far the quiet parts sit below the loud ones, in LU ([EBU Tech 3342][r128]). At 2 LU a take has been squashed; at 15 it has its dynamics |
+| `momentary` | The loudest 400 ms, ungated — where the take peaks as a sound rather than as a sample |
+| `short-term` | The loudest 3 s, ungated — the loudest passage |
+
+LUFS and dBFS are both decibels but they are not the same scale and do not
+convert: a stereo sine reads its own dBFS as LUFS, and anything with content
+spread across the band reads further apart. Two channels carrying the same
+signal are 3 dB louder than one, deliberately — that is the summation BS.1770
+specifies, not an error.
+
+A take shorter than the window a figure is measured over does not get that
+figure, rather than one measured over less:
+
+```
+loudness:    n/a  (needs 400 ms of audio)
+range:       n/a  (needs 3 s of audio)
+```
+
+A take with nothing above the -70 LUFS gate has no integrated loudness either —
+not a very quiet one — and says so the same way. Below 8 kHz the filters cannot
+be derived at all and every loudness reads `n/a`, with the rest of the report
+unaffected.
+
+[bs1770]: https://www.itu.int/rec/R-REC-BS.1770
+[r128]: https://tech.ebu.ch/publications/r128
+
+### True peak, and why peak is not enough
+
+`peak` is the loudest sample. `true peak` is where the waveform actually goes,
+which is not the same place: the signal between two samples routinely rises
+above both of them, and a converter or an encoder reconstructing it will clip
+there while `peak` still reports headroom to spare.
+
+```
+peak:        -3.7 dBFS      <- looks like 3.7 dB of room
+true peak:   +0.2 dBTP      <- will clip on the way out
+```
+
+So a take that measures fine and distorts on export is not a mystery, and a
+mixdown headed for MP3 or AAC wants a decibel or two of true-peak headroom
+rather than sample-peak headroom. Measured by oversampling four times, as
+BS.1770-4 Annex 2 says.
+
 Name more than one file and each gets a line instead, which is the shape the
 question takes at the end of a session — which of these do I keep?
 
 ```
 $ audiaki --info session-*.wav
-FILE                DURATION     PEAK      RMS   CLIPPED
-session-001.wav        41.20     -4.4    -10.7         0
-session-002.wav      1:12.34     -0.0     -6.1      1820  CLIP
-session-003.wav        38.05    -14.2    -22.8         0
+FILE                DURATION     PEAK      RMS     LUFS   CLIPPED
+session-001.wav        41.20     -4.4    -10.7    -18.4         0
+session-002.wav      1:12.34     -0.0     -6.1    -11.2      1820  CLIP
+session-003.wav        38.05    -14.2    -22.8    -27.9         0
 ```
+
+`PEAK` says which take has headroom left and `LUFS` says which one is actually
+louder, and they are not always the same take.
 
 A file that cannot be read is reported on stderr and stepped over, so one bad
 take does not hide the state of the rest; the exit status is still non-zero.
@@ -937,12 +1005,17 @@ array to stdout, with diagnostics staying on stderr:
 audiaki --list --json | jq -r '.[].device'
 audiaki --info take01.wav --json | jq '.peak_dbfs, .clipped_samples'
 audiaki --info take01.wav --json | jq -r '.metadata.note'
+audiaki --info take01.wav --json | jq '.loudness.integrated_lufs, .true_peak_dbtp'
 audiaki --info session-*.wav --json | jq -r '.[] | select(.clipped_samples > 0).file'
+audiaki --info session-*.wav --json | jq -r '.[] | select(.true_peak_dbtp > -1).file'
 ```
 
 `--info` over several files writes an array; over one it writes the single
 object it always did. Every report carries a `metadata` object, whose fields
-are `null` when the file said nothing about itself.
+are `null` when the file said nothing about itself, and a `loudness` object,
+whose fields are `null` when the take was too short or too quiet to measure —
+so `.loudness.integrated_lufs` can be read without first asking whether the key
+is there.
 
 ## Mixing a session down
 
@@ -1105,6 +1178,23 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   rather than a registered one, so other tools ignore it rather than showing it.
 - `--play` takes its keys from a terminal, so a pipe or a service manager gets
   the old behaviour of playing each file start to finish.
+- The true peak is measured at four times oversampling, which is what BS.1770-4
+  specifies and what every other implementation of it uses. That is the accuracy
+  limit rather than the filter: the oversampled grid only looks between the
+  samples every quarter of one, so a peak falling between two of those points is
+  missed by up to about 0.4 dB on content near Nyquist. It therefore reads a
+  shade under the real peak rather than over, and a figure from another tool may
+  differ by a few tenths for the same reason.
+- Loudness treats every channel at full weight. BS.1770 lifts the surround
+  channels by 1.5 dB and drops the LFE, but which channel is which comes from a
+  layout, and a WAV that audiaki wrote does not carry one — its channels are the
+  inputs of an interface, in the order the interface delivered them. For mono and
+  stereo the two rules agree exactly; for a wider file this is a simplification
+  rather than the standard.
+- Loudness is measured over whole blocks, so the trailing part-block of a take is
+  not counted and a take under 400 ms has no loudness at all, one under 3 s no
+  range. A rate below 8 kHz has neither, since the K-weighting cannot be derived
+  that low.
 - The tuner is monophonic: one pitch at a time, and no chords. The range it
   searches runs from a five-string bass's low B to a piccolo's top C, and
   `--tune-min`/`--tune-max` move either end — but the low end is quadratic, so

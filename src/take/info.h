@@ -11,6 +11,7 @@
 #ifndef AUDIAKI_INFO_H
 #define AUDIAKI_INFO_H
 
+#include "audio/loudness.h"
 #include "take/meta.h"
 
 #include <stdint.h>
@@ -44,6 +45,15 @@ typedef struct
   double channel_rms[AUD_INFO_MAX_CHANNELS];
   double channel_dc[AUD_INFO_MAX_CHANNELS]; /* mean sample value */
 
+  /*
+   * How loud it is, rather than how large its samples are - which is a
+   * different question from every one above and the one you ask when comparing
+   * two takes. See loudness.h. Each figure is AUD_LUFS_NONE when the take had
+   * nothing in it to measure, and `true_peak` is normalised like the peaks
+   * above but may pass 1.0, which is the point of it.
+   */
+  aud_loudness_reading loudness;
+
   /* what the file says about itself, if anything; see meta.h */
   aud_meta_info meta;
 } aud_info_report;
@@ -55,6 +65,11 @@ typedef struct
  * is a fair description of "the room with nothing being played" and survives a
  * take that never actually goes quiet. A file containing digital silence
  * reports a floor of zero, because that is the truth about it.
+ *
+ * The loudness is measured in the same pass, so it costs a read rather than a
+ * second one. A file whose rate is below what BS.1770 can be derived at, or
+ * that is too short for the windows the measurement is defined over, comes back
+ * with AUD_LUFS_NONE in those fields and everything else filled in as usual.
  *
  * Returns 0 on success, or -1 after reporting the reason through log.h.
  */

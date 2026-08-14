@@ -2,6 +2,7 @@
 #include "take/info.h"
 
 #include "audio/format.h"
+#include "audio/loudness.h"
 #include "media/wav.h"
 #include "util/jsonout.h"
 #include "util/log.h"
@@ -52,6 +53,7 @@ int aud_info_analyse(const char *path, aud_info_report *out)
   wav_reader r;
   float *chunk = NULL;
   double *windows = NULL;
+  aud_loudness *loud = NULL;
   double sum[AUD_INFO_MAX_CHANNELS];
   double sumsq[AUD_INFO_MAX_CHANNELS];
   double peak[AUD_INFO_MAX_CHANNELS];
@@ -74,6 +76,9 @@ int aud_info_analyse(const char *path, aud_info_report *out)
   }
 
   memset(out, 0, sizeof(*out));
+  /* zero is a real loudness, so the fields cannot be left at what memset made
+   * them; this is how "nothing measured" is spelled */
+  aud_loudness_read(NULL, &out->loudness);
 
   if (wav_read_open(&r, path) != 0)
   {
@@ -123,6 +128,21 @@ int aud_info_analyse(const char *path, aud_info_report *out)
     goto out;
   }
 
+  /*
+   * A rate BS.1770 cannot be derived at is not a failure: everything else about
+   * the file is still worth reporting, and the loudness fields already say they
+   * hold nothing. Anything else that goes wrong here is out of memory, which is.
+   */
+  if (aud_loudness_supported(r.rate, channels))
+  {
+    loud = aud_loudness_create(r.rate, channels);
+    if (loud == NULL)
+    {
+      aud_perror("cannot measure %s", path);
+      goto out;
+    }
+  }
+
   for (;;)
   {
     long got = wav_read_frames(&r, chunk, INFO_CHUNK_FRAMES);
@@ -135,6 +155,12 @@ int aud_info_analyse(const char *path, aud_info_report *out)
     if (got == 0)
     {
       break;
+    }
+
+    if (loud != NULL && aud_loudness_feed(loud, chunk, (size_t)got) != 0)
+    {
+      aud_perror("cannot measure %s", path);
+      goto out;
     }
 
     for (long f = 0; f < got; f++)
@@ -207,9 +233,15 @@ int aud_info_analyse(const char *path, aud_info_report *out)
     out->noise_floor = windows[window_count * INFO_FLOOR_PERCENTILE / 100u];
   }
 
+  if (loud != NULL)
+  {
+    aud_loudness_read(loud, &out->loudness);
+  }
+
   rc = 0;
 
 out:
+  aud_loudness_destroy(loud);
   free(windows);
   free(chunk);
   wav_read_close(&r);
@@ -245,9 +277,31 @@ static const char *encoding_name(const aud_info_report *r)
   return r->is_float ? "float" : "PCM";
 }
 
+/*
+ * One loudness line, laid out like the dBFS ones above it, or the reason there
+ * is no figure. Which reason matters: a take can be too short for the window
+ * the measurement is defined over or too quiet to reach its gate, and those
+ * send you to two different places. A bare dash sends you to neither.
+ */
+static void print_loudness(FILE *out, const char *label, double value, const char *units,
+                           const char *absent)
+{
+  if (aud_loudness_measured(value))
+  {
+    fprintf(out, "%-12s %.1f %s\n", label, value, units);
+  }
+  else
+  {
+    fprintf(out, "%-12s %s\n", label, absent);
+  }
+}
+
 void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
 {
   char clock[32];
+  char too_slow[80];
+  const char *short_take;
+  const char *long_take;
 
   if (out == NULL || r == NULL)
   {
@@ -255,6 +309,18 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   }
 
   format_clock(clock, sizeof(clock), r->duration);
+
+  snprintf(too_slow, sizeof(too_slow), "n/a  (not measurable below %u Hz)",
+           AUD_LOUDNESS_MIN_RATE);
+  short_take = r->duration < 0.4 ? "n/a  (needs 400 ms of audio)"
+                                 : "n/a  (nothing above the -70 LUFS gate)";
+  long_take = r->duration < 3.0 ? "n/a  (needs 3 s of audio)"
+                                : "n/a  (nothing above the -70 LUFS gate)";
+  if (!aud_loudness_supported(r->rate, r->channels))
+  {
+    short_take = too_slow;
+    long_take = too_slow;
+  }
 
   fprintf(out, "file:        %s\n", path != NULL ? path : "-");
   fprintf(out, "format:      %u bit %s\n", r->bits, encoding_name(r));
@@ -269,7 +335,12 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   }
 
   fprintf(out, "peak:        %.1f dBFS\n", aud_format_dbfs(r->peak));
+  fprintf(out, "true peak:   %.1f dBTP\n", aud_format_dbfs(r->loudness.true_peak));
   fprintf(out, "rms:         %.1f dBFS\n", aud_format_dbfs(r->rms));
+  print_loudness(out, "loudness:", r->loudness.integrated, "LUFS", short_take);
+  print_loudness(out, "range:", r->loudness.range, "LU", long_take);
+  print_loudness(out, "momentary:", r->loudness.momentary_max, "LUFS", short_take);
+  print_loudness(out, "short-term:", r->loudness.short_max, "LUFS", long_take);
   fprintf(out, "noise floor: %.1f dBFS\n", aud_format_dbfs(r->noise_floor));
   fprintf(out, "clipped:     %llu sample(s)\n", (unsigned long long)r->clipped);
 
@@ -359,8 +430,8 @@ void aud_info_print_row_header(FILE *out, unsigned width)
   {
     return;
   }
-  fprintf(out, "%-*s  %10s %8s %8s %9s\n", (int)width, "FILE", "DURATION", "PEAK", "RMS",
-          "CLIPPED");
+  fprintf(out, "%-*s  %10s %8s %8s %8s %9s\n", (int)width, "FILE", "DURATION", "PEAK",
+          "RMS", "LUFS", "CLIPPED");
 }
 
 void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
@@ -368,6 +439,7 @@ void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
 {
   char name[INFO_NAME_MAX + 8u];
   char clock[32];
+  char lufs[16];
 
   if (out == NULL || r == NULL)
   {
@@ -377,8 +449,23 @@ void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
   fit_name(name, sizeof(name), path, width);
   format_clock(clock, sizeof(clock), r->duration);
 
-  fprintf(out, "%-*s  %10s %8.1f %8.1f %9llu%s\n", (int)width, name, clock,
-          aud_format_dbfs(r->peak), aud_format_dbfs(r->rms),
+  /*
+   * The column the question is usually settled by: peak says which take has
+   * headroom left and this says which one is actually louder, which are not the
+   * same take. A row is a comparison, so a take with no figure gets a mark
+   * rather than a blank - the column has to line up either way.
+   */
+  if (aud_loudness_measured(r->loudness.integrated))
+  {
+    snprintf(lufs, sizeof(lufs), "%.1f", r->loudness.integrated);
+  }
+  else
+  {
+    snprintf(lufs, sizeof(lufs), "%s", "n/a");
+  }
+
+  fprintf(out, "%-*s  %10s %8.1f %8.1f %8s %9llu%s\n", (int)width, name, clock,
+          aud_format_dbfs(r->peak), aud_format_dbfs(r->rms), lufs,
           (unsigned long long)r->clipped, r->clipped > 0 ? "  CLIP" : "");
 }
 
@@ -387,6 +474,16 @@ void aud_info_print_row(FILE *out, const char *path, const aud_info_report *r,
 static const char *or_null(const char *s)
 {
   return *s != '\0' ? s : NULL;
+}
+
+/*
+ * A loudness, or JSON null when there is not one. aud_json_number() already
+ * writes null for a NaN, so the absence travels through the one path the
+ * numbers do rather than needing the printer to branch around it.
+ */
+static void json_loudness(FILE *out, double value)
+{
+  aud_json_number(out, aud_loudness_measured(value) ? value : NAN, 2);
 }
 
 void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
@@ -410,11 +507,29 @@ void aud_info_print_json(FILE *out, const char *path, const aud_info_report *r)
   aud_json_number(out, r->duration, 3);
   fputs(",\n  \"peak_dbfs\": ", out);
   aud_json_number(out, aud_format_dbfs(r->peak), 2);
+  fputs(",\n  \"true_peak_dbtp\": ", out);
+  aud_json_number(out, aud_format_dbfs(r->loudness.true_peak), 2);
   fputs(",\n  \"rms_dbfs\": ", out);
   aud_json_number(out, aud_format_dbfs(r->rms), 2);
   fputs(",\n  \"noise_floor_dbfs\": ", out);
   aud_json_number(out, aud_format_dbfs(r->noise_floor), 2);
   fprintf(out, ",\n  \"clipped_samples\": %llu", (unsigned long long)r->clipped);
+
+  /*
+   * Always present, like `metadata` below and for the same reason: a script can
+   * read .loudness.integrated_lufs without first asking whether the key is
+   * there. The fields inside are null when the take had nothing to measure.
+   */
+  fputs(",\n  \"loudness\": {", out);
+  fputs("\n    \"integrated_lufs\": ", out);
+  json_loudness(out, r->loudness.integrated);
+  fputs(",\n    \"range_lu\": ", out);
+  json_loudness(out, r->loudness.range);
+  fputs(",\n    \"momentary_max_lufs\": ", out);
+  json_loudness(out, r->loudness.momentary_max);
+  fputs(",\n    \"short_term_max_lufs\": ", out);
+  json_loudness(out, r->loudness.short_max);
+  fputs("\n  }", out);
 
   fputs(",\n  \"per_channel\": [", out);
   for (unsigned c = 0; c < r->channels; c++)

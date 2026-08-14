@@ -55,6 +55,8 @@ src/
     tuner.c/.h    pitch detection: samples in, a note and its offset out
     click.c/.h    the metronome: a beat grid, mixed into what you hear
     spectral.c/.h an editable spectrum, and the audio resynthesised from it
+    resample.c/.h windowed-sinc rate conversion, for the playback path
+    loudness.c/.h how loud a take is: BS.1770 loudness and the true peak
   edit/         the project the window edits: tracks, clips, undo
     samples.c/.h  refcounted blocks of audio, shared and never changed
     track.c/.h    one lane: a sorted list of clips over those blocks
@@ -732,6 +734,66 @@ offset much past ±0.001 usually means the interface has a bias worth fixing.
 
 Each channel is measured on its own, so a clipped left channel cannot hide
 behind a quiet right one.
+
+### How loud, as opposed to how large
+
+Peak and RMS both answer questions the ear does not ask, which is why
+`loudness.c` exists beside them. Peak is headroom and nothing else. RMS weights
+every frequency equally and the ear is far less sensitive at 50 Hz than at
+3 kHz, so RMS rates a boomy take above a bright one that sounds twice as loud
+next to it. Neither lets you say "that take came out four decibels quieter" and
+be right, which is the question you actually have with twelve takes on disk.
+
+ITU-R BS.1770-4 is the answer everything else agrees on, so it is the one used
+rather than something invented here — the point of a loudness figure is that it
+means the same thing to the next program that reads it. Two biquads standing in
+for the ear, a mean square over 400 ms blocks overlapping by 75%, and a two-pass
+gate: everything below -70 LUFS goes, then everything more than 10 LU below what
+is left. The gate is what makes it a measure of the playing rather than of how
+much silence surrounds it.
+
+The coefficients are derived at the file's own rate rather than tabulated. The
+standard prints its table at 48 kHz only, and a take here is as likely to be at
+44.1; a 48 kHz filter used at 44.1 puts the shelf 350 Hz out. Re-deriving through
+the bilinear transform is what makes the same performance recorded at two rates
+read the same, which is the property the whole figure is worth having for.
+
+The 400 ms block and the 3 s block the range is measured over share one history
+of 100 ms sub-blocks rather than keeping their own overlapping windows, because
+100 ms is the step both of them move by and summing runs of it gives either.
+
+Every channel counts at full weight. BS.1770 lifts the surround channels and
+drops the LFE, but which channel is which comes from a layout, and the reader
+does not parse one — a take's channels are the inputs of an interface, in the
+order it delivered them. Weighting the fourth input of a four-input box as an
+LFE and dropping it would be a guess that silently changes the answer, and for
+the mono and stereo takes this measures in practice the two rules agree anyway.
+
+### Between the samples
+
+The true peak is a different measurement in similar units. Sample peak sees only
+where the samples landed; the waveform between two of them routinely goes
+higher, and a converter or an encoder reconstructing it clips there while `peak`
+reports headroom to spare. Four times oversampling through a twelve-tap
+polyphase interpolator, as BS.1770-4 Annex 2 specifies.
+
+Four is the accuracy limit rather than the filter, and it is worth knowing which:
+the oversampled grid only looks between the samples every quarter of one, so a
+peak falling between two of those points is missed by up to about 0.4 dB near
+Nyquist. Widening the filter does not help — a wider one was tried and moved
+nothing. Oversampling further would, but four is what every other implementation
+uses, and agreeing with them is worth more than the last few tenths.
+
+Doing that filtering on every sample made `--info` seven times slower, which for
+a command whose job is to answer a question about a dozen takes at once is the
+wrong trade. What it costs now is roughly double the old read, and the
+difference is an exact test rather than an approximation: samples are grouped
+twelve at a time, a window never spans more than two groups, and the filter
+cannot lift a window past a known bound times its largest sample. When that
+bound falls below the peak already found there is provably nothing in the group
+to find, and it is skipped whole. On a real take that is nearly every group, the
+loudest moment being one moment. The figure is identical either way — the
+skipping only avoids arithmetic whose answer is already known to lose.
 
 The reader is deliberately more forgiving than the writer is strict, because it
 has to cope with files other tools produced: 8/16/24/32-bit PCM and 32/64-bit

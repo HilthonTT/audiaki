@@ -573,10 +573,11 @@ lists the ones this one has. See
 .BR \-\-info " " \fIFILE\fR
 Measure
 .I FILE
-and exit. Reports its format and duration, the peak and RMS level in dBFS, an
-estimated noise floor, how many samples reached full scale, and the peak, RMS
-and DC offset of each channel separately, followed by whatever the file says
-about itself. See
+and exit. Reports its format and duration, the peak and RMS level in dBFS, the
+true peak in dBTP, the loudness and loudness range in LUFS and LU, an estimated
+noise floor, how many samples reached full scale, and the peak, RMS and DC
+offset of each channel separately, followed by whatever the file says about
+itself. See
 .B TAKE REPORT
 below.
 .IP
@@ -803,7 +804,12 @@ renamed over it, so it is never half written.
  rate:        48000 Hz
  duration:    01:12.34  (3472320 frames)
  peak:        \-4.4 dBFS
+ true peak:   \-4.2 dBTP
  rms:         \-10.7 dBFS
+ loudness:    \-18.4 LUFS
+ range:       6.2 LU
+ momentary:   \-14.1 LUFS
+ short\-term:  \-15.3 LUFS
  noise floor: \-68.2 dBFS
  clipped:     0 sample(s)
  channels:    ch 1: peak   \-4.4 dBFS  rms   \-8.7 dBFS  dc +0.00000
@@ -838,6 +844,48 @@ percentile rather than a minimum, it survives a take that never falls silent; a
 file that contains true digital silence reports \-99.0 dBFS, which is the truth
 about it.
 .PP
+.PP
+.B loudness
+is how loud the take is rather than how large its samples are, measured by
+ITU\-R BS.1770\-4 \- the method EBU R 128 and every broadcaster and streaming
+service is written in terms of. Two filters standing in for the ear, a mean
+square over overlapping 400 ms blocks, and a gate that drops the silence between
+the notes so a take with long gaps is not rated quieter than the same playing
+without them. It is the figure to compare two takes by; peak and RMS are not.
+.PP
+.B range
+is how far the quiet parts sit below the loud ones, in LU, by EBU Tech 3342. A
+take at 2 LU has been squashed; one at 15 has its dynamics.
+.B momentary
+and
+.B short\-term
+are the loudest 400 ms and the loudest 3 s, ungated \- where the take peaks as a
+sound rather than as a sample.
+.PP
+LUFS and dBFS are both decibels but they are not the same scale and do not
+convert. Two channels carrying the same signal read 3 dB louder than one,
+deliberately: that is the summation BS.1770 specifies.
+.PP
+.B true peak
+is where the waveform actually goes, which is not where the samples are. The
+signal between two samples routinely rises above both, and a converter or an
+encoder reconstructing it will clip there while
+.B peak
+still reports headroom to spare \- so a take at \-0.1 dBFS can be \+0.6 dBTP and
+distort on export. It is measured by oversampling four times, as BS.1770\-4
+Annex 2 specifies. That is the accuracy limit rather than the filter: the
+oversampled grid looks between the samples every quarter of one, so a peak
+falling between two of those points is still missed by up to about 0.4 dB on
+content near Nyquist, and this reads a shade under rather than over.
+.PP
+A take shorter than the window a figure is measured over has no such figure, and
+says so rather than reporting one measured over less: under 400 ms there is no
+loudness, and under 3 s no range. A take with nothing above the \-70 LUFS
+absolute gate has no integrated loudness either \- not a very quiet one. Below
+8 kHz the K\-weighting cannot be derived at all, and every loudness reads
+.BR n/a ,
+with the rest of the report unaffected.
+.PP
 A file whose data chunk claims more frames than it holds \- a recording killed
 before its header was patched \- is reported as truncated, and every figure
 describes what is actually there.
@@ -846,10 +894,10 @@ Naming more than one file reports a row each instead, for triaging a session:
 .PP
 .nf
  $ audiaki \-\-info session\-*.wav
- FILE                DURATION     PEAK      RMS   CLIPPED
- session\-001.wav        41.20     \-4.4    \-10.7         0
- session\-002.wav      1:12.34     \-0.0     \-6.1      1820  CLIP
- session\-003.wav        38.05    \-14.2    \-22.8         0
+ FILE                DURATION     PEAK      RMS     LUFS   CLIPPED
+ session\-001.wav        41.20     \-4.4    \-10.7    \-18.4         0
+ session\-002.wav      1:12.34     \-0.0     \-6.1    \-11.2      1820  CLIP
+ session\-003.wav        38.05    \-14.2    \-22.8    \-27.9         0
 .fi
 .PP
 A long name loses its middle rather than its end, because takes in a session
