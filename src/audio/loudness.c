@@ -426,7 +426,10 @@ static void close_tp_group(aud_loudness *l)
       interpolate(l, buf, LOUD_TP_TAPS);
     }
 
-    memcpy(buf, buf + LOUD_TP_TAPS, LOUD_TP_TAPS * sizeof(*buf));
+    /* memmove rather than memcpy: the two halves of one array cannot overlap
+     * at this size, but both pointers are into the same object, which is all a
+     * static analyser can see - and for twelve floats the two are the same */
+    memmove(buf, buf + LOUD_TP_TAPS, LOUD_TP_TAPS * sizeof(*buf));
     l->tp_prev_max[c] = l->tp_cur_max[c];
     l->tp_cur_max[c] = 0.0f;
   }
