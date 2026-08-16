@@ -1,21 +1,22 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * export.h - the project, back out as a WAV.
+ * export.h - the project, back out as a file.
  *
  * What every edit has been leading to. It writes the same mix playback plays -
  * see mix.h - so what comes out of the file is what came out of the speakers,
  * which is the one guarantee an editor owes anybody.
  *
- * Written through the same streaming writer the recorder uses, a block at a
- * time, so exporting an hour costs an hour's worth of disk and a period's worth
- * of memory rather than both at once.
+ * Written a block at a time, so exporting an hour costs an hour's worth of disk
+ * and a period's worth of memory rather than both at once. WAV goes through the
+ * same streaming writer the recorder uses; everything else goes down a pipe to
+ * ffmpeg, a block at a time, for the same reason.
  *
  * Two ways out, and they are the same way twice: the mixdown, and the stems -
  * one file per lane, each holding that lane alone. The stems exist because a
  * mixdown is the end of the road. Handing somebody a session means handing them
- * something they can still change, and a folder of WAVs that line up is the one
- * thing every other program can open. See aud_export_stems() for the property
- * that makes them worth exporting at all.
+ * something they can still change, and a folder of files that line up is the
+ * one thing every other program can open. See aud_export_stems() for the
+ * property that makes them worth exporting at all.
  */
 #ifndef AUDIAKI_EDIT_EXPORT_H
 #define AUDIAKI_EDIT_EXPORT_H
@@ -24,12 +25,54 @@
 
 #include <stdint.h>
 
+/*
+ * What the file is written as, which comes from the name it is written to
+ * rather than from an option of its own.
+ *
+ * There is no --format to conflict with the name, and no way to write FLAC
+ * into a file called .wav: "-o mix.flac" is the whole request, the way
+ * "--visualize out.mp4" already is. AUD_EXPORT_UNKNOWN is an extension audiaki
+ * will not write, which is refused rather than handed to ffmpeg to guess at.
+ *
+ * WAV is written here; the rest are written by an ffmpeg child, which
+ * therefore has to be on PATH for them and not for WAV. See media/ffmpeg.h.
+ */
+typedef enum
+{
+  AUD_EXPORT_UNKNOWN = 0,
+  AUD_EXPORT_WAV,  /* PCM, written by media/wav.h - no ffmpeg needed */
+  AUD_EXPORT_FLAC, /* lossless: the same samples, about half the size */
+  AUD_EXPORT_OPUS, /* lossy, and the best of them per byte */
+  AUD_EXPORT_MP3,  /* lossy, and the one everything opens */
+} aud_export_format;
+
+/*
+ * Which of those `path` names, by its extension, whatever case it is written
+ * in. A path with no extension at all is taken for WAV, which is what an export
+ * has always been and what a name typed without one means.
+ */
+aud_export_format aud_export_format_of(const char *path);
+
+/* What to call it: "WAV", "FLAC", "Opus", "MP3", or "" for unknown. */
+const char *aud_export_format_name(aud_export_format format);
+
+/* Whether writing it needs ffmpeg(1) on PATH, which only WAV does not. */
+int aud_export_format_needs_ffmpeg(aud_export_format format);
+
 /* What an export is asked for. */
 typedef struct
 {
   const char *path;
   unsigned channels; /* 1 or 2; 0 takes the widest track in the project */
-  unsigned bits;     /* 16, 24 or 32; 0 means 24, which is what takes are */
+  /*
+   * 16, 24 or 32; 0 means 24, which is what takes are.
+   *
+   * A depth is a thing PCM has, so asking for one alongside a lossy target is
+   * refused rather than ignored: MP3 and Opus hold no samples to be that many
+   * bits wide, and quietly accepting the option would be the same silence
+   * --bits was fixed for elsewhere. FLAC holds up to 24.
+   */
+  unsigned bits;
   int overwrite;
   /*
    * The range to write. `to` of 0 means "to the end of the project", so the
@@ -40,7 +83,13 @@ typedef struct
   uint64_t to;
 } aud_export_options;
 
-/* Fill `opts` with the defaults described above. */
+/*
+ * Fill `opts` with the defaults described above, which are its zeroes: no
+ * range means all of it, no width means the widest track, and no depth means
+ * 24. A caller sets only what it was actually asked for, so that a field left
+ * alone and a field set to what the default happens to be stay different
+ * requests - which is what lets a bit depth be refused where it means nothing.
+ */
 void aud_export_defaults(aud_export_options *opts);
 
 /*
@@ -73,9 +122,9 @@ int aud_export_is_stem(const aud_doc *d, size_t index);
 
 /*
  * Where stem `index` of a set based at `base` is written: the base without its
- * extension, then the track's number and name, then `.wav`. Exporting to
- * `~/Takes/song.wav` gives `~/Takes/song-01-Rhythm.wav`, `song-02-Lead.wav`
- * and so on.
+ * extension, then the track's number and name, then the extension back again.
+ * Exporting to `~/Takes/song.wav` gives `~/Takes/song-01-Rhythm.wav`,
+ * `song-02-Lead.wav` and so on, and `song.flac` gives the same set as FLAC.
  *
  * Numbered by the track's place in the project rather than by how many stems
  * came before it, so a stem's number is the lane you can see - and a gap in
@@ -92,7 +141,7 @@ int aud_export_stem_path(char *dst, size_t size, const char *base, size_t index,
                          const char *name);
 
 /*
- * Write every audible track of `d` as its own WAV, named by the rule above,
+ * Write every audible track of `d` as its own file, named by the rule above,
  * and report how many through `written` (which may be NULL).
  *
  * The stems add back up to the mixdown, sample for sample: they run over the
@@ -100,7 +149,9 @@ int aud_export_stem_path(char *dst, size_t size, const char *base, size_t index,
  * gain and pan that track sits in the mix with - see aud_mix_read_track(). So
  * they can be dropped into anything else, lined up at the start, and the sum is
  * the mix that came out of here. That property is the point of the feature, and
- * it is what the test asserts.
+ * it is what the test asserts - of the PCM, which is where it can be asserted:
+ * a set of lossy stems sums to the mix as closely as the codec allows and no
+ * more, which is a reason to prefer WAV or FLAC for a set somebody will mix.
  *
  * `opts->path` is the base name rather than a file that gets written; `from`,
  * `to`, `bits`, `channels` and `overwrite` mean what they do for a mixdown, and

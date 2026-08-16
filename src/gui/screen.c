@@ -21,6 +21,7 @@
 #include "gui/viz.h"
 
 #include "audio/format.h"
+#include "audio/loudness.h"
 #include "version.h"
 
 #include <math.h>
@@ -497,7 +498,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   }
   tip(a, export_to,
       a->doc.count == 0 ? "nothing to export yet"
-                        : "mix the project down to a WAV   ctrl+E");
+                        : "mix the project down to a WAV, FLAC, Opus or MP3   ctrl+E");
 
   /*
    * Beside Export because it is the same question about the same range, and
@@ -510,7 +511,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   }
   tip(a, export_stems,
       a->doc.count == 0 ? "nothing to export yet"
-                        : "one WAV a track, adding up to the mix   ctrl+shift+E");
+                        : "one file a track, adding up to the mix   ctrl+shift+E");
 
   /*
    * The session itself, next to Export because both are about what leaves the
@@ -908,6 +909,21 @@ static void format_position(char *dst, size_t size, uint64_t frame, unsigned rat
 }
 
 /*
+ * One of the three loudness figures a meter shows, or "n/a" where there is not
+ * one yet: the windows are 400 ms and 3 s, so a transport just started has
+ * neither, and that is a different thing from being quiet. See loudness.h.
+ */
+static void format_lufs(char *dst, size_t size, double lufs)
+{
+  if (aud_loudness_measured(lufs))
+  {
+    snprintf(dst, size, "%+.1f", lufs);
+    return;
+  }
+  snprintf(dst, size, "n/a");
+}
+
+/*
  * How a capture gain is said out loud: in dB, because that is the unit an
  * input trim is thought in, with the multiplier kept out of sight. "off"
  * rather than "-inf dB" at the bottom of the travel.
@@ -929,6 +945,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   float meter_w = 190.0f;
   Rectangle meter;
   float x = r.x;
+  float said = r.x; /* how far along the second line the message reached */
   float top = r.y + 2.0f;
 
   DrawLine(0, (int)r.y, GetScreenWidth(), (int)r.y, AUD_UI_EDGE);
@@ -1042,6 +1059,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     }
 
     aud_ui_text(r.x, r.y + 24.0f, 14, colour, say);
+    said = r.x + (float)MeasureText(say, 14) + 24.0f;
   }
 
   /*
@@ -1066,13 +1084,49 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   }
 
   {
+    float right = r.x + r.width;
     size_t bytes = aud_doc_bytes(&a->doc);
 
     if (bytes > 0)
     {
       snprintf(text, sizeof(text), "%zu track(s)   %.1f MiB", a->doc.count,
                (double)bytes / (1024.0 * 1024.0));
-      aud_ui_text_right(r.x + r.width, r.y + 24.0f, 14, AUD_UI_EDGE, text);
+      aud_ui_text_right(right, r.y + 24.0f, 14, AUD_UI_EDGE, text);
+      right -= (float)MeasureText(text, 14) + 24.0f;
+    }
+
+    /*
+     * How loud the mix is, while there is one playing.
+     *
+     * LUFS rather than more decibels, because the peak meter above already
+     * answers the dBFS question and it is not this one: it says whether the mix
+     * fits, not whether it is as loud as the record you would put it next to.
+     * The three figures are the ones every R 128 meter shows - see loudness.h.
+     *
+     * Beside what the project costs rather than up on the meter line: that
+     * meter is the input, and putting a figure about what is coming out of the
+     * speakers next to a needle about what is going into the file would invite
+     * reading one for the other.
+     */
+    if (aud_player_playing(&a->player))
+    {
+      aud_loudness_live loud;
+      char momentary[16];
+      char short_term[16];
+      char integrated[16];
+
+      aud_player_loudness(&a->player, &loud);
+      format_lufs(momentary, sizeof(momentary), loud.momentary);
+      format_lufs(short_term, sizeof(short_term), loud.short_term);
+      format_lufs(integrated, sizeof(integrated), loud.integrated);
+      snprintf(text, sizeof(text), "M %s   S %s   I %s LUFS", momentary, short_term,
+               integrated);
+
+      /* the message on the left is what just happened and wins the room */
+      if (right - (float)MeasureText(text, 14) > said)
+      {
+        aud_ui_text_right(right, r.y + 24.0f, 14, AUD_UI_MUTED, text);
+      }
     }
   }
 }

@@ -16,6 +16,7 @@
 #define AUDIAKI_GUI_PLAYER_H
 
 #include "audio/click.h"
+#include "audio/loudness.h"
 #include "edit/doc.h"
 #include "edit/mix.h"
 
@@ -81,6 +82,15 @@ typedef struct
   unsigned click_beats;
   unsigned click_subdiv;
   float click_gain;
+
+  /*
+   * How loud the mix has been since this pass started, or NULL when the
+   * project's rate is not one BS.1770 can be derived at. Fed the mix and not
+   * the click, for the same reason the take is not written with the click in
+   * it: the metronome is something you hear, not something the project holds,
+   * and a figure that counted it would not be the figure the export gets.
+   */
+  aud_loudness *loud;
 } aud_player;
 
 void aud_player_init(aud_player *p);
@@ -102,6 +112,24 @@ void aud_player_set_click(aud_player *p, double bpm, unsigned beats_per_bar,
 
 /* Whether the next pass, or this one, goes round rather than stopping. */
 void aud_player_set_loop(aud_player *p, int on);
+
+/*
+ * How loud what is playing has been, for the meter beside the transport. Fills
+ * `out` with nothing measured when nothing is playing, so a caller needs no
+ * second path for that - see audio/loudness.h.
+ *
+ * It reads what has been handed to the output rather than what has come out of
+ * it, so it runs up to one buffer ahead of the sound. That is a few tens of
+ * milliseconds against a window of four hundred, and the alternative - holding
+ * the numbers back by a latency the output does not report exactly - would be
+ * a meter that lied about a different thing.
+ *
+ * A looping pass keeps measuring rather than starting again each time round.
+ * The integrated figure is a gated mean, so a passage played five times reads
+ * the same as the same passage played once, which is the answer that matches
+ * what would be exported.
+ */
+void aud_player_loudness(const aud_player *p, aud_loudness_live *out);
 
 /* Whether the project is heard at all. On until something says otherwise. */
 void aud_player_set_mix(aud_player *p, int on);

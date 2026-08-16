@@ -84,9 +84,15 @@ static int lists_file(const app_save *s, const char *name)
    */
   case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_OPEN:
+    return is_wav(name);
+  /*
+   * An export browser lists everything an export could land on, because the
+   * extension typed here is what picks the format - see edit/export.h. Showing
+   * only the WAVs would hide exactly the file about to be replaced.
+   */
   case APP_SAVE_MODE_EXPORT:
   case APP_SAVE_MODE_STEMS:
-    return is_wav(name);
+    return aud_export_format_of(name) != AUD_EXPORT_UNKNOWN;
   /* a session is opened by name, and saved over an existing one knowingly */
   case APP_SAVE_MODE_PROJECT_OPEN:
   case APP_SAVE_MODE_PROJECT_SAVE:
@@ -457,9 +463,16 @@ static aud_chooser_mode chooser_mode_of(app_save_mode mode)
 
 static const char *chooser_filter_of(app_save_mode mode)
 {
-  return (mode == APP_SAVE_MODE_PROJECT_OPEN || mode == APP_SAVE_MODE_PROJECT_SAVE)
-             ? "*" AUD_PROJECT_EXT
-             : "*.wav";
+  if (mode == APP_SAVE_MODE_PROJECT_OPEN || mode == APP_SAVE_MODE_PROJECT_SAVE)
+  {
+    return "*" AUD_PROJECT_EXT;
+  }
+  /* the same widening as lists_file(), for the same reason */
+  if (mode == APP_SAVE_MODE_EXPORT || mode == APP_SAVE_MODE_STEMS)
+  {
+    return "*.wav *.flac *.opus *.mp3";
+  }
+  return "*.wav";
 }
 
 /*
@@ -893,9 +906,9 @@ static const char *save_hint(app_save_mode mode)
   case APP_SAVE_MODE_OPEN:
     return "click a folder to go in, a file to pick it; Enter opens";
   case APP_SAVE_MODE_EXPORT:
-    return "the selection if there is one, the whole project if not";
+    return "the extension picks the format: .wav .flac .opus .mp3";
   case APP_SAVE_MODE_STEMS:
-    return "one WAV a track, named after this; they add back up to the mix";
+    return "one file a track, named after this; they add back up to the mix";
   case APP_SAVE_MODE_PROJECT_SAVE:
     return "the takes stay where they are; this writes what was done to them";
   case APP_SAVE_MODE_PROJECT_OPEN:

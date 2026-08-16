@@ -153,4 +153,31 @@ int aud_loudness_feed(aud_loudness *l, const float *interleaved, size_t frames);
  */
 void aud_loudness_read(aud_loudness *l, aud_loudness_reading *out);
 
+/*
+ * What a meter reads now, as opposed to what a finished take came to.
+ *
+ * The same three numbers every R 128 meter shows, and they answer different
+ * halves of "is this the right level": `momentary` is the block that just went
+ * past, which moves with the playing and is the one to watch; `short_term` is
+ * steadier and is what a passage sounds like; `integrated` is everything fed so
+ * far, gated, and is the figure the finished thing will be judged on.
+ *
+ * Note that `momentary` and `short_term` are the latest blocks rather than the
+ * loudest ones - aud_loudness_reading holds the maxima, which is the question a
+ * file that has already been read asks and not the question a meter does.
+ *
+ * Cheap enough to call every drawn frame, and consumes nothing: it neither
+ * reorders the history nor looks between the samples, so feeding carries on
+ * unaffected and calling it and aud_loudness_read() on the same meter is
+ * allowed in either order.
+ */
+typedef struct
+{
+  double momentary;  /* the 400 ms block that just completed */
+  double short_term; /* the 3 s block that just completed */
+  double integrated; /* everything fed so far, gated */
+} aud_loudness_live;
+
+void aud_loudness_read_live(const aud_loudness *l, aud_loudness_live *out);
+
 #endif /* AUDIAKI_LOUDNESS_H */

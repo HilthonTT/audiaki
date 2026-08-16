@@ -104,6 +104,8 @@ void aud_player_stop(aud_player *p)
     p->out = NULL;
   }
   aud_mix_free(&p->mix);
+  aud_loudness_destroy(p->loud);
+  p->loud = NULL;
   free(p->buf);
   p->buf = NULL;
   p->playing = 0;
@@ -159,6 +161,17 @@ int aud_player_start(aud_player *p, const aud_doc *d, uint64_t from, uint64_t to
   p->to = to;
   p->written = 0;
   p->playing = 1;
+
+  /*
+   * Not fatal when it cannot be had. A rate BS.1770 is not defined at, or no
+   * memory for the block history, costs the readout and nothing else - the
+   * point of the transport is to play the project, not to measure it.
+   */
+  if (aud_loudness_supported(p->rate, p->channels))
+  {
+    p->loud = aud_loudness_create(p->rate, p->channels);
+  }
+
   arm_click(p);
   return 0;
 }
@@ -233,6 +246,17 @@ int aud_player_pump(aud_player *p, const aud_doc *d)
     }
 
     /*
+     * Measured here, between the mix and the click, because it is the project
+     * that is being metered - see the field in player.h.
+     */
+    if (p->loud != NULL && aud_loudness_feed(p->loud, p->buf, want) != 0)
+    {
+      /* the history would not grow; stop measuring rather than stop playing */
+      aud_loudness_destroy(p->loud);
+      p->loud = NULL;
+    }
+
+    /*
      * Over the mix rather than into it, and after it: the click is something
      * you hear, not something the project holds. Seeking first is what keeps
      * it on the ruler's grid across a loop's seam - see click.h.
@@ -304,6 +328,11 @@ uint64_t aud_player_head(const aud_player *p)
     played %= span;
   }
   return p->from + played;
+}
+
+void aud_player_loudness(const aud_player *p, aud_loudness_live *out)
+{
+  aud_loudness_read_live(p != NULL ? p->loud : NULL, out);
 }
 
 int aud_player_playing(const aud_player *p)

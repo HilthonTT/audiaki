@@ -70,6 +70,7 @@ int aud_cmd_render(const aud_options *opts)
 {
   aud_doc doc;
   aud_export_options out;
+  aud_export_format format;
   char derived[AUD_PATH_MAX];
   const char *why = NULL;
   int rc;
@@ -86,10 +87,7 @@ int aud_cmd_render(const aud_options *opts)
   aud_export_defaults(&out);
   out.path = opts->output_path;
   out.overwrite = opts->overwrite;
-  if (opts->export_bits != 0)
-  {
-    out.bits = opts->export_bits;
-  }
+  out.bits = opts->export_bits; /* 0 unless --bits said otherwise */
 
   /* default output: the project name with .wav in place of its extension */
   if (out.path == NULL)
@@ -124,6 +122,26 @@ int aud_cmd_render(const aud_options *opts)
   }
 
   /*
+   * What the name asks for. The export works this out for itself as well - it
+   * has to, since the window reaches it without coming through here - but the
+   * lines below say what is being written before it is written, and an
+   * unwritable extension is better refused before anything is opened.
+   */
+  format = aud_export_format_of(out.path);
+  if (format == AUD_EXPORT_UNKNOWN)
+  {
+    aud_error("%s is not a format audiaki writes", out.path);
+    aud_info("the extension picks the format: .wav, .flac, .opus or .mp3");
+    aud_doc_free(&doc);
+    return EXIT_FAILURE;
+  }
+  if (aud_export_format_needs_ffmpeg(format))
+  {
+    aud_debug("%s is written by ffmpeg, which must be on PATH",
+              aud_export_format_name(format));
+  }
+
+  /*
    * The exporter overwrites when asked, so this is what enforces --force - and
    * for stems it is asked of the whole set before any of it is written. Finding
    * out at the fourth file that the third was in the way would leave two behind
@@ -139,8 +157,9 @@ int aud_cmd_render(const aud_options *opts)
   {
     size_t written = 0;
 
-    aud_info("rendering %s: %zu track(s), %.2f s at %u Hz, one WAV a track",
-             opts->input_path, doc.count, (double)aud_doc_end(&doc) / doc.rate, doc.rate);
+    aud_info("rendering %s: %zu track(s), %.2f s at %u Hz, one %s a track",
+             opts->input_path, doc.count, (double)aud_doc_end(&doc) / doc.rate, doc.rate,
+             aud_export_format_name(format));
 
     rc = aud_export_stems(&doc, &out, &written, &why);
     if (rc != 0)
@@ -176,8 +195,9 @@ int aud_cmd_render(const aud_options *opts)
     return rc == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
   }
 
-  aud_info("rendering %s: %zu track(s), %.2f s at %u Hz -> %s", opts->input_path,
-           doc.count, (double)aud_doc_end(&doc) / doc.rate, doc.rate, out.path);
+  aud_info("rendering %s: %zu track(s), %.2f s at %u Hz -> %s (%s)", opts->input_path,
+           doc.count, (double)aud_doc_end(&doc) / doc.rate, doc.rate, out.path,
+           aud_export_format_name(format));
 
   rc = aud_export_wav(&doc, &out, &why);
   if (rc != 0)

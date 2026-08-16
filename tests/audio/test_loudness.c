@@ -467,6 +467,101 @@ TEST(a_peak_in_the_last_few_samples_is_not_missed)
   aud_loudness_destroy(l);
 }
 
+/* -- the live reading, which is what a meter shows -------------------------- */
+
+/*
+ * The three figures a transport shows appear as their windows fill: nothing at
+ * all under 400 ms, a momentary and an integrated after that, and a short-term
+ * only once there are three seconds behind it.
+ */
+TEST(a_live_meter_fills_in_as_its_windows_do)
+{
+  aud_loudness *l = aud_loudness_create(48000, 2);
+  double level = pow(10.0, -23.0 / 20.0);
+  aud_loudness_live now;
+
+  CHECK(l != NULL);
+
+  feed_sine(l, 48000, 2, 1000.0, level, 0.0, 0.25);
+  aud_loudness_read_live(l, &now);
+  CHECK(!aud_loudness_measured(now.momentary));
+  CHECK(!aud_loudness_measured(now.short_term));
+  CHECK(!aud_loudness_measured(now.integrated));
+
+  feed_sine(l, 48000, 2, 1000.0, level, 0.0, 0.75); /* a second in total */
+  aud_loudness_read_live(l, &now);
+  CHECK_EQ_DBL(now.momentary, -23.0, 0.1);
+  CHECK_EQ_DBL(now.integrated, -23.0, 0.1);
+  CHECK(!aud_loudness_measured(now.short_term));
+
+  feed_sine(l, 48000, 2, 1000.0, level, 0.0, 3.0);
+  aud_loudness_read_live(l, &now);
+  CHECK_EQ_DBL(now.short_term, -23.0, 0.1);
+  aud_loudness_destroy(l);
+}
+
+/*
+ * The live momentary follows the playing rather than remembering the loudest
+ * thing it ever saw, which is what separates it from the reading's maxima: a
+ * passage that was loud and went quiet reads quiet now and loud at its peak.
+ */
+TEST(the_live_reading_is_now_and_the_maxima_are_ever)
+{
+  aud_loudness *l = aud_loudness_create(48000, 2);
+  aud_loudness_reading ever;
+  aud_loudness_live now;
+
+  CHECK(l != NULL);
+  feed_sine(l, 48000, 2, 1000.0, 0.5, 0.0, 2.0);
+  feed_sine(l, 48000, 2, 1000.0, 0.05, 0.0, 2.0);
+
+  aud_loudness_read_live(l, &now);
+  aud_loudness_read(l, &ever);
+
+  /* twenty decibels between the two passages, and each figure found its own */
+  CHECK(now.momentary < ever.momentary_max - 15.0);
+  CHECK_EQ_DBL(now.momentary - ever.momentary_max, -20.0, 0.5);
+  aud_loudness_destroy(l);
+}
+
+/*
+ * aud_loudness_read() sorts the short-term history to find the range. A live
+ * reading taken afterwards must still be the latest block rather than whichever
+ * one sorted last, which is why the meter keeps them beside the history.
+ */
+TEST(a_live_reading_survives_the_range_reordering_the_history)
+{
+  aud_loudness *l = aud_loudness_create(48000, 2);
+  aud_loudness_reading ever;
+  aud_loudness_live before;
+  aud_loudness_live after;
+
+  CHECK(l != NULL);
+  feed_sine(l, 48000, 2, 1000.0, 0.5, 0.0, 4.0);  /* loud first... */
+  feed_sine(l, 48000, 2, 1000.0, 0.05, 0.0, 4.0); /* ...quiet last */
+
+  aud_loudness_read_live(l, &before);
+  aud_loudness_read(l, &ever);
+  aud_loudness_read_live(l, &after);
+
+  CHECK_EQ_DBL(after.momentary, before.momentary, 1e-9);
+  CHECK_EQ_DBL(after.short_term, before.short_term, 1e-9);
+  CHECK_EQ_DBL(after.integrated, before.integrated, 1e-9);
+  aud_loudness_destroy(l);
+}
+
+TEST(no_meter_reads_live_as_nothing_measured)
+{
+  aud_loudness_live now;
+
+  aud_loudness_read_live(NULL, &now);
+  CHECK(!aud_loudness_measured(now.momentary));
+  CHECK(!aud_loudness_measured(now.short_term));
+  CHECK(!aud_loudness_measured(now.integrated));
+
+  aud_loudness_read_live(NULL, NULL); /* and says nothing to nobody */
+}
+
 int main(void)
 {
   RUN(a_sine_reads_what_the_standard_says_it_should);
@@ -486,6 +581,10 @@ int main(void)
   RUN(a_true_peak_past_full_scale_is_reported);
   RUN(a_late_peak_below_the_running_one_is_still_found);
   RUN(a_peak_in_the_last_few_samples_is_not_missed);
+  RUN(a_live_meter_fills_in_as_its_windows_do);
+  RUN(the_live_reading_is_now_and_the_maxima_are_ever);
+  RUN(a_live_reading_survives_the_range_reordering_the_history);
+  RUN(no_meter_reads_live_as_nothing_measured);
 
   return TEST_RESULT();
 }

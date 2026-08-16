@@ -9,6 +9,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Export to FLAC, Opus and MP3**, so a mix can leave audiaki as something
+  other than a quarter-gigabyte WAV.
+
+  The extension of the output name picks the format, in the window and on the
+  command line alike:
+
+  ```sh
+  audiaki --render session.aki -o mix.wav    # PCM, written by audiaki itself
+  audiaki --render session.aki -o mix.flac   # lossless, about half the size
+  audiaki --render session.aki -o mix.opus   # lossy, the best of them per byte
+  audiaki --render session.aki -o mix.mp3    # lossy, and everything opens it
+  ```
+
+  There is no option for it, deliberately. An option and a filename can
+  disagree, and both ways of resolving that are bad — honour the option and you
+  write FLAC into a file called `.wav`; honour the name and the option was a
+  lie. One source of truth removes the question, `--visualize out.mp4` already
+  worked this way, and the feature therefore costs no new CLI surface at all.
+  `--stems` composes with it for free: the stem names put the base's own
+  extension back on, so `-o song.flac --stems` is a set of FLACs.
+
+  WAV keeps its own writer — it is the only one of the four that needs no
+  ffmpeg, that can carry the metadata chunks, and that can pass 4 GB by becoming
+  RF64. The other three go down a pipe to an `ffmpeg` child, the same way a
+  video does and for the same reason: the codec licensing and the dependency
+  list stay outside this program. `ffmpeg(1)` has to be on `PATH` for them and
+  not for a WAV, and an export that needs it and cannot find it says so plainly
+  and leaves nothing behind.
+
+  What goes down that pipe is exactly the PCM the WAV writer would have been
+  handed, at exactly the depth asked for, so the two paths cannot drift in how
+  they round or clamp: a FLAC export is bit-identical to the WAV export of the
+  same session, which the tests check by decoding one and comparing. A `--bits`
+  that means nothing is refused rather than ignored — a lossy file holds no
+  samples for a depth to describe, and FLAC holds 24 at the most. An extension
+  audiaki does not write is refused before anything is opened, rather than
+  handed to ffmpeg to make of what it will.
+
+- **The mix metered in LUFS while it plays.** The right of the window's status
+  bar reads `M -14.2   S -13.8   I -15.1 LUFS` whenever the transport is
+  running: momentary (400 ms), short-term (3 s) and integrated since you pressed
+  play, gated.
+
+  It is the same ITU-R BS.1770 meter `--info` runs on a finished take, fed the
+  mixed buffer in the playback loop, so the figure on screen is the one an export
+  of that range would get. The metronome is not counted, for the same reason it
+  is not recorded: it is something you hear, not something the project holds.
+
+  The peak meter beside it answers a different question on a different scale —
+  it is the input, in dBFS, and it says whether the recording fits rather than
+  how loud the mix is. Having both is the point: `-14 LUFS` is roughly what the
+  streaming services normalise to and `-23` is broadcast, and neither is a thing
+  a dBFS peak can tell you.
+
+  A meter wants the blocks that just went past where a report wants the loudest
+  ones, so `aud_loudness_read_live()` is a second reading of the same history
+  rather than a second meter. Failing to measure never stops playback: an
+  unsupported rate, or no memory for the block history, costs the readout and
+  nothing else.
+
 - **Loudness and true peak in `--info`**, so two takes can be compared by how
   loud they are rather than by how large their samples are.
 

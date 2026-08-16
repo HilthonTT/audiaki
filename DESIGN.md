@@ -65,7 +65,7 @@ src/
     mix.c/.h      what the project sounds like; playback and export share it
     project.c/.h  a session written down: which parts of which files sit where
     load.c/.h     a WAV becomes a track
-    export.c/.h   the mix, back out as a WAV
+    export.c/.h   the mix, back out as a WAV, FLAC, Opus or MP3
     repair.c/.h   the spectral edit, applied to a range of a lane
   take/         what a recording is, and what surrounds it
     take.c/.h     numbered take filenames for --take
@@ -78,7 +78,7 @@ src/
     wav.c/.h      streaming WAV writer, and a tolerant WAV reader
     canvas.c/.h   RGBA framebuffer and the shapes the visualiser draws
     visualize.c/.h render a WAV to a video
-    ffmpeg.h      pipe frames to an ffmpeg child
+    ffmpeg.h      pipe frames, or samples, to an ffmpeg child
     ffmpeg_posix.c  its fork/exec/pipe implementation
   term/
     meter.c/.h    the terminal peak and spectrum displays
@@ -674,6 +674,46 @@ that did not add up to the mix would be a set nobody could use, and that is a
 strong enough guarantee to be worth building the code around rather than
 asserting afterwards — though the test asserts it too.
 
+### What the file it lands in is
+
+An export can be a WAV, a FLAC, an Opus or an MP3, and which one is decided by
+the extension of the name it is given rather than by an option beside it.
+
+There is no `--format`, and not only because `-f` was already the capture sample
+format. An option and a filename can disagree, and the two ways of resolving
+that are both bad: honour the option and you write FLAC into a file called
+`.wav`, honour the name and the option was a lie. One source of truth removes
+the question, `--visualize out.mp4` already worked that way, and the whole
+feature costs no new CLI surface — `--stems` composes with it for free, because
+the stem names are built by putting the base's own extension back on.
+
+An extension outside the list is refused before anything is opened, rather than
+passed to ffmpeg to make of what it will. The list is short on purpose: samples
+as they are, samples losslessly smaller, and the two lossy formats the rest of
+the world plays. Adding another is a row in one table in `edit/export.c`.
+
+WAV keeps its own writer. It is the only one that needs no ffmpeg, the only one
+that can carry the metadata chunks, and the only one that can pass 4 GB by
+becoming RF64 — none of which a pipe to an encoder does. The other three write
+through `ffmpeg_start_encoding()`, which is the frame pipe with a different
+argv: the same fork, the same SIGPIPE care, the same reaping. Refactoring those
+three shapes of invocation onto one `execvp()` was most of the work, and it
+removed a copy of the child setup rather than adding one.
+
+What goes down that pipe is exactly the PCM the WAV writer would have been
+handed, at exactly the depth `--bits` asked for. So `put_sample()` stays the one
+place a float becomes an integer, the two paths cannot drift in how they round
+or clamp, and a FLAC export is bit-identical to the WAV export of the same
+session — which is a property worth having, and one the write loop gets for free
+by not caring which sink it is talking to.
+
+A bit depth is refused where it means nothing rather than ignored: a lossy file
+holds no samples for a depth to describe, and FLAC holds 24 at the most. That
+distinction needs `aud_export_options::bits` to tell "not asked for" from "asked
+for 24", which is why `aud_export_defaults()` leaves it at zero instead of
+filling in the default it documents. Quietly accepting `--bits 16 -o mix.mp3`
+would be the same silence `--bits` was already fixed for once.
+
 ### Hearing a file that is not the project
 
 The dialog asking where a finished take should go used to ask it about a file
@@ -799,6 +839,38 @@ The reader is deliberately more forgiving than the writer is strict, because it
 has to cope with files other tools produced: 8/16/24/32-bit PCM and 32/64-bit
 float, in any chunk order, with unknown chunks skipped. A take interrupted
 before its header was patched is reported as truncated rather than refused.
+
+### The same measurement, while it plays
+
+`--info` measures a file that has stopped; the window measures a mix that has
+not. Both run the same meter, because a loudness that meant one thing on the
+status bar and another in the report would be worth less than no loudness at
+all.
+
+`aud_player` creates an `aud_loudness` per pass and feeds it the mixed buffer in
+`aud_player_pump()` — between the mix and the metronome, which is where the
+project ends and what you happen to be hearing begins. The click is not
+recorded, so it is not counted either, and the figure on screen is the one an
+export of the same range would get.
+
+What the transport wants and what a finished take wants are different readings
+of the same history, though. A report wants the *loudest* 400 ms block and the
+loudest 3 s block — the maxima are the interesting part of something that is
+over. A meter wants the ones that just went past, because it is showing what is
+happening now. `aud_loudness_read_live()` is that second reading: the latest
+momentary and short-term blocks, plus the integrated figure gated over
+everything so far, which is the number the mix will be judged on.
+
+Those two live beside each other rather than one being derived from the other,
+and there is a reason the latest blocks are kept in the meter rather than read
+off the end of the histories: `range_of()` sorts the short-term history to find
+its percentiles, so "the last element" stops being "the most recent one" the
+moment anything calls `aud_loudness_read()`. Two doubles removes that coupling
+entirely, and the order the two calls are made in stops mattering.
+
+Failing to measure never stops playback. A rate BS.1770 cannot be derived at, or
+no memory for the block history, costs the readout and nothing else — the
+transport's job is to play the project, and a meter is not worth a silence.
 
 ## What a take carries
 

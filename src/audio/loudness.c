@@ -88,6 +88,15 @@ struct aud_loudness
   size_t shortterm_count;
   size_t shortterm_cap;
 
+  /*
+   * The most recent of each, kept beside the histories rather than read off
+   * their ends. range_of() reorders the short-term history, and a live meter
+   * that took the last element would start reporting whichever block happened
+   * to sort last the moment anything called aud_loudness_read().
+   */
+  double momentary_now;
+  double shortterm_now;
+
   float tp_taps[LOUD_TP_PHASES][LOUD_TP_TAPS];
   double tp_bound; /* the most the filter can lift a window's largest sample */
 
@@ -348,17 +357,23 @@ static int close_sub_block(aud_loudness *l)
     }
   }
 
-  if (l->sub_count >= LOUD_MOMENTARY_SUBS &&
-      push(&l->momentary, &l->momentary_count, &l->momentary_cap,
-           window_power(l, LOUD_MOMENTARY_SUBS)) != 0)
+  if (l->sub_count >= LOUD_MOMENTARY_SUBS)
   {
-    return -1;
+    l->momentary_now = window_power(l, LOUD_MOMENTARY_SUBS);
+    if (push(&l->momentary, &l->momentary_count, &l->momentary_cap, l->momentary_now) !=
+        0)
+    {
+      return -1;
+    }
   }
-  if (l->sub_count >= LOUD_SHORT_SUBS &&
-      push(&l->shortterm, &l->shortterm_count, &l->shortterm_cap,
-           window_power(l, LOUD_SHORT_SUBS)) != 0)
+  if (l->sub_count >= LOUD_SHORT_SUBS)
   {
-    return -1;
+    l->shortterm_now = window_power(l, LOUD_SHORT_SUBS);
+    if (push(&l->shortterm, &l->shortterm_count, &l->shortterm_cap, l->shortterm_now) !=
+        0)
+    {
+      return -1;
+    }
   }
   return 0;
 }
@@ -674,4 +689,33 @@ void aud_loudness_read(aud_loudness *l, aud_loudness_reading *out)
    * feeding can carry on afterwards for the same reason.
    */
   out->range = range_of(l->shortterm, l->shortterm_count);
+}
+
+void aud_loudness_read_live(const aud_loudness *l, aud_loudness_live *out)
+{
+  if (out == NULL)
+  {
+    return;
+  }
+
+  out->momentary = AUD_LUFS_NONE;
+  out->short_term = AUD_LUFS_NONE;
+  out->integrated = AUD_LUFS_NONE;
+
+  if (l == NULL)
+  {
+    return;
+  }
+
+  /*
+   * A block that has not happened yet reads as nothing rather than as silence,
+   * which is what to_lufs() makes of a power of zero anyway - so a meter in its
+   * first 400 ms and one over digital silence say the same thing, and both of
+   * them are right.
+   */
+  out->momentary = to_lufs(l->momentary_now);
+  out->short_term = to_lufs(l->shortterm_now);
+
+  /* gated over the whole history, which no ordering of it can change */
+  out->integrated = gated_loudness(l->momentary, l->momentary_count, LOUD_RELATIVE_GATE);
 }

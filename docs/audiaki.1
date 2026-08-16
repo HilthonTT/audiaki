@@ -469,7 +469,7 @@ which is a buffer ahead of what is coming out of it.
 .BR \-\-render " " \fIFILE\fR
 Mix the session in
 .I FILE
-down to a WAV and exit.
+down to one file and exit.
 .B audiaki\-gui
 writes these: a session is the cuts, the levels and the clip layout made over a
 set of takes, and it refers to those takes rather than containing them, so it
@@ -484,6 +484,21 @@ is what allows an existing mix to be replaced. No device is opened, so this
 runs anywhere \- over ssh, in a build, on a machine with no sound server. A
 take the session refers to that is no longer where it says it is is named, and
 nothing is written.
+.IP
+The extension of
+.B \-o
+picks the format, so there is no separate option to disagree with the name:
+.BR .wav ", " .flac ", " .opus " or " .mp3 ,
+and a name without one means
+.BR .wav .
+WAV is written by
+.B audiaki
+itself; the other three are written by an
+.BR ffmpeg (1)
+child, which therefore has to be on
+.B PATH
+for them and not for a WAV. An extension not in that list is refused before
+anything is opened rather than handed to ffmpeg to guess at.
 .TP
 .BR \-\-bits " " \fIN\fR
 Bit depth
@@ -491,25 +506,29 @@ Bit depth
 writes:
 .BR 16 ", " 24 " or " 32
 (default 24). Applies to no other command, a take being written at whatever
-the device gave.
+the device gave. FLAC holds 24 at the most, and a lossy format holds no samples
+for a depth to describe, so asking for one alongside
+.BR .opus " or " .mp3
+is refused rather than ignored.
 .TP
 .B \-\-stems
-Write one WAV a track rather than one mix.
+Write one file a track rather than one mix.
 .B \-o
 names the set rather than a file: every stem is that name without its
-extension, then the track's number and name, then
-.BR .wav ,
-so
+extension, then the track's number and name, then that extension back again, so
 .B \-o song.wav
 gives
 .IR song\-01\-Rhythm.wav ", " song\-02\-Lead.wav
-and so on. The number is the lane's place in the session, so a gap in it is a
+and so on, and
+.B \-o song.flac
+gives the same set as FLAC. The number is the lane's place in the session, so a gap in it is a
 muted track rather than a miscount. A track's name is reduced to letters,
 digits, dashes and underscores on the way into a filename.
 .IP
 The set adds back up to the mixdown, sample for sample: every stem covers the
 same range at the same rate, depth and channel count, and carries the gain and
-pan that track sits in the mix with. What the mix cannot hear is not written \-
+pan that track sits in the mix with. That holds for WAV and FLAC; a set written
+as Opus or MP3 adds up as closely as the codec allows and no closer. What the mix cannot hear is not written \-
 a muted track, one silenced by another's solo, or a lane with nothing on it \-
 and a session where that leaves nothing is an error rather than an empty
 folder.

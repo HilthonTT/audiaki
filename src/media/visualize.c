@@ -648,7 +648,7 @@ int aud_visualize_render(const aud_visualize_options *opts)
 
   clear_progress();
 
-  rc = ffmpeg_end_rendering(ffmpeg, cancelled);
+  rc = ffmpeg_finish(ffmpeg, cancelled);
   ffmpeg = NULL;
 
   if (cancelled)
@@ -665,7 +665,7 @@ out:
   if (ffmpeg != NULL)
   {
     /* an error on our side: stop ffmpeg and do not leave half a video behind */
-    ffmpeg_end_rendering(ffmpeg, 1);
+    ffmpeg_finish(ffmpeg, 1);
     remove(opts->output_path);
   }
 

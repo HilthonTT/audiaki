@@ -45,7 +45,7 @@ static int write_all(int fd, const void *buf, size_t bytes)
         continue;
       } /* a signal arrived mid-write, not a failure */
       /*
-       * EPIPE only says ffmpeg is gone, not why. ffmpeg_end_rendering() is
+       * EPIPE only says ffmpeg is gone, not why. ffmpeg_finish() is
        * about to reap it and report the actual reason, so leading with a
        * broken pipe here would just bury the useful message.
        */
@@ -92,14 +92,106 @@ static const char *safe_path(const char *path, char *buf, size_t size)
   return buf;
 }
 
-FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t height,
-                               size_t fps, const char *sound_file_path)
+/* What ffmpeg is told to be as noisy as, which follows audiaki's own level. */
+static const char *ffmpeg_loglevel(void)
+{
+  return aud_log_get_level() >= AUD_LOG_VERBOSE ? "verbose" : "error";
+}
+
+/*
+ * Fork, hand the child a pipe as its stdin, and exec `argv` over it. The three
+ * kinds of job below differ in nothing else, so this is where all of the
+ * fork/dup2/SIGPIPE care lives and each of them only has to say what to run.
+ *
+ * `argv` is NULL terminated and must begin with "ffmpeg". Returns NULL after
+ * reporting the reason through log.h.
+ */
+static FFMPEG *spawn(char *const argv[])
 {
   FFMPEG *ffmpeg;
   int pipefd[2];
   pid_t child;
+
+  if (pipe(pipefd) < 0)
+  {
+    aud_perror("ffmpeg: cannot create a pipe");
+    return NULL;
+  }
+
+  child = fork();
+  if (child < 0)
+  {
+    aud_perror("ffmpeg: cannot fork");
+    close(pipefd[READ_END]);
+    close(pipefd[WRITE_END]);
+    return NULL;
+  }
+
+  if (child == 0)
+  {
+    if (dup2(pipefd[READ_END], STDIN_FILENO) < 0)
+    {
+      /* the parent's meter may own the current line, so start a fresh one */
+      fprintf(stderr, "\nffmpeg child: cannot reopen the pipe as stdin: %s\n",
+              strerror(errno));
+      _exit(1);
+    }
+    /*
+     * Guarded: if stdin was already closed when audiaki started, pipe() is free
+     * to hand back fd 0 as the read end, dup2() is then a no-op, and closing it
+     * unconditionally would shut the pipe ffmpeg is about to read from.
+     */
+    if (pipefd[READ_END] != STDIN_FILENO)
+    {
+      close(pipefd[READ_END]);
+    }
+    close(pipefd[WRITE_END]);
+
+    execvp("ffmpeg", argv);
+
+    /* only reached if execvp failed */
+    fprintf(stderr, "\nffmpeg child: cannot run ffmpeg: %s\n", strerror(errno));
+    _exit(127);
+  }
+
+  if (close(pipefd[READ_END]) < 0)
+  {
+    aud_perror("ffmpeg: cannot close the read end of the pipe");
+  }
+
+  /*
+   * Without this, ffmpeg exiting early turns the next write into a SIGPIPE and
+   * kills audiaki before it can report anything useful.
+   */
+  signal(SIGPIPE, SIG_IGN);
+
+  ffmpeg = malloc(sizeof(*ffmpeg));
+  if (ffmpeg == NULL)
+  {
+    aud_error("ffmpeg: out of memory");
+    close(pipefd[WRITE_END]);
+    kill(child, SIGKILL);
+    waitpid(child, NULL, 0);
+    return NULL;
+  }
+
+  ffmpeg->pid = child;
+  ffmpeg->pipe = pipefd[WRITE_END];
+  return ffmpeg;
+}
+
+/* execvp() wants char *const[], and a string literal is not that. */
+#define ARG(s) ((char *)(s))
+
+FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t height,
+                               size_t fps, const char *sound_file_path)
+{
   char out_buf[PATH_MAX + 3];
   char snd_buf[PATH_MAX + 3];
+  char resolution[64];
+  char framerate[64];
+  char *argv[32];
+  size_t n = 0;
 
   /* sound_file_path may be NULL: that is a video with no audio track */
   if (output_path == NULL || width == 0 || height == 0 || fps == 0)
@@ -125,111 +217,124 @@ FFMPEG *ffmpeg_start_rendering(const char *output_path, size_t width, size_t hei
     return NULL;
   }
 
-  if (pipe(pipefd) < 0)
+  snprintf(resolution, sizeof(resolution), "%zux%zu", width, height);
+  snprintf(framerate, sizeof(framerate), "%zu", fps);
+
+  argv[n++] = ARG("ffmpeg");
+  argv[n++] = ARG("-loglevel");
+  argv[n++] = ARG(ffmpeg_loglevel());
+  argv[n++] = ARG("-y");
+
+  /* input 0: our frames, arriving on stdin */
+  argv[n++] = ARG("-f");
+  argv[n++] = ARG("rawvideo");
+  argv[n++] = ARG("-pix_fmt");
+  argv[n++] = ARG("rgba");
+  argv[n++] = ARG("-s");
+  argv[n++] = ARG(resolution);
+  argv[n++] = ARG("-r");
+  argv[n++] = ARG(framerate);
+  argv[n++] = ARG("-i");
+  argv[n++] = ARG("-");
+
+  if (sound_file_path != NULL)
   {
-    aud_perror("ffmpeg: cannot create a pipe");
-    return NULL;
+    /* input 1: the audio, which ffmpeg opens for itself */
+    argv[n++] = ARG("-i");
+    argv[n++] = ARG(sound_file_path);
+    argv[n++] = ARG("-c:a");
+    argv[n++] = ARG("aac");
+    argv[n++] = ARG("-ab");
+    argv[n++] = ARG("200k");
+    /* -shortest trims the trailing partial frame off the end */
+    argv[n++] = ARG("-shortest");
   }
-
-  child = fork();
-  if (child < 0)
+  else
   {
-    aud_perror("ffmpeg: cannot fork");
-    close(pipefd[READ_END]);
-    close(pipefd[WRITE_END]);
-    return NULL;
-  }
-
-  if (child == 0)
-  {
-    char resolution[64];
-    char framerate[64];
-    const char *loglevel = aud_log_get_level() >= AUD_LOG_VERBOSE ? "verbose" : "error";
-
-    if (dup2(pipefd[READ_END], STDIN_FILENO) < 0)
-    {
-      /* the parent's meter may own the current line, so start a fresh one */
-      fprintf(stderr, "\nffmpeg child: cannot reopen the pipe as stdin: %s\n",
-              strerror(errno));
-      _exit(1);
-    }
     /*
-     * Guarded: if stdin was already closed when audiaki started, pipe() is free
-     * to hand back fd 0 as the read end, dup2() is then a no-op, and closing it
-     * unconditionally would shut the pipe ffmpeg is about to read from.
+     * Silent: one input and -an, rather than muxing a track and muting it.
+     * There is no second input to be shorter than the video, so -shortest has
+     * nothing to trim and is left off.
      */
-    if (pipefd[READ_END] != STDIN_FILENO)
-    {
-      close(pipefd[READ_END]);
-    }
-    close(pipefd[WRITE_END]);
-
-    snprintf(resolution, sizeof(resolution), "%zux%zu", width, height);
-    snprintf(framerate, sizeof(framerate), "%zu", fps);
-
-    if (sound_file_path != NULL)
-    {
-      execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
-
-             /* input 0: our frames, arriving on stdin */
-             "-f", "rawvideo", "-pix_fmt", "rgba", "-s", resolution, "-r", framerate,
-             "-i", "-",
-
-             /* input 1: the audio, which ffmpeg opens for itself */
-             "-i", sound_file_path,
-
-             /* -shortest trims the trailing partial frame off the end */
-             "-c:v", "libx264", "-vb", "2500k", "-c:a", "aac", "-ab", "200k", "-pix_fmt",
-             "yuv420p", "-shortest", output_path,
-
-             NULL);
-    }
-    else
-    {
-      /*
-       * Silent: one input and -an, rather than muxing a track and muting it.
-       * There is no second input to be shorter than the video, so -shortest
-       * has nothing to trim and is left off.
-       */
-      execlp("ffmpeg", "ffmpeg", "-loglevel", loglevel, "-y",
-
-             "-f", "rawvideo", "-pix_fmt", "rgba", "-s", resolution, "-r", framerate,
-             "-i", "-",
-
-             "-an", "-c:v", "libx264", "-vb", "2500k", "-pix_fmt", "yuv420p", output_path,
-
-             NULL);
-    }
-
-    /* only reached if execlp failed */
-    fprintf(stderr, "\nffmpeg child: cannot run ffmpeg: %s\n", strerror(errno));
-    _exit(127);
+    argv[n++] = ARG("-an");
   }
 
-  if (close(pipefd[READ_END]) < 0)
+  argv[n++] = ARG("-c:v");
+  argv[n++] = ARG("libx264");
+  argv[n++] = ARG("-vb");
+  argv[n++] = ARG("2500k");
+  argv[n++] = ARG("-pix_fmt");
+  argv[n++] = ARG("yuv420p");
+  argv[n++] = ARG(output_path);
+  argv[n] = NULL;
+
+  return spawn(argv);
+}
+
+FFMPEG *ffmpeg_start_encoding(const char *output_path, unsigned rate, unsigned channels,
+                              unsigned bits)
+{
+  char out_buf[PATH_MAX + 3];
+  char rate_text[32];
+  char channels_text[32];
+  char raw[16];
+  char *argv[24];
+  size_t n = 0;
+
+  if (output_path == NULL || rate == 0 || channels == 0 ||
+      (bits != 16u && bits != 24u && bits != 32u))
   {
-    aud_perror("ffmpeg: cannot close the read end of the pipe");
+    aud_error("ffmpeg: invalid encode parameters");
+    return NULL;
   }
+
+  output_path = safe_path(output_path, out_buf, sizeof(out_buf));
+  if (output_path == NULL)
+  {
+    aud_error("ffmpeg: the output path is too long");
+    return NULL;
+  }
+
+  snprintf(raw, sizeof(raw), "s%ule", bits);
+  snprintf(rate_text, sizeof(rate_text), "%u", rate);
+  snprintf(channels_text, sizeof(channels_text), "%u", channels);
+
+  argv[n++] = ARG("ffmpeg");
+  argv[n++] = ARG("-loglevel");
+  argv[n++] = ARG(ffmpeg_loglevel());
+  argv[n++] = ARG("-y");
+
+  /* the mix, arriving on stdin as the same PCM the WAV writer would have had */
+  argv[n++] = ARG("-f");
+  argv[n++] = ARG(raw);
+  argv[n++] = ARG("-ar");
+  argv[n++] = ARG(rate_text);
+  argv[n++] = ARG("-ac");
+  argv[n++] = ARG(channels_text);
+  argv[n++] = ARG("-i");
+  argv[n++] = ARG("-");
 
   /*
-   * Without this, ffmpeg exiting early turns the next frame write into a
-   * SIGPIPE and kills audiaki before it can report anything useful.
+   * No codec named. The extension picks both the container and what goes in
+   * it, which is ffmpeg's own default and is the rule the video path follows
+   * too - and it means a build of ffmpeg with a different encoder for a format
+   * uses the one it has rather than the one this file guessed at.
    */
-  signal(SIGPIPE, SIG_IGN);
+  argv[n++] = ARG(output_path);
+  argv[n] = NULL;
 
-  ffmpeg = malloc(sizeof(*ffmpeg));
-  if (ffmpeg == NULL)
+  return spawn(argv);
+}
+
+int ffmpeg_send_audio(FFMPEG *ffmpeg, const void *data, size_t bytes)
+{
+  if (ffmpeg == NULL || data == NULL)
   {
-    aud_error("ffmpeg: out of memory");
-    close(pipefd[WRITE_END]);
-    kill(child, SIGKILL);
-    waitpid(child, NULL, 0);
-    return NULL;
+    errno = EINVAL;
+    return -1;
   }
 
-  ffmpeg->pid = child;
-  ffmpeg->pipe = pipefd[WRITE_END];
-  return ffmpeg;
+  return write_all(ffmpeg->pipe, data, bytes);
 }
 
 /*
@@ -297,7 +402,7 @@ int ffmpeg_send_frame_flipped(FFMPEG *ffmpeg, const void *data, size_t width,
   return 0;
 }
 
-int ffmpeg_end_rendering(FFMPEG *ffmpeg, int cancel)
+int ffmpeg_finish(FFMPEG *ffmpeg, int cancel)
 {
   int pipe_fd;
   pid_t pid;
@@ -349,7 +454,8 @@ int ffmpeg_end_rendering(FFMPEG *ffmpeg, int cancel)
       if (status == 127)
       {
         aud_error("could not run ffmpeg");
-        aud_info("rendering needs ffmpeg(1) on PATH - install it and try again");
+        aud_info("a video, and any export that is not a WAV, needs ffmpeg(1) on "
+                 "PATH - install it and try again");
         return -1;
       }
 

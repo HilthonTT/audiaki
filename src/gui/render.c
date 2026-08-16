@@ -319,7 +319,7 @@ int aud_render_finish(aud_render *r, int cancel)
   if (r->ffmpeg != NULL)
   {
     /* the moov atom is written as the pipe closes, so this has to come first */
-    rc = ffmpeg_end_rendering(r->ffmpeg, cancel);
+    rc = ffmpeg_finish(r->ffmpeg, cancel);
 
     if (cancel || rc != 0 || r->frame < r->total_frames)
     {

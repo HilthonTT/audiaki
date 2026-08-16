@@ -1034,19 +1034,50 @@ sound server at all. A session refers to its takes rather than containing them,
 so they have to be where it says they are; if one has moved, `--render` names it
 and stops rather than writing a mix with a hole in it.
 
+### What it writes
+
+The extension of `-o` picks the format. There is no separate option for it, so
+there is nothing that can disagree with the name:
+
+```sh
+audiaki --render session.aki -o mix.wav       # PCM, written by audiaki itself
+audiaki --render session.aki -o mix.flac      # lossless, about half the size
+audiaki --render session.aki -o mix.opus      # lossy, the best of them per byte
+audiaki --render session.aki -o mix.mp3       # lossy, and everything opens it
+```
+
+A name with no extension, and `-o` left off altogether, mean WAV — which is what
+an export has always been.
+
+WAV is written by audiaki. The other three are written by an `ffmpeg` child, the
+same way a video is, which keeps the codec licensing and the dependency list
+outside this program: `ffmpeg(1)` has to be on `PATH` to write them and not to
+write a WAV, and an export that needs it says so plainly when it is missing.
+
+`--bits` applies to the formats that hold samples at a depth. FLAC takes 16 or
+24; a lossy file holds no samples for a depth to describe, so asking for one
+there is refused rather than ignored. A FLAC export of the same session is
+bit-identical to the WAV export of it, which is what lossless means and what the
+`--stems` guarantee below rests on.
+
+An extension audiaki does not write is refused before anything is opened, rather
+than passed to ffmpeg to make of what it will.
+
 ### Stems
 
-`--stems` writes one WAV a track instead of one mix, which is how a session
+`--stems` writes one file a track instead of one mix, which is how a session
 leaves audiaki for something else without ceasing to be something you can still
 change:
 
 ```sh
 audiaki --render session.aki --stems          # -> session-01-Rhythm.wav, ...
 audiaki --render session.aki --stems -o ~/Stems/song.wav --bits 16
+audiaki --render session.aki --stems -o ~/Stems/song.flac
 ```
 
 `-o` names the set rather than a file: every stem is that name without its
-extension, then the track's number and name, then `.wav`. The number is the
+extension, then the track's number and name, then that extension back again — so
+a set asked for as `.flac` is a set of FLACs. The number is the
 lane's place in the project, so a gap in the numbering is a muted track rather
 than a miscount, and two tracks of the same name are still two files. A name is
 reduced to letters, digits, dashes and underscores on the way into a filename —
@@ -1058,6 +1089,10 @@ same range at the same rate, depth and channel count, and carries the gain and
 pan that track sits in the mix with, so laying them down side by side and
 starting them together gives what `--render` on its own would have written.
 That is the whole point of them, and it is what the unit tests assert.
+
+Sample for sample holds for WAV and FLAC. A set of Opus or MP3 stems adds up as
+closely as the codec allows and no closer, so a set somebody else is going to
+mix is worth writing as one of the first two.
 
 What the mix cannot hear is not written: a muted track, a track silenced by
 another one's solo, and a lane with nothing on it. A session where that leaves

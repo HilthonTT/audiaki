@@ -172,6 +172,42 @@ on repeat without stopping it first. Recording never loops: a take runs
 straight through, and a loop underneath one would be music that repeated behind
 a performance that did not.
 
+### How loud the mix is
+
+While something is playing, the right of the status bar reads
+
+```
+M -14.2   S -13.8   I -15.1 LUFS
+```
+
+which is the mix being measured the way a broadcaster or a streaming service
+would measure it — ITU-R BS.1770, the same code `audiaki --info` uses on a
+finished take. See [USAGE.md](USAGE.md#checking-a-take) for what the
+measurement is.
+
+The three answer different halves of "is this the right level":
+
+- **M**, momentary, is the last 400 ms. It moves with the playing and is the one
+  to watch.
+- **S**, short-term, is the last 3 seconds. Steadier, and closer to what a
+  passage sounds like.
+- **I**, integrated, is everything played since you pressed play, gated so the
+  silence between the notes is not averaged in. It is the figure the finished
+  thing gets judged on — −14 LUFS is roughly what the streaming services
+  normalise to, −23 is broadcast.
+
+Each reads `n/a` until there is enough audio for its window, which is why **S**
+takes three seconds to appear. The peak meter to the left is a different
+question and a different scale: it is the input, in dBFS, and it says whether
+the recording fits rather than how loud the mix is. LUFS and dBFS do not
+convert.
+
+The metronome is not counted, for the same reason it is not recorded — it is
+something you hear, not something the project holds, so the figure is the one an
+export would get. A loop keeps measuring rather than starting again each time
+round; the integrated figure is a gated mean, so a passage played five times
+reads the same as it does played once.
+
 ## Counting the bars
 
 A session has a tempo. It is 120 to the bar of four until you say otherwise,
@@ -524,23 +560,34 @@ for the room to get into the take.
 
 ## Exporting
 
-**Export**, or `ctrl+E`, mixes down to a WAV: the selection if there is one,
-the whole project if not. 24-bit by default, at the project's own sample rate,
-and stereo unless every track in it is mono.
+**Export**, or `ctrl+E`, mixes down: the selection if there is one, the whole
+project if not. 24-bit by default, at the project's own sample rate, and stereo
+unless every track in it is mono.
+
+The extension you type picks the format — `.wav`, `.flac`, `.opus` or `.mp3`.
+There is no menu for it, so there is nothing that can disagree with the name,
+and a name typed without an extension means WAV. WAV is written by audiaki
+itself; the other three are written by an `ffmpeg` child, so `ffmpeg(1)` has to
+be on `PATH` for them and not for a WAV. FLAC is the one to reach for when the
+mix is going somewhere else and has to arrive unchanged: it is bit-identical to
+the WAV and about half the size.
 
 **Stems**, or `ctrl+shift+E`, asks the same question about the same range and
-writes one WAV a track instead of one mix. What you type names the set rather
+writes one file a track instead of one mix. What you type names the set rather
 than a file: every stem is that name without its extension, then the track's
-number and name, then `.wav`, so `song-stems.wav` gives
-`song-stems-01-Rhythm.wav`, `song-stems-02-Lead.wav` and so on. The number is
-the lane, so a gap in it is a muted track rather than a miscount.
+number and name, then that extension back again, so `song-stems.wav` gives
+`song-stems-01-Rhythm.wav`, `song-stems-02-Lead.wav` and so on — and
+`song-stems.flac` gives the same set as FLAC. The number is the lane, so a gap
+in it is a muted track rather than a miscount.
 
 The set adds back up to the mix, sample for sample — same range, same rate,
 depth and width, each stem carrying the gain and pan its track sits in the mix
 with. Drop them into anything else, line them up at the start, and the sum is
 what **Export** would have written. That is what they are for: a mixdown is the
-end of the road, and a folder of WAVs that line up is the one thing every other
-program can open.
+end of the road, and a folder of files that line up is the one thing every other
+program can open. Sample for sample holds for WAV and FLAC; a set written as
+Opus or MP3 adds up as closely as the codec allows and no closer, so a set
+somebody else is going to mix is worth writing as one of the first two.
 
 Tracks the mix cannot hear are not written — muted, silenced by another track's
 solo, or empty. A project where that leaves nothing says so rather than writing
@@ -557,7 +604,7 @@ way through takes back the stems it had already written.
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
 | **Stop** | Closes the take; it is already on the timeline |
 | **Import** | Opens a WAV as a new track |
-| **Export** | Mixes down to a WAV |
+| **Export** | Mixes down to a WAV, FLAC, Opus or MP3 |
 | **Stems** | Writes one WAV a track, adding up to that mix |
 | **Open** / **Save** | Opens a session, or writes this one out |
 | **Click** | Plays a metronome at the session's tempo; heard, never recorded |
@@ -582,7 +629,7 @@ way through takes back the stems it had already written.
 | `shift+G` | Divides the grid: bars, beats, halves, thirds, quarters |
 | `-` / `+` | The tempo, a beat at a time; `shift` for ten |
 | `I` / `ctrl+E` | Import a WAV / export a mix |
-| `ctrl+shift+E` | Export one WAV a track instead |
+| `ctrl+shift+E` | Export one file a track instead |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
 | `,` / `.` | Move the selection earlier or later, one grid line at a time while the grid is on; `alt` steps off it |

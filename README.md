@@ -59,8 +59,9 @@ The PipeWire (`libpipewire-0.3-dev`) and JACK (`libjack-jackd2-dev`) headers are
 optional: with them present those backends are compiled in, without them `make`
 quietly builds without them and everything else works unchanged. On macOS the
 CoreAudio backend is built instead, out of the system frameworks, with nothing
-to install. `make help` reports which backends a build has. Rendering a video
-also needs `ffmpeg` on `PATH` at run time — not to build or to record.
+to install. `make help` reports which backends a build has. Rendering a video,
+and exporting anything that is not a WAV, also need `ffmpeg` on `PATH` at run
+time — not to build or to record.
 
 ```sh
 ./scripts/install-deps.sh   # or install libasound2-dev / alsa-lib-devel yourself
@@ -95,7 +96,8 @@ audiaki --play take01.wav            # ...and what does it sound like?
 audiaki --play session-*.wav         # ...all of them; space pauses, n skips
 audiaki --visualize take01.wav       # render take01.mp4
 audiaki --render session.aki         # mix a saved session down, no window
-audiaki --render session.aki --stems # ...as one WAV a track instead
+audiaki --render session.aki -o mix.flac   # ...as FLAC, Opus or MP3
+audiaki --render session.aki --stems # ...as one file a track instead
 audiaki-gui                          # the multi-track recorder and editor
 audiaki-gui take01.wav take02.wav    # ...opened on those takes
 audiaki-gui session.aki              # ...or on a saved session
@@ -115,9 +117,9 @@ waveform as it arrives, plays the project back while you record over it, counts
 it out with a metronome and rules it into bars you can snap to, loops a passage
 while you learn it, cuts,
 copies, pastes, splits, trims, drags a take along its lane onto the beat and
-fades with 64 steps of undo, saves the session
-as a `.aki` file and exports a WAV — or one WAV a track, which add back up to
-that mix. A session refers to its takes rather than
+fades with 64 steps of undo, meters the mix in LUFS as it plays, saves the
+session as a `.aki` file and exports a WAV, FLAC, Opus or MP3 — or one file a
+track, which add back up to that mix. A session refers to its takes rather than
 containing them, so it is a few kilobytes of readable text that `audiaki
 --render` can mix down without a window. The visualiser is a panel of it you can
 shut, and beside it is a spectrum of what you recorded that you can draw on —
