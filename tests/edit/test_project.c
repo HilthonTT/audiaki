@@ -359,6 +359,63 @@ TEST(an_unsaved_block_is_named_rather_than_dropped)
   aud_doc_free(&d);
 }
 
+/*
+ * The format gives each value the rest of its line, so a value with a line
+ * break in it would write settings the reader believes. Both halves of the
+ * answer are here: a label is trimmed, a filename is refused.
+ */
+TEST(a_line_break_in_a_name_cannot_forge_a_setting)
+{
+  aud_doc d;
+  char path[256];
+  const char *why = NULL;
+
+  in_dir(path, sizeof(path), "broken" AUD_PROJECT_EXT);
+
+  build(&d);
+  snprintf(d.tracks[0].name, sizeof(d.tracks[0].name), "Guitar\nchannels 7\ngain 0.01");
+  CHECK_EQ_INT(aud_project_save(&d, path, &why), 0);
+  aud_doc_free(&d);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), 0);
+  CHECK_EQ_INT(d.count, 2);
+
+  /* the forged lines are not settings - the track keeps the width and the
+   * gain it was saved with - and the label survives as one line */
+  CHECK_EQ_INT(d.tracks[0].channels, 1);
+  CHECK_EQ_DBL(d.tracks[0].gain, 0.75, 1e-6);
+  CHECK(strcmp(d.tracks[0].name, "Guitar channels 7 gain 0.01") == 0);
+
+  aud_doc_free(&d);
+  remove(path);
+}
+
+TEST(a_take_with_a_line_break_in_its_filename_is_named_rather_than_written)
+{
+  aud_doc d;
+  char take[256];
+  char path[256];
+  const char *why = NULL;
+
+  in_dir(take, sizeof(take), "take\nchannels 7.wav");
+  in_dir(path, sizeof(path), "unwritable" AUD_PROJECT_EXT);
+  write_wav(take, 1, 100);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_edit_load_wav(&d, take, NULL), 0);
+
+  /* refused, because a trimmed path would name a different file or none - and
+   * the project would open having quietly lost the take */
+  CHECK_EQ_INT(aud_project_save(&d, path, &why), -1);
+  CHECK(why != NULL);
+  CHECK(strchr(why, '\n') == NULL);
+  CHECK_EQ_INT(access(path, F_OK), -1);
+
+  aud_doc_free(&d);
+  remove(take);
+}
+
 TEST(the_extension_is_recognised_whatever_case_it_is_in)
 {
   CHECK(aud_project_is_project("a" AUD_PROJECT_EXT));
@@ -389,6 +446,8 @@ int main(void)
   RUN(a_missing_take_is_named_and_nothing_is_replaced);
   RUN(rubbish_is_refused_rather_than_half_read);
   RUN(an_unsaved_block_is_named_rather_than_dropped);
+  RUN(a_line_break_in_a_name_cannot_forge_a_setting);
+  RUN(a_take_with_a_line_break_in_its_filename_is_named_rather_than_written);
   RUN(the_extension_is_recognised_whatever_case_it_is_in);
 
   rc = TEST_RESULT();

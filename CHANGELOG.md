@@ -607,6 +607,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A session saves even when a name has a line break in it**, instead of
+  writing a project file that will not open again.
+
+  A project is line-based text, and each value gets the rest of its line. Both a
+  track name and a source path were written straight into one, so either could
+  end the line early and have what followed read back as the next setting: a
+  take called `guitar\nchannels 7\ngain 0.01` saved as a project whose second
+  track was seven channels wide at a hundredth of its gain — or, more often,
+  simply refused to reopen at all. A filename may hold a newline, so this needed
+  no ill intent to reach, only an awkward file.
+
+  A name is a label, so it is trimmed to one line and the save goes ahead: the
+  lane comes back called `guitar channels 7 gain 0.01`, and the audio and every
+  edit on it come back exactly. A source path is not a label — a trimmed one
+  names a different file or none — so a take whose filename holds a line break
+  is named and the save refused, before anything is written, rather than the
+  project opening later having quietly lost it.
+
 - **`--bits` and `--stems` are refused wherever they do not apply**, rather than
   only for some of the commands they do not apply to.
 

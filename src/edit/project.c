@@ -112,6 +112,39 @@ static long source_index(source_table *st, const aud_samples *block)
   return (long)st->count++;
 }
 
+/*
+ * The format gives each value the rest of its line, so a value carrying a
+ * newline of its own would end that line early and the reader would take what
+ * followed for the next setting: a track called "take\nchannels 7" writes a
+ * channel count the reader believes. A filename may hold one - the filesystem
+ * allows it - and so may anything typed into a name field.
+ *
+ * Non-zero when `text` would stay on the line it was written to.
+ */
+static int one_line(const char *text)
+{
+  return strcspn(text, "\r\n") == strlen(text);
+}
+
+/*
+ * A name reduced to something that will. Cosmetic, which is why this trims
+ * rather than refusing: the label on a lane is not worth failing a save over,
+ * and the audio and its placement come back either way. A source path is not
+ * cosmetic and is refused instead - see collect_sources().
+ */
+static void tidy_name(char *dst, size_t size, const char *name)
+{
+  size_t n = 0;
+
+  for (const char *p = name; *p != '\0' && n + 1u < size; p++)
+  {
+    unsigned char c = (unsigned char)*p;
+
+    dst[n++] = (c == '\n' || c == '\r') ? ' ' : (char)c;
+  }
+  dst[n] = '\0';
+}
+
 /* Walk every clip and collect the blocks. Returns 0, or -1 with `*why` set. */
 static int collect_sources(const aud_doc *d, source_table *st, const char **why)
 {
@@ -132,6 +165,25 @@ static int collect_sources(const aud_doc *d, source_table *st, const char **why)
       if (aud_samples_source(block)[0] == '\0')
       {
         say_detail(why, "'%s' holds audio that is not saved anywhere yet", t->name);
+        return -1;
+      }
+      /*
+       * Refused rather than trimmed, because a trimmed path names a different
+       * file or none at all - and a project that opens pointing at nothing has
+       * lost the take as surely as deleting it would have. A name is only a
+       * label and is trimmed instead; see tidy_name().
+       */
+      if (!one_line(aud_samples_source(block)))
+      {
+        char shown[AUD_TRACK_NAME_MAX];
+
+        /* through the same trim, so the complaint about a line break is not
+         * itself spread over two lines of somebody's status bar */
+        tidy_name(shown, sizeof(shown), aud_path_basename(aud_samples_source(block)));
+        say_detail(why,
+                   "'%s' has a line break in its name, which a project file cannot "
+                   "refer to - rename it and save again",
+                   shown);
         return -1;
       }
       if (source_index(st, block) < 0)
@@ -166,7 +218,10 @@ static int write_sources(FILE *f, const source_table *st, const char *dir)
 
 static int write_track(FILE *f, const aud_track *t, const source_table *st)
 {
-  if (fprintf(f, "track\nname %s\nchannels %u\n", t->name, t->channels) < 0)
+  char name[AUD_TRACK_NAME_MAX];
+
+  tidy_name(name, sizeof(name), t->name);
+  if (fprintf(f, "track\nname %s\nchannels %u\n", name, t->channels) < 0)
   {
     return -1;
   }
