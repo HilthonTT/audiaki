@@ -631,8 +631,8 @@ TEST(a_project_that_will_not_open_leaves_the_one_that_is_open_alone)
       "audiaki-project 1\nrate 48000\ntrack\nclip 0 0 10 0 0 0\n",
       "audiaki-project 1\nrate 0\n",
       "not a project at all\n",
-      "audiaki-project 1\nrate 48000\nsource /nowhere/at/all.wav\ntrack\n"
-      "channels 1\nclip 0 0 10 0 0 0\n",
+      ("audiaki-project 1\nrate 48000\nsource /nowhere/at/all.wav\ntrack\n"
+       "channels 1\nclip 0 0 10 0 0 0\n"),
   };
   char path[256];
 
