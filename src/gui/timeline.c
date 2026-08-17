@@ -1071,6 +1071,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
     rows.height = 1.0f;
   }
   tl->rows_h = rows.height;
+  tl->wave_w = wave.width;
 
   for (size_t i = 0; i < d->count; i++)
   {

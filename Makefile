@@ -407,15 +407,26 @@ $(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
 #
 # Only what decides something is testable this way, and that is the point of it
 # being apart from what draws: confirm.c reads the document and writes a
-# question, and never touches a pixel. The sources go in whole rather than as
-# objects because the window's objects are built PIC or not depending on
-# HOTRELOAD, and a test should not have to care which.
+# question, keys.c reads the keyboard and writes a list of commands, and neither
+# touches a pixel. The sources go in whole rather than as objects because the
+# window's objects are built PIC or not depending on HOTRELOAD, and a test
+# should not have to care which.
 ifneq ($(HAVE_RAYLIB),)
 GUI_TEST_SRCS := $(sort $(wildcard tests/gui/test_*.c))
 GUI_TEST_BINS := $(GUI_TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
-GUI_TEST_DEPS := src/gui/confirm.c src/gui/ui.c
 
-$(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB)
+# What each test needs linked beside it, a test at a time rather than one list
+# for all of them. A shared list means every test has to stub out whatever the
+# others dragged in, which is how a suite stops being added to.
+$(TEST_DIR)/gui/test_confirm: GUI_TEST_DEPS := src/gui/confirm.c src/gui/ui.c
+$(TEST_DIR)/gui/test_keys: GUI_TEST_DEPS := src/gui/keys.c
+
+# The union of those, as prerequisites. Naming one too many here costs a rebuild
+# that was not needed; naming one too few costs a test that is not rebuilt when
+# the code under it changes.
+GUI_TEST_SRC_DEPS := src/gui/confirm.c src/gui/keys.c src/gui/ui.c
+
+$(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_SRC_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ \
 	  $< $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB) $(GUI_SYS_LIBS)

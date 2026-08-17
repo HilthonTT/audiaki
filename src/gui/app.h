@@ -1,6 +1,6 @@
 /* SPDX-License-Identifier: MIT */
 /*
- * app.h - the desktop app's own state, shared between its four halves.
+ * app.h - the desktop app's own state, shared between its parts.
  *
  * Internal to src/gui: nothing outside the window includes this. The window is
  * one program split by what the code is doing rather than by what it is doing
@@ -8,7 +8,10 @@
  * mean threading a dozen pointers through the drawing:
  *
  *   main.c     the shell: the window, the run loop, and the hot reload key
- *   plug.c     the app's lifecycle, the engine's, and the transport actions
+ *   plug.c     the app's own lifecycle - start, frame, and the way out
+ *   take.c     the capture device, and the take being written to it
+ *   actions.c  what the toolbar, the keys and the timeline all mean
+ *   keys.c     which of those a frame of the keyboard was asking for
  *   args.c     argv and the help text
  *   devices.c  the dropdown's list, and keeping it level with the hardware
  *   save.c     where a finished take goes, and the dialog that asks
@@ -17,10 +20,14 @@
  *   screen.c   every pixel of the chrome
  *   timeline.c every pixel of the tracks, and what a pointer does to them
  *
- * screen.c calls the transport actions and plug.c calls the drawing, which is
- * the one cycle here and the usual one for a window: what is on screen is a
- * function of the state, and clicking what is on screen changes it. save.c is
- * both at once for the one dialog it owns, which is why it is its own file.
+ * screen.c calls the actions and plug.c calls the drawing, which is the one
+ * cycle here and the usual one for a window: what is on screen is a function of
+ * the state, and clicking what is on screen changes it. save.c is both at once
+ * for the one dialog it owns, which is why it is its own file.
+ *
+ * The three in the middle are one story split where it can be tested. keys.c
+ * decides and actions.c does, so what a keystroke means can be checked without
+ * a window - see keys.h, which is the only header here that is not this one.
  *
  * main.c is apart from all of it: in a development build everything else here
  * is a library it loads, and can load again while the window is open. That is
@@ -588,14 +595,51 @@ void app_load_devices(app *a);
  */
 int app_refresh_devices(app *a);
 
-/* -- main.c ---------------------------------------------------------------- */
+/* -- plug.c ---------------------------------------------------------------- */
+
+/* Set the bottom line. Printf-style, because most callers have a value in it. */
+void app_set_status(app *a, const char *fmt, ...) AUD_PRINTF(2, 3);
+
+/* -- take.c ---------------------------------------------------------------- */
+
+/*
+ * Open the selected capture device and stand up the analyser behind it, or
+ * close both. Returns 0 with an engine, or -1 with the reason in a->fatal.
+ */
+int app_open_engine(app *a);
+void app_close_engine(app *a);
 
 /* Reopen on the row the dropdown now points at, falling back to `previous`. */
 void app_switch_device(app *a, int previous);
 
+/*
+ * Open the selected device again once it is back, after the window came up
+ * without it or its stream died with the cable, and carry on the take it died
+ * under if that is still what anybody wants. Only worth calling off the back of
+ * a device list that actually changed.
+ */
+void app_recover_engine(app *a);
+
+/*
+ * Notice that the capture stream died under a take, which has to happen before
+ * anything else in the frame looks at the timeline: the engine that was writing
+ * the take is the only thing that can still be asked what it wrote.
+ */
+void app_check_capture_loss(app *a);
+
 void app_begin_take(app *a);
 void app_stop_take(app *a, const aud_engine_status *st);
 void app_toggle_record(app *a, const aud_engine_status *st);
+
+/*
+ * Move whatever the engine has captured onto the track being recorded into.
+ * Called every drawn frame, which is what makes the waveform grow as it is
+ * played rather than appear when it stops.
+ */
+void app_pump_take(app *a);
+
+/* Give the video encoder its slice of the frame, if one is running. */
+void app_pump_render(app *a);
 void app_cancel_render(app *a);
 
 /*
@@ -605,6 +649,8 @@ void app_cancel_render(app *a);
  * where it ended up rather than where it happened to be written.
  */
 void app_finish_take(app *a, const char *path);
+
+/* -- actions.c ------------------------------------------------------------- */
 
 /* Read a WAV into the project as a new track. Says how it went on the status. */
 void app_load_track(app *a, const char *path);
@@ -646,9 +692,6 @@ void app_export(app *a, const char *path);
  * what app_export() would have written.
  */
 void app_export_stems(app *a, const char *path);
-
-/* Set the bottom line. Printf-style, because most callers have a value in it. */
-void app_set_status(app *a, const char *fmt, ...) AUD_PRINTF(2, 3);
 
 /* -- save.c ---------------------------------------------------------------- */
 

@@ -93,9 +93,12 @@ src/
     ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
     signals.c/.h  the shared Ctrl+C flag
   gui/          the desktop window; the only code that knows raylib exists
-    app.h         the state its halves share
+    app.h         the state its parts share
     main.c        the shell: the window, the run loop, the hot reload key
-    plug.c        the app's lifecycle, the engine's, the transport actions
+    plug.c        the app's own lifecycle: start, frame, and the way out
+    take.c        the capture device, and the take being written to it
+    actions.c     what the toolbar, the keys and the timeline all mean
+    keys.c/.h     which of those a frame of the keyboard was asking for
     args.c        argv and the help text
     devices.c     the dropdown's list, kept level with the hardware
     save.c        where a take goes, and the browser that asks - also import

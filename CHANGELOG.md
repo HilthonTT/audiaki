@@ -833,6 +833,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **The window's shortcuts have tests.** They previously could not: raylib was
+  read and acted on in the same breath, so `IsKeyPressed(KEY_SPACE)` and "start
+  a take" were one expression and there was no seam to put a test through. That
+  left the rules that decide what a key means — which dialog has the keyboard,
+  what a modifier turns a key into, whether `space` plays or stops a take —
+  checkable only by sitting in front of the window, and every one of them fails
+  silently when it is wrong.
+
+  Reading the keyboard is now separate from deciding what it asked for.
+  `app_input_read()` takes a copy of the frame's keys and is the only function
+  in `src/gui/keys.c` that knows raylib exists; `app_cmd_map()` turns that copy
+  plus the state of the app into the list of commands the frame should carry
+  out, and calls nothing, draws nothing and changes nothing. `actions.c` carries
+  them out. 20 new tests hand the mapping a keyboard and read back what the
+  window would have done.
+
+  No shortcut changed. The commands come out in the order the old if-chain ran
+  them in, which with two keys down in one frame is the behaviour.
+
+- **`src/gui/plug.c` split four ways**, from 2,404 lines holding the engine's
+  lifecycle, the take's, every edit action, the transport, the export, the whole
+  keyboard and the hot-reload ABI:
+
+  ```
+  plug.c     the app's own lifecycle: start, frame, and the way out
+  take.c     the capture device, and the take being written to it
+  actions.c  what the toolbar, the keys and the timeline all mean
+  keys.c     which of those a frame of the keyboard was asking for
+  ```
+
+  The hot-reload boundary is unchanged — the same four entry points, in the same
+  file — and so is everything the window does.
+
 - In the window, `space` now plays and `R` or `ctrl+space` records. Playing back
   is the commoner of the two once there is a timeline to play, so it gets the
   bare key; `F` fits the project to the window, the way it does in every editor

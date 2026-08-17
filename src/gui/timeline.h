@@ -78,11 +78,16 @@ typedef struct
   int scrubbing; /* the ruler is being dragged */
 
   /*
-   * Pixels of lane on screen, as of the last draw. Kept because the keyboard
-   * has to scroll a track into view and only the drawing knows how much room
-   * the lanes ended up with.
+   * Pixels of lane on screen, and pixels of waveform across, as of the last
+   * draw. Kept because the keyboard has to scroll a frame or a track into view
+   * and only the drawing knows how much room either ended up with - the window
+   * is resizable and the drawer above the tracks opens and shuts.
+   *
+   * Zero until the first frame has been drawn, which is why everything that
+   * reads them refuses a width of nothing rather than dividing by it.
    */
   float rows_h;
+  float wave_w;
 
   /* what the pointer is over, for the status line to explain */
   char hint[96];
