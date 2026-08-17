@@ -1,0 +1,9 @@
+audiaki-project 1
+rate 48000
+source take.wav
+track
+name t
+channels 1
+clip 99 0 100 0 0 0
+clip 0 4294967295 4294967295 0 0 0
+clip -1 -1 -1 -1 -1 -1

@@ -255,6 +255,18 @@ int cli_parse(int argc, char **argv, aud_options *opts)
 
   cli_defaults(opts);
 
+  /*
+   * Restart getopt's scan. It keeps where it got to in a global, and this is a
+   * function of the argv it is handed rather than of whatever was parsed before
+   * it - which is what lets the option handling be tested a case at a time.
+   *
+   * Zero rather than one: an invocation this rejects returns before the loop
+   * has run out, leaving getopt part way along an argument, and only zero puts
+   * that back. Both getopt implementations audiaki builds against understand it
+   * - glibc reinitialises, and the BSD one reads it as optind = optreset = 1.
+   */
+  optind = 0;
+
   /* leading ':' -> report a missing argument as ':' instead of '?' */
   while ((opt = getopt_long(argc, argv, ":D:r:c:f:t:p:n:o:MyqvlPhV", long_options,
                             NULL)) != -1)
@@ -765,10 +777,15 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     return CLI_EXIT_USAGE;
   }
 
+  /*
+   * --latency is in this set because the only thing it does on the command line
+   * is move the click off the beat, and it has to be named here or the message
+   * lists three options none of which is the one that was typed.
+   */
   if (click_shape && opts->click_bpm <= 0.0)
   {
-    aud_error("--click-beats, --click-subdiv and --click-gain shape a metronome; "
-              "--click sets its tempo and turns it on");
+    aud_error("--click-beats, --click-subdiv, --click-gain and --latency shape a "
+              "metronome; --click sets its tempo and turns it on");
     return CLI_EXIT_USAGE;
   }
 

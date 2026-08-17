@@ -665,6 +665,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   session reads a few thousand buckets rather than a hundred million samples,
   and one being recorded is indexed as it arrives.
 
+- **The three parsers that read files audiaki did not write are fuzzed.** A
+  project saved by an older version, somebody else's WAV, a take a crash left
+  half way through — all three are walked by reading a number out of the file
+  and reaching that far into it, which is the shape every buffer overrun is
+  written in.
+
+  ```sh
+  make fuzz-replay   # every corpus entry, sanitized, with any compiler
+  make fuzz-run      # go looking; needs clang for libFuzzer
+  ```
+
+  Each target builds twice, and that is the point. `fuzz-run` finds new inputs
+  and needs clang; `fuzz-replay` runs the ones already found and does not, so it
+  is part of `make check` and of CI on every change. An input that crashed once
+  and was fixed is a test from then on rather than something rediscovered by
+  luck. Seeds are committed for each parser: the shapes it must accept, and the
+  ones it must refuse without reading past the end of anything.
+
+  Nothing was found. 24,000 mutated inputs through the WAV reader, the metadata
+  chunk readers and the project loader under AddressSanitizer and UBSan produced
+  no crash, no overrun and no leak — which is a result worth recording, since it
+  is the answer the corpus now protects.
+
+- **A project has to save to what it was loaded from.** The property nothing was
+  checking, and the one the format actually needs: a session that opens is not
+  enough if it opens as something slightly different, because then every round
+  trip moves it further from what was recorded. Checked byte for byte, and over
+  four passes — a field comparison only covers the fields somebody thought to
+  list, and the ones nobody listed are where this goes wrong.
+
+- **The option parser has tests**, which found the misleading `--latency`
+  message below. `cli.c` is nine hundred lines of option table and
+  cross-command checks, and until now the only thing exercising any of it was
+  three smoke assertions in CI — while every rule in it exists because accepting
+  the invocation would have done something quietly other than what was asked.
+
+  28 tests over what is accepted, what is refused, and *why* it is refused: an
+  invocation rejected for the wrong reason sends somebody looking in the wrong
+  place. `cli.h` had always kept an audio system out of the option handling, so
+  the only thing needed to test it was the backend name table, which the test
+  links directly and supplies the ops for.
+
 ### Fixed
 
 - **A session saves even when a name has a line break in it**, instead of
@@ -830,6 +872,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hard-coded zero - so playback scrolled the view along with nothing on screen
   to say where it had got to. It is now told where playback or the take actually
   is, which is a different place from the cursor.
+
+- **A project file with a clip on no track opened as an empty session, and said
+  it had worked.** Every line describing a track was stepped over when there was
+  no track open — reasonable for a setting, wrong for a clip, which is audio.
+  A file whose `track` lines were damaged opened as a session quietly missing
+  takes; a file of nothing but clips opened as nothing at all, successfully, over
+  whatever was on the timeline. It is now refused, the way every other piece of
+  audio this loader cannot place already was.
+
+- **`--latency` was refused with a message naming three other options.** It
+  shapes the metronome — it is the round trip the click is struck ahead of the
+  beat by — so `--latency` without `--click` is correctly rejected, but the
+  message listed `--click-beats`, `--click-subdiv` and `--click-gain` and not
+  the option that had actually been typed.
 
 ### Changed
 

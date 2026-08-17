@@ -9,7 +9,7 @@ that part well.
 ```sh
 ./scripts/install-deps.sh   # or install the ALSA headers yourself
 make                        # -> build/audiaki
-make check                  # unit tests + clang-format check
+make check                  # unit tests, the fuzz corpus, clang-format
 ```
 
 To work on the desktop app as well, fetch its vendored raylib. The headers it
@@ -31,7 +31,9 @@ Useful targets:
 | `make gui` | Build only the desktop app, failing loudly if it cannot |
 | `make test` | Run the unit tests (needs no ALSA device, or even ALSA headers) |
 | `make debug` | Build with `-O0`, AddressSanitizer and UBSan |
-| `make check` | `test` plus a `clang-format` check |
+| `make fuzz-replay` | Every fuzz corpus entry through its parser, sanitized |
+| `make fuzz-run` | Go looking for new ones; needs clang. See `fuzz/README.md` |
+| `make check` | `test` and `fuzz-replay`, plus a `clang-format` check |
 | `make format` | Reformat the sources in place |
 | `make clean` | Remove `build/`, keeping the compiled raylib |
 | `make clean-raylib` | Rebuild raylib from scratch next time; takes about a minute |
@@ -83,6 +85,18 @@ make STRICT=1 check
 
 If your change touches capture, also run it against real hardware and say what
 you tested in the PR description — `make test` cannot cover the device path.
+
+If it touches a parser — `src/media/wav.c`, `src/edit/project.c`,
+`src/take/meta.c` — spend a few minutes fuzzing it as well:
+
+```sh
+make fuzz-run FUZZ_SECONDS=300
+```
+
+Those three read files audiaki did not write, and all three decide how far to
+reach into one by reading a number out of it. `fuzz/README.md` says what each
+target covers; anything the fuzzer finds belongs in `fuzz/corpus/` with the fix,
+so the input is replayed by every build afterwards.
 
 ## Code layout and conventions
 

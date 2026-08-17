@@ -117,6 +117,8 @@ src/
     hotreload.h   how it reaches them: directly, or through a library
     hotreload.c   loading that library, and loading it again
 tests/          mirrors src/, so an untested layer is visible from the tree
+fuzz/           the three parsers that read files audiaki did not write, and a
+                committed corpus of what they have to survive
 docs/           man page
 vendor/raylib/  submodule, only needed for the desktop app
 ```

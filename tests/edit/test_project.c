@@ -77,6 +77,38 @@ static float at(const aud_track *t, uint64_t frame)
   return one[0];
 }
 
+/* The whole of a file, for comparing one save against another. */
+static char *slurp(const char *path, size_t *size)
+{
+  FILE *f = fopen(path, "rb");
+  char *text;
+  long n;
+
+  *size = 0;
+  if (f == NULL)
+  {
+    return NULL;
+  }
+
+  if (fseek(f, 0, SEEK_END) != 0 || (n = ftell(f)) < 0 || fseek(f, 0, SEEK_SET) != 0)
+  {
+    fclose(f);
+    return NULL;
+  }
+
+  text = malloc((size_t)n + 1u);
+  if (text == NULL)
+  {
+    fclose(f);
+    return NULL;
+  }
+
+  *size = fread(text, 1, (size_t)n, f);
+  text[*size] = '\0';
+  fclose(f);
+  return text;
+}
+
 TEST(a_project_comes_back_as_it_went_in)
 {
   aud_doc saved;
@@ -425,6 +457,216 @@ TEST(the_extension_is_recognised_whatever_case_it_is_in)
   CHECK(!aud_project_is_project(NULL));
 }
 
+/*
+ * Saving is a fixed point.
+ *
+ * The property the format has to have and the one nothing was checking: what
+ * comes out of a load has to save to the same bytes it was loaded from. A
+ * session that opens is not enough - it has to open *as itself*, or every
+ * round trip moves it a little further from what was recorded, and a project
+ * that has been opened and saved a few times is quietly not the one that was
+ * made. The bug this is here for went the other way: a session could be saved
+ * into a file that would not reopen at all.
+ *
+ * Byte for byte rather than field by field, deliberately. A field comparison
+ * only checks the fields somebody thought to list, and the fields nobody
+ * thought to list are exactly where this goes wrong.
+ */
+TEST(saving_what_was_loaded_writes_the_same_file_again)
+{
+  char first[256];
+  char second[256];
+  char *a;
+  char *b;
+  size_t na = 0;
+  size_t nb = 0;
+  aud_doc d;
+  aud_doc back;
+
+  in_dir(first, sizeof(first), "trip1" AUD_PROJECT_EXT);
+  in_dir(second, sizeof(second), "trip2" AUD_PROJECT_EXT);
+
+  build(&d);
+  CHECK_EQ_INT(aud_project_save(&d, first, NULL), 0);
+
+  aud_doc_init(&back, 0);
+  CHECK_EQ_INT(aud_project_load(&back, first, NULL), 0);
+  CHECK_EQ_INT(aud_project_save(&back, second, NULL), 0);
+
+  a = slurp(first, &na);
+  b = slurp(second, &nb);
+  CHECK(a != NULL && b != NULL);
+  if (a != NULL && b != NULL)
+  {
+    CHECK_EQ_INT(na, nb);
+    CHECK_EQ_STR(a, b);
+  }
+
+  free(a);
+  free(b);
+  aud_doc_free(&d);
+  aud_doc_free(&back);
+}
+
+/*
+ * ...and it stays a fixed point however many times round it goes. Once is
+ * enough to catch a field that is dropped; going round again catches one that
+ * is dropped only after it has been read back rather than built.
+ */
+TEST(a_session_opened_and_saved_repeatedly_stops_moving)
+{
+  char path[256];
+  char *previous = NULL;
+  size_t n = 0;
+  aud_doc d;
+
+  in_dir(path, sizeof(path), "settle" AUD_PROJECT_EXT);
+
+  build(&d);
+  CHECK_EQ_INT(aud_project_save(&d, path, NULL), 0);
+  aud_doc_free(&d);
+
+  for (int pass = 0; pass < 4; pass++)
+  {
+    char *now;
+    aud_doc round;
+
+    aud_doc_init(&round, 0);
+    CHECK_EQ_INT(aud_project_load(&round, path, NULL), 0);
+    CHECK_EQ_INT(aud_project_save(&round, path, NULL), 0);
+    aud_doc_free(&round);
+
+    now = slurp(path, &n);
+    CHECK(now != NULL);
+    if (now != NULL && previous != NULL)
+    {
+      CHECK_EQ_STR(previous, now);
+    }
+    free(previous);
+    previous = now;
+  }
+  free(previous);
+}
+
+/*
+ * The same property for the things a session carries that are not tracks: the
+ * tempo, the grid it is divided into, the cursor and the selection. Each of
+ * these is one line of the file and one field of the document, and a line that
+ * is written but not read - or read but not written - survives exactly one
+ * round trip before it is gone.
+ */
+TEST(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone)
+{
+  char path[256];
+  aud_doc d;
+  aud_doc back;
+
+  in_dir(path, sizeof(path), "settings" AUD_PROJECT_EXT);
+
+  build(&d);
+  aud_doc_set_tempo(&d, 137.0, 7u);
+  aud_doc_set_grid(&d, 3u);
+  /* select, which puts the cursor on the anchor; setting it again would
+   * collapse the range back to a point and there would be nothing to check */
+  aud_doc_select(&d, 123u, 4567u);
+  CHECK_EQ_INT(aud_project_save(&d, path, NULL), 0);
+
+  aud_doc_init(&back, 0);
+  CHECK_EQ_INT(aud_project_load(&back, path, NULL), 0);
+
+  CHECK_EQ_DBL(back.tempo, 137.0, 1e-6);
+  CHECK_EQ_INT(back.beats_per_bar, 7);
+  CHECK_EQ_INT(back.grid_div, 3);
+  CHECK_EQ_INT(back.sel_start, 123);
+  CHECK_EQ_INT(back.sel_end, 4567);
+  CHECK_EQ_INT(back.rate, d.rate);
+  CHECK_EQ_INT(back.count, d.count);
+
+  /* and every track's own settings, which is the other half of the same claim */
+  for (size_t i = 0; i < back.count && i < d.count; i++)
+  {
+    CHECK_EQ_STR(back.tracks[i].name, d.tracks[i].name);
+    CHECK_EQ_INT(back.tracks[i].channels, d.tracks[i].channels);
+    CHECK_EQ_DBL(back.tracks[i].gain, d.tracks[i].gain, 1e-6);
+    CHECK_EQ_DBL(back.tracks[i].pan, d.tracks[i].pan, 1e-6);
+    CHECK_EQ_INT(back.tracks[i].muted, d.tracks[i].muted);
+    CHECK_EQ_INT(back.tracks[i].soloed, d.tracks[i].soloed);
+    CHECK_EQ_INT(back.tracks[i].collapsed, d.tracks[i].collapsed);
+    CHECK_EQ_INT(back.tracks[i].height, d.tracks[i].height);
+    CHECK_EQ_INT(back.tracks[i].count, d.tracks[i].count);
+
+    for (size_t c = 0; c < back.tracks[i].count && c < d.tracks[i].count; c++)
+    {
+      CHECK_EQ_INT(back.tracks[i].clips[c].start, d.tracks[i].clips[c].start);
+      CHECK_EQ_INT(back.tracks[i].clips[c].frames, d.tracks[i].clips[c].frames);
+      CHECK_EQ_INT(back.tracks[i].clips[c].offset, d.tracks[i].clips[c].offset);
+      CHECK_EQ_INT(back.tracks[i].clips[c].fade_in, d.tracks[i].clips[c].fade_in);
+      CHECK_EQ_INT(back.tracks[i].clips[c].fade_out, d.tracks[i].clips[c].fade_out);
+    }
+  }
+
+  aud_doc_free(&d);
+  aud_doc_free(&back);
+}
+
+/*
+ * A load that fails leaves the caller's session alone.
+ *
+ * The window opens a project into the document it is already showing, so a file
+ * that turns out to be rubbish half way through must not take the session with
+ * it - the alternative is that opening the wrong file by mistake is how you
+ * lose an afternoon's work. Checked here against every shape the fuzz corpus
+ * has a name for; see fuzz/fuzz_project.c, which asks the same question of
+ * inputs nobody thought of.
+ */
+TEST(a_project_that_will_not_open_leaves_the_one_that_is_open_alone)
+{
+  static const char *const rubbish[] = {
+      "",
+      "audiaki-project 99\nrate 48000\n",
+      /* a clip with no track to go on: audio the file describes and the loader
+       * cannot place, which used to open as an empty session, successfully */
+      "audiaki-project 1\nrate 48000\nclip 7 0 10 0 0 0\n",
+      "audiaki-project 1\nrate 48000\nsource take-001.wav\nclip 0 0 10 0 0 0\n",
+      "audiaki-project 1\nrate 48000\ntrack\nclip 0 0 10 0 0 0\n",
+      "audiaki-project 1\nrate 0\n",
+      "not a project at all\n",
+      "audiaki-project 1\nrate 48000\nsource /nowhere/at/all.wav\ntrack\n"
+      "channels 1\nclip 0 0 10 0 0 0\n",
+  };
+  char path[256];
+
+  in_dir(path, sizeof(path), "wreck" AUD_PROJECT_EXT);
+
+  for (size_t i = 0; i < sizeof(rubbish) / sizeof(rubbish[0]); i++)
+  {
+    aud_doc d;
+    FILE *f = fopen(path, "wb");
+    const char *why = NULL;
+    size_t before;
+
+    CHECK(f != NULL);
+    if (f == NULL)
+    {
+      continue;
+    }
+    fputs(rubbish[i], f);
+    fclose(f);
+
+    build(&d);
+    before = d.count;
+    CHECK(before > 0);
+
+    CHECK_EQ_INT(aud_project_load(&d, path, &why), -1);
+    CHECK(why != NULL); /* refused with a reason, not in silence */
+    CHECK_EQ_INT(d.count, before);
+    CHECK(aud_doc_end(&d) > 0); /* and the audio is still there */
+
+    aud_doc_free(&d);
+  }
+  remove(path);
+}
+
 int main(void)
 {
   char one[256];
@@ -449,6 +691,10 @@ int main(void)
   RUN(a_line_break_in_a_name_cannot_forge_a_setting);
   RUN(a_take_with_a_line_break_in_its_filename_is_named_rather_than_written);
   RUN(the_extension_is_recognised_whatever_case_it_is_in);
+  RUN(saving_what_was_loaded_writes_the_same_file_again);
+  RUN(a_session_opened_and_saved_repeatedly_stops_moving);
+  RUN(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone);
+  RUN(a_project_that_will_not_open_leaves_the_one_that_is_open_alone);
 
   rc = TEST_RESULT();
 
@@ -456,9 +702,9 @@ int main(void)
   remove(one);
   remove(two);
   {
-    static const char *const leftovers[] = {"session", "shared",  "relative",
-                                            "missing", "rubbish", "loose",
-                                            "tempo",   "untimed", "byhand"};
+    static const char *const leftovers[] = {
+        "session", "shared", "relative", "missing", "rubbish", "loose",    "tempo",
+        "untimed", "byhand", "trip1",    "trip2",   "settle",  "settings", "wreck"};
 
     for (size_t i = 0; i < sizeof(leftovers) / sizeof(leftovers[0]); i++)
     {

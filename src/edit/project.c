@@ -771,9 +771,24 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
       continue;
     }
 
-    /* everything below describes the track most recently opened */
+    /*
+     * Everything below describes the track most recently opened.
+     *
+     * A setting with no track to apply to is stepped over, the same way an
+     * unknown keyword is: it costs nothing, and a file written by a later
+     * version may well carry one. A clip is not a setting - it is audio, and
+     * audio this cannot place has to be refused rather than quietly left out,
+     * or a project whose track lines were damaged opens as a session missing
+     * takes and says nothing went wrong. A file of nothing but clips used to
+     * open as an empty session, successfully.
+     */
     if (track == NULL)
     {
+      if (strcmp(word, "clip") == 0)
+      {
+        say(why, "that project places audio before any track to put it on");
+        goto out;
+      }
       continue;
     }
 

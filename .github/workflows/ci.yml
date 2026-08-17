@@ -170,6 +170,37 @@ jobs:
             exit 1
           fi
 
+  fuzz:
+    name: fuzz the parsers
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install ALSA headers and clang
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev clang
+
+      # The corpus first, and with whatever compiler is default: an input that
+      # crashed once and was fixed is a test from then on, and one that needs a
+      # particular compiler to run is a test that stops being run. Seconds.
+      - name: Replay the corpus
+        run: make STRICT=1 fuzz-replay
+
+      # ...then go looking for new ones. libFuzzer is clang's, which is the only
+      # reason this job installs it. Anything found is written into the corpus
+      # directory and uploaded below, so it can be added and fixed.
+      - name: Fuzz
+        run: make fuzz-run FUZZ_CC=clang FUZZ_SECONDS=120
+
+      - name: Keep whatever it found
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-findings
+          path: fuzz/corpus/
+          if-no-files-found: ignore
+
   style:
     name: clang-format
     runs-on: ubuntu-latest
@@ -208,7 +239,7 @@ jobs:
                    --suppress=missingIncludeSystem \
                    --suppress=unmatchedSuppression \
                    -i src/gui \
-                   -I src src tests
+                   -I src -I fuzz src tests fuzz
 
       - name: shellcheck
         run: shellcheck scripts/*.sh

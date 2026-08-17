@@ -1,0 +1,29 @@
+audiaki-project 1
+rate 48000
+tempo 120.000000 4
+grid 1
+cursor 0
+selection 0 0
+source take-001.wav
+source take-002.wav
+track
+name Take 1
+channels 1
+gain 1.000000
+pan 0.000000
+muted 0
+soloed 0
+collapsed 0
+height 96
+clip 0 0 48000 0 0 0
+clip 0 24000 24000 96000 1024 1024
+track
+name Take 2
+channels 2
+gain 0.500000
+pan -0.250000
+muted 1
+soloed 0
+collapsed 1
+height 48
+clip 1 0 96000 48000 0 4800

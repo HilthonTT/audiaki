@@ -184,10 +184,11 @@ OBJS      := $(SRCS:src/%.c=$(OBJ_DIR)/%.o)
 PORTABLE_SRCS := $(filter-out src/backend/% src/cmd/% src/cli/% src/main.c,$(SRCS))
 PORTABLE_OBJS := $(PORTABLE_SRCS:src/%.c=$(OBJ_DIR)/%.o)
 
-# tests/gui is held back: it links against the window and so needs raylib, and
-# everything else here deliberately builds with the submodule absent. It is
-# added back below, only when there is a raylib to link against.
-TEST_SRCS := $(filter-out tests/gui/%,$(sort $(wildcard tests/*/test_*.c)))
+# tests/gui and tests/cli are held back: one links against the window and so
+# needs raylib, the other against the backend table and so needs a backend, and
+# everything else here deliberately builds with neither. Both are added back
+# below, each only where the thing it needs is there.
+TEST_SRCS := $(filter-out tests/gui/% tests/cli/%,$(sort $(wildcard tests/*/test_*.c)))
 TEST_BINS := $(TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
 
 # -- desktop app -------------------------------------------------------------
@@ -292,10 +293,12 @@ GUI_STATUS := run 'git submodule update --init --depth 1' to enable
 endif
 
 DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(GUI_SHELL_OBJS:.o=.d) \
-             $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d) $(GUI_TEST_BINS:=.d)
+             $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d) $(CLI_TEST_BINS:=.d) \
+             $(GUI_TEST_BINS:=.d)
 
 .PHONY: all gui gui-skipped release debug test check check-completions format \
-        format-check install uninstall clean clean-raylib help
+        format-check fuzz fuzz-replay fuzz-run install uninstall clean \
+        clean-raylib help
 
 all: $(BIN) $(if $(BUILD_GUI),$(GUI_BIN),gui-skipped)
 
@@ -403,6 +406,26 @@ $(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
 
+# The option parser's tests, which exist only where a backend was compiled in.
+#
+# cli.c reaches exactly one thing outside the portable layers: the table in
+# backend.c that names the backends, for --backend and for the help text. That
+# file cannot join PORTABLE_SRCS - it refuses to compile when no backend was
+# configured at all, which is the whole point of the job that builds this suite
+# without ALSA - so the test links it directly and supplies the ops it points
+# at. Naming a backend and binding one are different questions, and only the
+# first is asked here.
+ifneq ($(BACKENDS),)
+CLI_TEST_SRCS := $(sort $(wildcard tests/cli/test_*.c))
+CLI_TEST_BINS := $(CLI_TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
+CLI_TEST_DEPS := src/cli/cli.c src/cli/usage.c src/backend/backend.c
+
+$(TEST_DIR)/cli/%: tests/cli/%.c $(CLI_TEST_DEPS) $(PORTABLE_OBJS)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ \
+	  $< $(CLI_TEST_DEPS) $(PORTABLE_OBJS) -lm
+endif
+
 # The window's own tests, which exist only where there is a raylib to link.
 #
 # Only what decides something is testable this way, and that is the point of it
@@ -432,11 +455,81 @@ $(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_SRC_DEPS) $(PORTABLE_OBJS) $(RAYLIB_
 	  $< $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB) $(GUI_SYS_LIBS)
 endif
 
-test: $(TEST_BINS) $(GUI_TEST_BINS)
+test: $(TEST_BINS) $(CLI_TEST_BINS) $(GUI_TEST_BINS)
 	@status=0; \
-	for t in $(TEST_BINS) $(GUI_TEST_BINS); do \
+	for t in $(TEST_BINS) $(CLI_TEST_BINS) $(GUI_TEST_BINS); do \
 	  printf '\n== %s ==\n' "$$t"; \
 	  "$$t" || status=1; \
+	done; \
+	exit $$status
+
+# -- fuzzing -----------------------------------------------------------------
+
+# Three parsers read files audiaki did not write - a project saved by an older
+# version, somebody else's WAV, a take a crash left half way through - and all
+# three walk a length-prefixed or index-bearing format to do it. See fuzz/.
+#
+# Each target builds twice. `make fuzz` builds it against libFuzzer to go
+# looking for new inputs, which needs clang; `make fuzz-replay` builds it with a
+# main() of its own and runs it over the corpus, which does not, and is what
+# belongs in CI on every change - an input that crashed once and was fixed
+# should be a test from then on rather than something rediscovered by luck.
+FUZZ_TARGETS := $(sort $(wildcard fuzz/fuzz_*.c))
+FUZZ_TARGETS := $(filter-out fuzz/fuzz_file.c,$(FUZZ_TARGETS))
+FUZZ_NAMES   := $(FUZZ_TARGETS:fuzz/fuzz_%.c=%)
+FUZZ_DIR     := $(BUILD_DIR)/fuzz
+FUZZ_BINS    := $(FUZZ_NAMES:%=$(FUZZ_DIR)/fuzz_%)
+FUZZ_REPLAYS := $(FUZZ_NAMES:%=$(FUZZ_DIR)/replay_%)
+
+# Everything a parser sits on. The same list the unit tests link, for the same
+# reason: no sound server is reachable from any of it.
+FUZZ_SUPPORT := $(PORTABLE_SRCS) fuzz/fuzz_file.c
+
+# clang, because libFuzzer is its runtime. The replay build below is whatever
+# CC is, which is the point of having one.
+FUZZ_CC       ?= clang
+FUZZ_SANITIZE ?= -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=all
+# A fuzzer is measured in inputs a second, and -O1 with frame pointers is the
+# usual compromise between running fast and saying where it stopped.
+FUZZ_CFLAGS   ?= -O1 -g -fno-omit-frame-pointer
+
+# What the replay build uses instead: the same sanitizers without the fuzzer's
+# own runtime, so a corpus entry that overruns something still says so.
+REPLAY_SANITIZE ?= -fsanitize=address,undefined -fno-sanitize-recover=all
+
+fuzz: $(FUZZ_BINS)
+
+$(FUZZ_DIR)/fuzz_%: fuzz/fuzz_%.c $(FUZZ_SUPPORT)
+	@mkdir -p $(@D)
+	$(FUZZ_CC) $(CPPFLAGS) -Ifuzz -std=c11 $(WARNINGS) $(FUZZ_CFLAGS) \
+	  $(FUZZ_SANITIZE) -o $@ $< $(FUZZ_SUPPORT) -lm
+
+$(FUZZ_DIR)/replay_%: fuzz/fuzz_%.c fuzz/replay.c $(FUZZ_SUPPORT)
+	@mkdir -p $(@D)
+	$(CC) $(CPPFLAGS) -Ifuzz -std=c11 $(WARNINGS) $(FUZZ_CFLAGS) \
+	  $(REPLAY_SANITIZE) -o $@ $< fuzz/replay.c $(FUZZ_SUPPORT) -lm
+
+# Every corpus entry through its target, under the sanitizers. Seconds, and it
+# needs no clang - so it runs beside the unit tests rather than on a schedule.
+fuzz-replay: $(FUZZ_REPLAYS)
+	@status=0; \
+	for name in $(FUZZ_NAMES); do \
+	  printf '\n== %s ==\n' "$$name"; \
+	  $(FUZZ_DIR)/replay_$$name fuzz/corpus/$$name/* || status=1; \
+	done; \
+	exit $$status
+
+# Go looking. `make fuzz-run FUZZ_SECONDS=300` gives each target five minutes;
+# anything it finds lands in fuzz/corpus/ and is replayed by every build after.
+FUZZ_SECONDS ?= 60
+
+fuzz-run: $(FUZZ_BINS)
+	@status=0; \
+	for name in $(FUZZ_NAMES); do \
+	  printf '\n== %s ==\n' "$$name"; \
+	  $(FUZZ_DIR)/fuzz_$$name fuzz/corpus/$$name \
+	    -max_total_time=$(FUZZ_SECONDS) -print_final_stats=1 \
+	    -artifact_prefix=fuzz/corpus/$$name/ || status=1; \
 	done; \
 	exit $$status
 
@@ -446,7 +539,7 @@ check-completions:
 	@./scripts/check-completions.sh
 
 # Everything a contributor should run before opening a pull request.
-check: all test format-check check-completions
+check: all test fuzz-replay format-check check-completions
 
 # -- style -------------------------------------------------------------------
 

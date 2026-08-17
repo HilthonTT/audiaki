@@ -1,0 +1,8 @@
+# a session
+audiaki-project 1
+
+rate 44100
+# and a track
+track
+name hand written
+channels 1
