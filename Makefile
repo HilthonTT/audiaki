@@ -393,7 +393,15 @@ endif
 
 # raylib.h trips -Wpedantic in strict ISO mode, so the GUI objects are built
 # without it. Everything audiaki itself writes still gets the full set.
-$(OBJ_DIR)/gui/%.o: src/gui/%.c
+#
+# Named targets rather than a pattern, for the reason the test rules below are:
+# src/gui/viz.c matches the generic object rule above as well, and naming the
+# targets is the only way to be sure this is the rule that runs - whichever
+# make is reading it. Left to the tie-break, a macOS build of the window would
+# compile it without raylib's include path and with the -Wpedantic that
+# raylib.h trips - the same defect as below, not yet caught only because no job
+# builds the window there.
+$(GUI_OBJS): $(OBJ_DIR)/gui/%.o: src/gui/%.c
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) $(ALSA_CFLAGS) $(PIPEWIRE_CFLAGS) \
 	      $(filter-out -Wpedantic,$(CFLAGS)) -c -o $@ $<
@@ -402,6 +410,15 @@ $(OBJ_DIR)/gui/%.o: src/gui/%.c
 
 # tests/ mirrors src/, so which layers are covered - and which are not - is
 # visible from the tree rather than only from this list.
+#
+# This one is a pattern rule and the two below it name their targets, and the
+# difference is not stylistic. tests/cli/test_cli.c matches this pattern as
+# well, and which of two matching pattern rules a make picks is not something
+# every make agrees on: the 3.81 that ships with macOS takes the first one
+# written, and later ones take the one with the shortest stem. Naming the
+# targets makes those rules explicit, and an explicit rule beats a pattern in
+# every version there is. Left to the tie-break, macOS linked the CLI's tests
+# without the CLI in them and failed at the undefined symbol.
 $(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
@@ -420,7 +437,7 @@ CLI_TEST_SRCS := $(sort $(wildcard tests/cli/test_*.c))
 CLI_TEST_BINS := $(CLI_TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
 CLI_TEST_DEPS := src/cli/cli.c src/cli/usage.c src/backend/backend.c
 
-$(TEST_DIR)/cli/%: tests/cli/%.c $(CLI_TEST_DEPS) $(PORTABLE_OBJS)
+$(CLI_TEST_BINS): $(TEST_DIR)/cli/%: tests/cli/%.c $(CLI_TEST_DEPS) $(PORTABLE_OBJS)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ \
 	  $< $(CLI_TEST_DEPS) $(PORTABLE_OBJS) -lm
@@ -450,7 +467,8 @@ $(TEST_DIR)/gui/test_keys: GUI_TEST_DEPS := src/gui/keys.c
 # the code under it changes.
 GUI_TEST_SRC_DEPS := src/gui/autosave.c src/gui/confirm.c src/gui/keys.c src/gui/ui.c
 
-$(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_SRC_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB)
+$(GUI_TEST_BINS): $(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_SRC_DEPS) \
+    $(PORTABLE_OBJS) $(RAYLIB_LIB)
 	@mkdir -p $(@D)
 	$(CC) $(CPPFLAGS) $(GUI_CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ \
 	  $< $(GUI_TEST_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB) $(GUI_SYS_LIBS)

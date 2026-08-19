@@ -818,6 +818,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **The unit tests build on macOS again.** `make test` there linked the option
+  parser's own tests without the option parser in them and stopped at an
+  undefined `cli_parse`.
+
+  Two pattern rules matched `build/tests/cli/test_cli`: the general one that
+  builds every test against the portable layers, and the one that adds
+  `src/cli` and the backend name table for this suite alone. Which of two
+  matching pattern rules a make picks is not something every make agrees on.
+  The 3.81 that ships with macOS takes the first one written; every make since
+  3.82 takes the one with the shortest stem, which is why Linux and the
+  sanitizer jobs never saw it.
+
+  The rules that need to win now name their targets. A static pattern rule is
+  an explicit rule for the targets it lists, and an explicit rule beats a
+  pattern in every version of make there is - so which one runs is no longer a
+  tie-break at all. The window's objects had the same collision waiting, and
+  are named the same way: a macOS build of the desktop app would have compiled
+  them without raylib's include path.
+
 - **A session saves even when a name has a line break in it**, instead of
   writing a project file that will not open again.
 
