@@ -441,13 +441,14 @@ GUI_TEST_BINS := $(GUI_TEST_SRCS:tests/%.c=$(TEST_DIR)/%)
 # What each test needs linked beside it, a test at a time rather than one list
 # for all of them. A shared list means every test has to stub out whatever the
 # others dragged in, which is how a suite stops being added to.
+$(TEST_DIR)/gui/test_autosave: GUI_TEST_DEPS := src/gui/autosave.c
 $(TEST_DIR)/gui/test_confirm: GUI_TEST_DEPS := src/gui/confirm.c src/gui/ui.c
 $(TEST_DIR)/gui/test_keys: GUI_TEST_DEPS := src/gui/keys.c
 
 # The union of those, as prerequisites. Naming one too many here costs a rebuild
 # that was not needed; naming one too few costs a test that is not rebuilt when
 # the code under it changes.
-GUI_TEST_SRC_DEPS := src/gui/confirm.c src/gui/keys.c src/gui/ui.c
+GUI_TEST_SRC_DEPS := src/gui/autosave.c src/gui/confirm.c src/gui/keys.c src/gui/ui.c
 
 $(TEST_DIR)/gui/%: tests/gui/%.c $(GUI_TEST_SRC_DEPS) $(PORTABLE_OBJS) $(RAYLIB_LIB)
 	@mkdir -p $(@D)

@@ -1103,6 +1103,18 @@ so the folder can be moved as a unit.
 mixes one down with no window involved. Closing the window with unsaved edits
 writes them out rather than dropping them.
 .PP
+A window that is killed never gets to do that, so while there are unsaved edits
+it keeps a recovery file as well, rewritten every thirty seconds:
+.I song.aki.recover
+beside the session, or
+.I recovered.aki.recover
+beside the takes when the session has no name yet. It is never written over the
+session itself, it is removed as soon as the edits are saved or the window
+closes properly, and one found at startup is opened and said so. Writing it
+waits while a take is running, since a take still arriving has no file for a
+project to point at until it stops \(em which is also why a recovery file never
+refers to a take that did not finish.
+.PP
 Files named on the command line are opened as tracks, and a
 .B .aki
 file among them is opened as the session.

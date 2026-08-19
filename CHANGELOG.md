@@ -9,6 +9,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **A recovery file, so a window that is killed does not take the afternoon
+  with it.** While there are unsaved edits the desktop app keeps one, rewritten
+  every thirty seconds, and opens it again the next time it starts.
+
+  The takes were never what was at risk: each is a closed WAV the moment it
+  stopped. What only existed in memory was everything done to them since — the
+  cuts, the overdub placed against the click, which lane is which — and until
+  somebody pressed ctrl+S that was one segfault away from never having happened.
+  Closing the window properly already wrote the edits out; a window that is
+  killed, or that goes down with the machine, never reaches that.
+
+  A session file is a few kilobytes of text saying which parts of which files
+  sit where, which is what makes writing one every half minute cost nothing
+  worth measuring. It goes beside what it shadows:
+
+  ```
+  song.aki                 ->  song.aki.recover
+  a session never saved    ->  recovered.aki.recover, beside the takes
+  ```
+
+  **It never writes to a file you named.** Auto-saving over the session itself
+  would destroy the one thing saving gives you — a state to go back to — and it
+  would do it exactly when you had not saved because you were not sure yet. The
+  recovery file is a sidecar and the session is untouched until ctrl+S.
+
+  **It is removed the moment the work is safe** — a save, a save as, an undo
+  back to where the file already was, or the window closing properly. That is
+  what keeps finding one meaningful: a clean exit leaves none, so one at startup
+  means a window died and never anything else. It is driven by the state each
+  frame rather than hooked into each of those places, so a save as moves it
+  without anything having had to tell it that a save as happened.
+
+  **Starting up with one there opens it** and says so, rather than asking.
+  There is nothing to lose by opening it — what is on disk is still on disk, and
+  opening the file again is the way back — and the session is left marked
+  unsaved, so the difference between what is on screen and what is in the file
+  is not discovered at the next save. A recovery file older than the session it
+  shadows is thrown away instead: that state has already been superseded, and
+  offering it would be offering to undo a save.
+
+  **Writing it waits while a take is running.** Not for the cost, but because a
+  block still arriving has no file for a project to point at until the take
+  stops and the WAV is named to it. What falls out of that is worth having: a
+  recovery file can only ever refer to takes that finished, so it never points
+  at a WAV whose header a crash left unpatched. The write comes due the moment
+  the take stops.
+
+  It is an ordinary project file with a longer name, so `audiaki --render
+  song.aki.recover` reads it and renaming it to end in `.aki` makes it a session
+  like any other.
+
 - **Clip gain, and a Normalize that measures rather than guesses.** `ctrl+-` and
   `ctrl++` turn the selection down and up a decibel a press; `ctrl+N` measures
   it and puts it where you asked.

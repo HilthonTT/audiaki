@@ -558,6 +558,49 @@ is a finished WAV whichever answer you give.
 `audiaki --render session.aki -o mix.wav` mixes a session down without opening a
 window at all, which is what makes a session something a script can use.
 
+### If it never gets to close
+
+A window that is killed, or that goes down with the machine, never reaches that
+question. So it does not wait to be asked: while there are unsaved edits it
+keeps a **recovery file** — the same project format, rewritten every 30 seconds
+— and opens it again the next time it starts.
+
+| | |
+| --- | --- |
+| `song.aki` | its recovery is `song.aki.recover`, beside it |
+| a session never saved | `recovered.aki.recover`, beside the takes |
+
+**It never writes to the file you named.** Auto-saving over the session itself
+would destroy the one thing saving gives you — something to go back to — and it
+would do it exactly when you had not saved because you were not sure yet. The
+recovery file sits beside the session and the session is untouched until you
+press `ctrl+S`.
+
+**It is removed the moment the work is safe** — a save, a save-as, an undo back
+to where the file already was, or the window closing properly. That is what
+makes finding one mean something: a clean exit leaves none, so one at startup
+means a window died, and never anything else.
+
+Starting up with one there opens it, says so on the status line, and leaves the
+session marked unsaved. There is no dialog because there is nothing to lose:
+what is on disk is still on disk, and opening the file again is how you go back
+to it. What you must not do is assume it saved itself — the asterisk in the
+title bar is real, and `ctrl+S` is still what keeps it.
+
+**It holds off while a take is running.** Not for the cost, which is the same
+few kilobytes: a take still arriving has no file for a project to point at until
+it stops and the WAV is named to it. This is better than it sounds. It means a
+recovery file can only ever refer to takes that *finished*, so it never points
+at a WAV whose header a crash left unpatched — and the take running when the
+crash happened is on disk regardless, as much of it as reached the file, ready
+to be imported with `I`.
+
+A recovery file is an ordinary project file with a longer name. `audiaki
+--render song.aki.recover` reads it, and renaming it to something ending in
+`.aki` makes it a session like any other — worth knowing on the day the window
+will not start.
+
+
 ## Overdubbing
 
 Press **Record** with something already on the timeline and it plays while you

@@ -111,6 +111,7 @@ src/
     viz.c/.h      the glowing spectrum, drawn with raylib
     repair.c/.h   the spectrum of what was recorded, and drawing on it
     confirm.c     the question that stops an action until it is answered
+    autosave.c    the copy of the session that survives the window dying
     ui.c/.h       immediate-mode buttons, slider and meter
   hotreload/    only in a development build of the window
     plug.h        the five calls the shell reaches the app through
@@ -574,6 +575,50 @@ must not have.
 
 Because none of that needs a device, `audiaki --render` mixes a session down
 with no sound server involved at all.
+
+### Surviving the window dying
+
+Being cheap to write is what makes it affordable to write *often*, and that is
+the whole of `gui/autosave.c`. The takes were never at risk — each is a closed
+WAV the moment it stopped — but everything done to them since exists only in
+memory until somebody presses ctrl+S, and a segfault does not ask first. So the
+window keeps a recovery file: the same project format, written every
+`APP_AUTOSAVE_SECONDS`, describing what the session would be if it were saved
+now.
+
+Three rules make it something other than a hazard of its own.
+
+It never writes to a file you named. An automatic save over the session itself
+would destroy the one thing saving gives you — a state to go back to — and it
+would do it precisely when you had not saved because you were not sure yet. The
+recovery file is a sidecar, `song.aki.recover` beside `song.aki`, and a session
+that has never been named puts its beside the takes instead.
+
+It is removed the moment the work is safe. That is what keeps finding one
+meaningful: a clean exit leaves none, so one at startup means a window did not
+get to say goodbye and nothing else. Rather than hook the several places a
+session can become safe — a save, a save-as, an open, an undo back to where it
+was last written — `app_autosave_step()` is driven by the state each frame:
+where the recovery belongs is recomputed, and one at the wrong place or with
+nothing left to say is taken away. A save-as therefore moves it without anything
+having told it that a save-as happened.
+
+It holds off while a take is running, and not for the cost. A block still
+arriving has no file for a project to point at until the take stops and the WAV
+is named to it, so a project written then would be refused anyway. What falls
+out of that is worth more than what it costs: a recovery file can only ever
+refer to takes that finished, so it never points at a WAV whose header a crash
+left unpatched. The arrangement as it stood before the take started is already
+on disk, the take itself is a file from its first period, and the write that
+comes due the moment it stops picks up both.
+
+Recovery is not a question. `app_recover()` opens what it finds and says so,
+because there is nothing here to lose: what is on disk is still on disk, and
+opening it again is the way back. What it does do is leave the session dirty, so
+the title carries its asterisk and the difference between what is on screen and
+what is in the file is not discovered at the next save. A recovery file older
+than the session it shadows is thrown away rather than offered — that state has
+already been superseded, and offering it would be offering to undo a save.
 
 ### Overdubbing
 

@@ -434,6 +434,15 @@ int aud_plug_init(int argc, char **argv)
                       a->start_beats > 0u ? a->start_beats : a->doc.beats_per_bar);
   }
 
+  /*
+   * After the command line, because what this looks for depends on what was
+   * opened: a project named there has its own recovery file beside it, and
+   * only a window that came up with nothing goes looking for the unnamed one.
+   * Before the fit, so the view frames what was recovered rather than what was
+   * on screen before it arrived.
+   */
+  app_recover(a);
+
   if (a->doc.count > 0)
   {
     aud_timeline_fit(&a->timeline, &a->doc,
@@ -549,6 +558,7 @@ bool aud_plug_frame(bool close_requested)
    */
   app_pump_render(a);
   app_update_title(a, &st);
+  app_autosave_step(a, GetTime());
 
   if (closing_now(a, close_requested))
   {
@@ -580,6 +590,7 @@ void aud_plug_shutdown(void)
     char recovery[AUD_PATH_MAX];
     const char *where = a->project_path;
     const char *why = NULL;
+    int saved = 0;
 
     if (where[0] == '\0')
     {
@@ -593,11 +604,23 @@ void aud_plug_shutdown(void)
     if (where[0] != '\0' && aud_project_save(&a->doc, where, &why) == 0)
     {
       aud_info("unsaved edits written to %s", where);
+      saved = 1;
     }
     else if (why != NULL)
     {
       aud_warn("could not write the unsaved edits: %s", why);
     }
+
+    /*
+     * And with them written, the recovery file beside them has nothing left to
+     * say - unless that write is the one that failed, in which case it is now
+     * the only copy of the afternoon and stays exactly where it is.
+     */
+    app_autosave_done(a, saved);
+  }
+  else
+  {
+    app_autosave_done(a, 1);
   }
 
   /*

@@ -118,7 +118,10 @@ it out with a metronome and rules it into bars you can snap to, loops a passage
 while you learn it, cuts, copies, pastes, splits, trims, drags a take along its
 lane onto the beat, fades and normalizes with 64 steps of undo, meters the mix
 in LUFS as it plays, saves the session as a `.aki` file and exports a WAV, FLAC,
-Opus or MP3 — or one file a track, which add back up to that mix. A session
+Opus or MP3 — or one file a track, which add back up to that mix. While there
+are edits it has not been asked to save it keeps a recovery file beside the
+session and opens it again after a crash, so what a kill costs is a minute
+rather than an afternoon. A session
 refers to its takes rather than containing them, so it is a few kilobytes of
 readable text that `audiaki --render` can mix down without a window. The
 visualiser is a panel of it you can shut, and beside it is a spectrum of what

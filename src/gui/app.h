@@ -48,6 +48,7 @@
 #include "backend/backend.h"
 #include "backend/device.h"
 #include "edit/edit.h"
+#include "edit/project.h"
 #include "util/log.h"
 #include "util/path.h"
 
@@ -508,6 +509,20 @@ typedef struct
    */
   char project_path[AUD_PATH_MAX];
   int project_dirty;
+
+  /*
+   * The recovery file this window is keeping, or "" when there is none on
+   * disk. See autosave.c: it holds what the session would be if it were saved
+   * now, it is removed the moment the work is safe somewhere else, and finding
+   * one at startup means a window did not get to say goodbye.
+   *
+   * The path is kept rather than recomputed because the answer moves: a Save As
+   * changes where this session's recovery belongs, and the file left at the old
+   * place has to be taken away rather than abandoned.
+   */
+  char recovery_path[AUD_PATH_MAX];
+  double recovery_at;  /* when it was last written, on the window's clock */
+  int recovery_failed; /* whether the last attempt said so, so it says it once */
   /* whether stopping a take opens the dialog that asks where it should go */
   int want_dialog;
   app_save save;
@@ -742,6 +757,55 @@ void app_save_dismiss(app *a);
 
 /* Drop the dialog without answering it, for the way out of the program. */
 void app_save_shutdown(app *a);
+
+/* -- autosave.c ------------------------------------------------------------ */
+
+/*
+ * What a recovery file is called: the session's own name with this on the end,
+ * so it sits beside what it shadows and is obviously not a session itself.
+ */
+#define APP_RECOVER_EXT ".recover"
+
+/* A session with no name of its own still has somewhere its recovery can go. */
+#define APP_RECOVER_UNNAMED "recovered" AUD_PROJECT_EXT APP_RECOVER_EXT
+
+/*
+ * How long between writes of it. Long enough that a session of steady editing
+ * is not writing a file every few seconds, short enough that what a crash can
+ * take is a minute of work rather than an afternoon of it.
+ */
+#define APP_AUTOSAVE_SECONDS 30.0
+
+/*
+ * Where this session's recovery file belongs: beside the project when it has a
+ * name, and beside the takes when it does not. Returns 0, or -1 when the path
+ * would not fit - in which case there is nowhere to keep one.
+ */
+int app_recovery_path(const app *a, char *dst, size_t size);
+
+/*
+ * Keep the recovery file in step with the session, called once a frame with
+ * the time now. It writes one when there are unsaved edits and it is due, and
+ * takes it away again the moment the work is safe somewhere else.
+ *
+ * `now` is passed in rather than read here so that this file knows nothing
+ * about raylib and can be tested without a window - the same seam keys.c has.
+ */
+void app_autosave_step(app *a, double now);
+
+/*
+ * Look for a recovery file left behind by a window that did not get to say
+ * goodbye, and open it if there is one. Called once, at startup, after
+ * whatever was named on the command line has been opened.
+ */
+void app_recover(app *a);
+
+/*
+ * On the way out, once the edits have been written somewhere they will be
+ * found: the recovery file has done its job and is taken away. A `saved` of
+ * zero means they were not, and it is left exactly where it is.
+ */
+void app_autosave_done(app *a, int saved);
 
 /* -- confirm.c ------------------------------------------------------------- */
 

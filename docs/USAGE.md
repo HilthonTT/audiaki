@@ -1243,6 +1243,13 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   it, since clips do not overlap. A selection with audio hard against both of
   its edges — a bar taken out of the middle of a take — therefore has nowhere
   to go until the ground it needs is cleared.
+- The desktop app's recovery file is written while a take is *not* running, so
+  a crash during one loses whatever arrangement was done since the take started
+  — the take itself is on disk either way, as much of it as reached the file.
+  Two windows editing sessions that have never been named share one
+  `recovered.aki.recover` beside the takes and the second overwrites the first;
+  a session that has been saved once has a recovery file of its own and does
+  not.
 - The desktop app's clip gain stops at +24 dB, so a take recorded far too
   quietly is brought as far as that and no further rather than being refused.
   Normalizing to a loudness target may push peaks past full scale — the window
