@@ -1243,6 +1243,14 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   it, since clips do not overlap. A selection with audio hard against both of
   its edges — a bar taken out of the middle of a take — therefore has nowhere
   to go until the ground it needs is cleared.
+- The desktop app's clip gain stops at +24 dB, so a take recorded far too
+  quietly is brought as far as that and no further rather than being refused.
+  Normalizing to a loudness target may push peaks past full scale — the window
+  has no limiter behind it, and inventing one silently would be worse than the
+  overshoot — where normalizing to a peak cannot. A lane whose selection holds
+  nothing measurable is left alone: silence has no peak to raise, and a
+  selection under 400 ms has no loudness, which is BS.1770 rather than a
+  shortcut here.
 - The system file chooser is used when `zenity` or `kdialog` is installed, and
   the built-in folder browser when neither is. That browser has no bookmarks, no
   recent places and no search — it is the fallback rather than the intent, and

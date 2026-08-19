@@ -253,8 +253,9 @@ static int write_track(FILE *f, const aud_track *t, const source_table *st)
       return -1;
     }
 
-    if (fprintf(f, "clip %ld %zu %zu %llu %zu %zu\n", index, clip->offset, clip->frames,
-                (unsigned long long)clip->start, clip->fade_in, clip->fade_out) < 0)
+    if (fprintf(f, "clip %ld %zu %zu %llu %zu %zu %.6f\n", index, clip->offset,
+                clip->frames, (unsigned long long)clip->start, clip->fade_in,
+                clip->fade_out, (double)clip->gain) < 0)
     {
       return -1;
     }
@@ -517,12 +518,13 @@ static aud_samples *source_block(loaded_sources *ls, size_t index, const char *d
   return ls->block[index];
 }
 
-/* One `clip` line: SOURCE OFFSET FRAMES START FADE_IN FADE_OUT. */
+/* One `clip` line: SOURCE OFFSET FRAMES START FADE_IN FADE_OUT [GAIN]. */
 static int read_clip(aud_track *t, char *args, loaded_sources *ls, const char *dir,
                      unsigned rate, const char **why)
 {
   uint64_t field[6];
   aud_samples *block;
+  float gain;
 
   for (size_t i = 0; i < 6; i++)
   {
@@ -539,12 +541,25 @@ static int read_clip(aud_track *t, char *args, loaded_sources *ls, const char *d
     return -1;
   }
 
+  /*
+   * The gain is the one field on this line that may be missing: it was added
+   * after the format was, and every clip written before that is at unity. A
+   * session from a newer audiaki therefore opens in an older one without it -
+   * see the note on stepping over the unknown in project.h.
+   */
+  if (take_float(args, &gain) != 0)
+  {
+    gain = 1.0f;
+  }
+
   if (aud_track_place(t, block, (size_t)field[1], (size_t)field[2], field[3],
                       (size_t)field[4], (size_t)field[5]) != 0)
   {
     say(why, "a clip in that project does not fit the audio it names");
     return -1;
   }
+
+  aud_track_gain_at(t, field[3], clampf(gain, 0.0f, AUD_CLIP_GAIN_MAX));
   return 0;
 }
 

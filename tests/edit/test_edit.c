@@ -3,6 +3,9 @@
 
 #include "edit/edit.h"
 
+#include "audio/loudness.h"
+
+#include <math.h>
 #include <stdlib.h>
 
 /* Audio whose every sample says which frame it came from; see test_track.c. */
@@ -38,6 +41,63 @@ static void build(aud_doc *d, size_t tracks, size_t frames)
     aud_track_add(t, s, 0);
     aud_samples_release(s);
   }
+}
+
+/* A lane of a 1 kHz tone: something with a peak and a loudness, unlike a ramp. */
+static void build_tone(aud_doc *d, unsigned rate, size_t frames, float amp)
+{
+  aud_samples *s = aud_samples_create(1, frames);
+  aud_track *t;
+
+  for (size_t f = 0; f < frames; f++)
+  {
+    s->data[f] = amp * (float)sin(2.0 * 3.14159265358979 * 1000.0 * f / rate);
+  }
+  aud_samples_index(s);
+
+  t = aud_doc_add_track(d, "tone", 1);
+  aud_track_add(t, s, 0);
+  aud_samples_release(s);
+}
+
+/* The loudest sample of a lane, read the way the mix reads it. */
+static float peak_of(const aud_track *t, size_t frames)
+{
+  float *buf = calloc(frames, sizeof(*buf));
+  float peak = 0.0f;
+
+  aud_track_read(t, 0, buf, frames);
+  for (size_t f = 0; f < frames; f++)
+  {
+    float v = buf[f] < 0.0f ? -buf[f] : buf[f];
+
+    peak = v > peak ? v : peak;
+  }
+  free(buf);
+  return peak;
+}
+
+/* And its integrated loudness, by the same meter the edit used. */
+static double loudness_of(const aud_track *t, unsigned rate, size_t frames)
+{
+  aud_loudness *meter = aud_loudness_create(rate, t->channels);
+  float *buf = calloc(frames, sizeof(*buf));
+  aud_loudness_reading r;
+
+  aud_track_read(t, 0, buf, frames);
+  aud_loudness_feed(meter, buf, frames);
+  aud_loudness_read(meter, &r);
+
+  free(buf);
+  aud_loudness_destroy(meter);
+  return r.integrated;
+}
+
+/* Everything selected, which is what the gain edits work on. */
+static void select_everything(aud_doc *d, uint64_t frames)
+{
+  aud_doc_select(d, 0, frames);
+  aud_doc_select_tracks(d, 1);
 }
 
 TEST(an_empty_project_has_nothing_to_undo)
@@ -566,6 +626,147 @@ TEST(a_move_with_nowhere_to_go_changes_nothing)
   aud_doc_free(&d);
 }
 
+TEST(turning_the_selection_down_scales_what_it_reads_as)
+{
+  aud_doc d;
+
+  build(&d, 1, 100);
+  select_everything(&d, 100);
+
+  CHECK_EQ_INT(aud_edit_gain(&d, -6.0206), 0);
+  CHECK_EQ_DBL(at(&d.tracks[0], 10), 5.0, 0.01);
+
+  /* and it is relative, so the same key again is the same step again */
+  CHECK_EQ_INT(aud_edit_gain(&d, -6.0206), 0);
+  CHECK_EQ_DBL(at(&d.tracks[0], 10), 2.5, 0.01);
+
+  /* one undo step for each, and the audio itself never moved */
+  CHECK_EQ_INT(aud_doc_undo(&d), 0);
+  CHECK_EQ_DBL(at(&d.tracks[0], 10), 5.0, 0.01);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_gain_reaches_only_the_lanes_that_are_selected)
+{
+  aud_doc d;
+
+  build(&d, 2, 100);
+  aud_doc_select(&d, 0, 100);
+  d.tracks[0].selected = 1;
+
+  CHECK_EQ_INT(aud_edit_gain(&d, 6.0206), 0);
+  CHECK_EQ_DBL(at(&d.tracks[0], 10), 20.0, 0.05);
+  CHECK(at(&d.tracks[1], 10) == 10010.0f);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_gain_with_nothing_selected_is_refused)
+{
+  aud_doc d;
+
+  build(&d, 1, 100);
+  CHECK_EQ_INT(aud_edit_gain(&d, 1.0), -1);
+  CHECK_EQ_INT(d.undo_count, 0);
+
+  aud_doc_free(&d);
+}
+
+TEST(normalizing_puts_the_peak_of_each_lane_on_the_target)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, 44100);
+  build_tone(&d, 44100, 44100, 0.1f);
+  build_tone(&d, 44100, 44100, 0.4f);
+  select_everything(&d, 44100);
+
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_PEAK, -6.0), 0);
+
+  /* both land on it, which means the two of them got different factors */
+  CHECK_EQ_DBL(peak_of(&d.tracks[0], 44100), 0.5012, 0.01);
+  CHECK_EQ_DBL(peak_of(&d.tracks[1], 44100), 0.5012, 0.01);
+  CHECK(d.tracks[0].clips[0].gain > d.tracks[1].clips[0].gain);
+
+  aud_doc_free(&d);
+}
+
+TEST(normalizing_something_already_normalized_changes_nothing)
+{
+  aud_doc d;
+  float once;
+
+  aud_doc_init(&d, 44100);
+  build_tone(&d, 44100, 44100, 0.1f);
+  select_everything(&d, 44100);
+
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_PEAK, -6.0), 0);
+  once = d.tracks[0].clips[0].gain;
+
+  /* measured through the gain already there, so the second factor is one */
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_PEAK, -6.0), 0);
+  CHECK_EQ_DBL(d.tracks[0].clips[0].gain, once, once * 0.002);
+
+  aud_doc_free(&d);
+}
+
+TEST(normalizing_to_a_loudness_puts_it_on_the_target)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, 44100);
+  build_tone(&d, 44100, 44100, 0.05f);
+  select_everything(&d, 44100);
+
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_LOUDNESS, -18.0), 0);
+  CHECK_EQ_DBL(loudness_of(&d.tracks[0], 44100, 44100), -18.0, 0.2);
+
+  aud_doc_free(&d);
+}
+
+TEST(silence_has_nothing_to_normalize_and_costs_no_undo_step)
+{
+  aud_doc d;
+  aud_samples *s = aud_samples_create(1, 44100);
+  aud_track *t;
+
+  aud_doc_init(&d, 44100);
+  aud_samples_index(s);
+  t = aud_doc_add_track(&d, "quiet", 1);
+  aud_track_add(t, s, 0);
+  aud_samples_release(s);
+  select_everything(&d, 44100);
+
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_PEAK, -6.0), -1);
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_LOUDNESS, -18.0), -1);
+  CHECK_EQ_INT(d.undo_count, 0);
+  CHECK(d.tracks[0].clips[0].gain == 1.0f);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_selection_too_short_to_measure_a_loudness_is_left_alone)
+{
+  aud_doc d;
+
+  aud_doc_init(&d, 44100);
+  build_tone(&d, 44100, 44100, 0.1f);
+
+  /* 100 ms, where BS.1770 has no block to measure and so no answer */
+  aud_doc_select(&d, 0, 4410);
+  aud_doc_select_tracks(&d, 1);
+
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_LOUDNESS, -18.0), -1);
+  CHECK_EQ_INT(d.undo_count, 0);
+
+  /* the peak of those same 100 ms is a perfectly good question, though */
+  CHECK_EQ_INT(aud_edit_normalize(&d, AUD_NORMALIZE_PEAK, -6.0), 0);
+  CHECK_EQ_INT(d.tracks[0].count, 2);
+
+  aud_doc_free(&d);
+}
+
 int main(void)
 {
   RUN(an_empty_project_has_nothing_to_undo);
@@ -591,6 +792,14 @@ int main(void)
   RUN(moving_the_selection_takes_the_audio_and_the_selection_with_it);
   RUN(a_move_travels_the_same_distance_on_every_lane_it_covers);
   RUN(a_move_with_nowhere_to_go_changes_nothing);
+  RUN(turning_the_selection_down_scales_what_it_reads_as);
+  RUN(a_gain_reaches_only_the_lanes_that_are_selected);
+  RUN(a_gain_with_nothing_selected_is_refused);
+  RUN(normalizing_puts_the_peak_of_each_lane_on_the_target);
+  RUN(normalizing_something_already_normalized_changes_nothing);
+  RUN(normalizing_to_a_loudness_puts_it_on_the_target);
+  RUN(silence_has_nothing_to_normalize_and_costs_no_undo_step);
+  RUN(a_selection_too_short_to_measure_a_loudness_is_left_alone);
 
   return TEST_RESULT();
 }

@@ -369,6 +369,27 @@ static void map_ctrl(const app_input *in, cmd_list *l)
     emit_edit(l, APP_EDIT_SPLIT);
   }
 
+  /*
+   * How loud the selection is, on the two keys that already mean more and
+   * less. Plain they are the tempo, so the gain takes them with ctrl - and
+   * they repeat while held, because a decibel at a time is how a fader is
+   * found rather than how it is typed.
+   */
+  if (walk(in, APP_KEY_PLUS))
+  {
+    emit_edit(l, APP_EDIT_LOUDER);
+  }
+  if (walk(in, APP_KEY_MINUS))
+  {
+    emit_edit(l, APP_EDIT_QUIETER);
+  }
+
+  /* and the measured version of the same thing: to a ceiling, or to a loudness */
+  if (hit(in, APP_KEY_N))
+  {
+    emit_edit(l, shift ? APP_EDIT_NORMALIZE_LOUDNESS : APP_EDIT_NORMALIZE_PEAK);
+  }
+
   /* E mixes it down, shift+E writes one WAV a track instead */
   if (hit(in, APP_KEY_E))
   {

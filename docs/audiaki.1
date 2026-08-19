@@ -1045,8 +1045,8 @@ audio arrives rather than when the take stops. The take is a numbered WAV on
 disk throughout, so an interrupted session is not a lost one.
 .PP
 The selection is a time range across one or more tracks, made by dragging.
-.BR Cut ", " Copy ", " Paste ", " Delete ", " Silence ", " Trim ", " Split
-and the two fades work on it, with sixty\-four steps of undo. None of them copies audio: a clip is
+.BR Cut ", " Copy ", " Paste ", " Delete ", " Silence ", " Trim ", " Split ", "
+the two fades and the gain work on it, with sixty\-four steps of undo. None of them copies audio: a clip is
 a window onto a block of samples that is never written to, so an edit costs the
 same however long the take is.
 .PP
@@ -1075,6 +1075,22 @@ A fade is a length on a clip rather than something written into the audio, so it
 costs nothing and undoes like any other edit, and the waveform is drawn through
 it. There are no crossfades: clips on a lane do not overlap, and a crossfade
 needs two pieces of audio sounding at once.
+.PP
+A clip's gain is the same idea with a number instead of a length.
+.BR ctrl+\- " and " ctrl+\+
+turn the selection down and up a decibel a press, on the clips inside it rather
+than on the whole lane, and
+.B Normalize
+sets the same number from a measurement:
+.B ctrl+N
+puts the loudest point of the selection at \-1 dBTP, and
+.B ctrl+shift+N
+puts its loudness at \-18 LUFS by the same ITU\-R BS.1770 meter
+.B \-\-info
+reports. Each selected lane is measured on its own, so both of two takes reach
+the target rather than keeping the difference between them; a lane with nothing
+measurable in the selection is left alone. A loudness normalize may push peaks
+past full scale, and nothing here limits them.
 .PP
 What was done to a set of takes is a session, written to a
 .B .aki

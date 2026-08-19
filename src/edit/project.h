@@ -23,10 +23,11 @@
  *   name Take 1
  *   channels 2
  *   gain 1.000000
- *   clip 0 0 480000 0 0 2048
+ *   clip 0 0 480000 0 0 2048 1.000000
  *
  * `source` lines are numbered by the order they appear in, and a clip names one
- * by index: `clip SOURCE OFFSET FRAMES START FADE_IN FADE_OUT`, all in frames.
+ * by index: `clip SOURCE OFFSET FRAMES START FADE_IN FADE_OUT GAIN` - frames,
+ * except the gain, which is linear and may be left off a clip nobody has turned.
  * Sources under the project's own folder are written relative to it, so a
  * session folder can be copied to another disk and still open.
  *

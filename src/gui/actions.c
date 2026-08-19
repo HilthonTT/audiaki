@@ -189,6 +189,50 @@ void app_edit_now(app *a, app_edit_action action)
   case APP_EDIT_FADE_OUT:
     ok = aud_edit_fade_out(d);
     break;
+  case APP_EDIT_LOUDER:
+  case APP_EDIT_QUIETER:
+  {
+    double db = action == APP_EDIT_LOUDER ? APP_GAIN_STEP_DB : -APP_GAIN_STEP_DB;
+
+    ok = aud_edit_gain(d, db);
+    if (ok == 0)
+    {
+      /* the step, not the total: a clip's gain is per clip and a selection
+       * across several of them has no single number to report */
+      a->project_dirty = 1;
+      app_set_status(a, "%+.1f dB", db);
+      return;
+    }
+    break; /* and the shared "why it refused" below says why */
+  }
+  case APP_EDIT_NORMALIZE_PEAK:
+  case APP_EDIT_NORMALIZE_LOUDNESS:
+  {
+    int loudness = action == APP_EDIT_NORMALIZE_LOUDNESS;
+    double level = loudness ? AUD_NORMALIZE_LOUDNESS_DEFAULT : AUD_NORMALIZE_PEAK_DEFAULT;
+
+    ok = aud_edit_normalize(d, loudness ? AUD_NORMALIZE_LOUDNESS : AUD_NORMALIZE_PEAK,
+                            level);
+    if (ok == 0)
+    {
+      a->project_dirty = 1;
+      app_set_status(a, "normalized to %.1f %s", level, loudness ? "LUFS" : "dBTP");
+      return;
+    }
+
+    /*
+     * A normalize that refused with something selected refused for its own
+     * reason - silence has no peak to raise, and BS.1770 has no loudness for a
+     * selection under 400 ms - which the shared answer below would get wrong.
+     */
+    if (aud_doc_has_range(d) && aud_doc_any_track_selected(d))
+    {
+      app_set_status(a, loudness ? "too short or too quiet to measure a loudness"
+                                 : "nothing to measure in that selection");
+      return;
+    }
+    break;
+  }
   default:
     return;
   }

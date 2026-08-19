@@ -61,7 +61,7 @@ src/
     samples.c/.h  refcounted blocks of audio, shared and never changed
     track.c/.h    one lane: a sorted list of clips over those blocks
     doc.c/.h      the tracks, the selection, and the undo stack
-    edit.c/.h     cut, copy, paste, delete, silence, trim, split, fade
+    edit.c/.h     cut, copy, paste, delete, silence, trim, split, fade, gain
     mix.c/.h      what the project sounds like; playback and export share it
     project.c/.h  a session written down: which parts of which files sit where
     load.c/.h     a WAV becomes a track
@@ -434,6 +434,30 @@ crossfades: clips on a lane do not overlap, and a crossfade needs two pieces of
 audio sounding at once. A split inside a ramp truncates it, because a clip can
 say "ramp up from silence" and has no way to say "carry on from half way up one
 that started in the clip before".
+
+A clip's gain is the third of these and the plainest: one number the window is
+multiplied by, applied at the same point in `aud_track_read()` and for the same
+reason. Turning a bar of a take up is then a split at each edge and a float on
+the clip between them — no audio copied, an undo step that is a clip list like
+every other, and `aud_track_range()` scaling the waveform to match so the
+display is not the one thing in the editor that lies. It is deliberately not
+the track's own `gain` field: that one is a fader over a whole lane, applied by
+the mixer afterwards, and the two multiply because they answer different
+questions.
+
+Normalizing is that operation with the number measured rather than typed.
+`aud_edit_normalize()` reads the selection through the same `aud_track_read()`
+the mix uses, feeds it the BS.1770 meter from `audio/loudness.h`, and sets the
+gain that lands its true peak or its integrated loudness on a target. Measuring
+what the mix reads, rather than the blocks underneath, is what makes it
+idempotent — the gain already there is part of what is measured, so normalizing
+twice computes a factor of one — and it is why the same code serves both
+targets. Each selected lane is measured separately: what makes two takes
+comparable is each of them reaching the target, and one factor across all of
+them would be a master fader wearing this name. A lane with nothing to measure
+is left alone rather than multiplied by a guess, and every lane is measured
+before any is changed, so a normalize that finds nothing measurable costs no
+undo step.
 
 ### Moving a piece of it
 

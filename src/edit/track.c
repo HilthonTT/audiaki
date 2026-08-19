@@ -101,6 +101,16 @@ static float fade_mean(const aud_clip *c, size_t from, size_t to)
   return (float)(sum / (double)steps);
 }
 
+/* Hold a gain to what the model can say, whatever asked for it. */
+static float clamp_gain(float gain)
+{
+  if (!(gain > 0.0f))
+  {
+    return 0.0f; /* and a NaN lands here rather than propagating through a mix */
+  }
+  return gain > AUD_CLIP_GAIN_MAX ? AUD_CLIP_GAIN_MAX : gain;
+}
+
 /* Hold both fades inside the clip they belong to, after it has been resized. */
 static void clip_clamp_fades(aud_clip *c)
 {
@@ -376,14 +386,14 @@ void aud_track_range(const aud_track *t, unsigned ch, uint64_t from, uint64_t to
                       c->offset + (size_t)(overlap_to - c->start), &p);
 
     /*
-     * Scaled by the ramp over the same span, so the waveform shows the fade.
-     * A drawn fade that the ear could hear but the eye could not would make
-     * the display the one thing in the editor that was lying.
+     * Scaled by the ramp and the gain over the same span, so the waveform shows
+     * both. A fade or a gain the ear could hear but the eye could not would
+     * make the display the one thing in the editor that was lying.
      */
-    if (c->fade_in > 0 || c->fade_out > 0)
+    if (c->fade_in > 0 || c->fade_out > 0 || c->gain != 1.0f)
     {
-      float k = fade_mean(c, (size_t)(overlap_from - c->start),
-                          (size_t)(overlap_to - c->start));
+      float k = c->gain * fade_mean(c, (size_t)(overlap_from - c->start),
+                                    (size_t)(overlap_to - c->start));
 
       p.min *= k;
       p.max *= k;
@@ -474,7 +484,7 @@ void aud_track_read(const aud_track *t, uint64_t at, float *interleaved, size_t 
 
       for (size_t f = 0; f < span; f++)
       {
-        float k = fading ? aud_clip_fade_gain(c, head + f) : 1.0f;
+        float k = fading ? c->gain * aud_clip_fade_gain(c, head + f) : c->gain;
 
         for (unsigned ch = 0; ch < copy; ch++)
         {
@@ -530,6 +540,7 @@ int aud_track_place(aud_track *t, aud_samples *audio, size_t offset, size_t fram
   slot->start = start;
   slot->fade_in = fade_in;
   slot->fade_out = fade_out;
+  slot->gain = 1.0f;
   clip_clamp_fades(slot);
   return 0;
 }
@@ -594,6 +605,8 @@ int aud_track_split(aud_track *t, uint64_t frame)
    */
   right->fade_in = 0;
   right->fade_out = left->fade_out;
+  /* both halves are still the same piece, and turned the same way */
+  right->gain = left->gain;
   left->fade_out = 0;
   left->frames = before;
   clip_clamp_fades(left);
@@ -662,6 +675,66 @@ int aud_track_fade_out_at(aud_track *t, uint64_t frame, size_t frames)
 
   c->fade_out = frames;
   clip_clamp_fades(c);
+  return 0;
+}
+
+int aud_track_gain_scale(aud_track *t, uint64_t from, uint64_t to, float by)
+{
+  size_t first;
+  int any = 0;
+
+  if (t == NULL || from >= to)
+  {
+    return -1;
+  }
+
+  /*
+   * A range with no audio in it is not something to split for. Answering
+   * before touching anything is what lets a caller that got -1 say the track
+   * is exactly as it was, rather than as it was but cut in two places.
+   */
+  first = clip_at_or_after(t, from);
+  if (first >= t->count || t->clips[first].start >= to)
+  {
+    return -1;
+  }
+
+  /*
+   * Split at both edges and everything between them is a whole clip, the way
+   * a delete does it. Without the splits the change would spill over whatever
+   * clip happened to straddle the selection.
+   */
+  if (aud_track_split(t, from) != 0 || aud_track_split(t, to) != 0)
+  {
+    return -1;
+  }
+
+  for (size_t i = clip_at_or_after(t, from); i < t->count; i++)
+  {
+    aud_clip *c = &t->clips[i];
+
+    if (c->start >= to)
+    {
+      break;
+    }
+
+    c->gain = clamp_gain(c->gain * by);
+    any = 1;
+  }
+
+  return any ? 0 : -1;
+}
+
+int aud_track_gain_at(aud_track *t, uint64_t frame, float gain)
+{
+  aud_clip *c = clip_starting_at(t, frame);
+
+  if (c == NULL)
+  {
+    return -1;
+  }
+
+  c->gain = clamp_gain(gain);
   return 0;
 }
 
@@ -926,6 +999,7 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
     /* the fade at an end the extract kept, and nothing at an end it cut */
     slot->fade_in = overlap_from == c->start ? c->fade_in : 0;
     slot->fade_out = overlap_to == clip_end(c) ? c->fade_out : 0;
+    slot->gain = c->gain; /* how loud it is belongs to all of it, not to an end */
     clip_clamp_fades(slot);
   }
 
@@ -995,10 +1069,12 @@ void aud_track_tidy(aud_track *t)
      * Joinable only when the two are the same audio read straight through: the
      * end of a split put back together. Two clips that merely touch are left
      * alone, because the boundary between them is a real one - and so is a
-     * fade at the join, which merging would silently throw away.
+     * fade at the join or a gain that differs across it, either of which
+     * merging would silently throw away.
      */
     if (a->audio == b->audio && clip_end(a) == b->start &&
-        a->offset + a->frames == b->offset && a->fade_out == 0 && b->fade_in == 0)
+        a->offset + a->frames == b->offset && a->fade_out == 0 && b->fade_in == 0 &&
+        a->gain == b->gain)
     {
       a->frames += b->frames;
       a->fade_out = b->fade_out;
@@ -1056,6 +1132,7 @@ int aud_track_record_begin(aud_track *t, uint64_t start, size_t capacity_hint)
   slot->start = start;
   slot->fade_in = 0;
   slot->fade_out = 0;
+  slot->gain = 1.0f;
   t->recording = (long)index;
   return 0;
 }

@@ -805,6 +805,158 @@ TEST(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else)
 
 /* -- clip edges -------------------------------------------------------------- */
 
+TEST(a_gain_scales_what_the_clip_reads_as)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT(aud_track_gain_scale(&t, 0, 100, 2.0f), 0);
+  CHECK(at(&t, 10) == 20.0f);
+  CHECK(t.clips[0].gain == 2.0f);
+
+  /* multiplied rather than set, so leaning on the key compounds */
+  CHECK_EQ_INT(aud_track_gain_scale(&t, 0, 100, 0.25f), 0);
+  CHECK(at(&t, 10) == 5.0f);
+  CHECK(t.clips[0].gain == 0.5f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_gain_over_part_of_a_take_splits_it_at_both_edges)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  CHECK_EQ_INT(aud_track_gain_scale(&t, 30, 60, 2.0f), 0);
+  CHECK_EQ_INT(t.count, 3);
+  CHECK(well_formed(&t));
+
+  CHECK(at(&t, 29) == 29.0f); /* before it, as it was */
+  CHECK(at(&t, 30) == 60.0f); /* inside it, twice as loud */
+  CHECK(at(&t, 59) == 118.0f);
+  CHECK(at(&t, 60) == 60.0f); /* and after it, as it was again */
+
+  aud_track_free(&t);
+}
+
+TEST(a_gain_shows_in_the_waveform_as_well_as_the_audio)
+{
+  aud_track t;
+  aud_samples *s = aud_samples_create(1, 100);
+  aud_peak p;
+
+  for (size_t f = 0; f < 100; f++)
+  {
+    s->data[f] = 0.25f;
+  }
+  aud_samples_index(s);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  aud_track_gain_scale(&t, 0, 100, 2.0f);
+  aud_track_range(&t, 0, 0, 100, &p);
+  CHECK_EQ_DBL(p.max, 0.5, 1e-6);
+  CHECK_EQ_DBL(p.rms, 0.5, 1e-6);
+
+  aud_track_free(&t);
+}
+
+TEST(a_gain_is_held_to_what_the_model_can_say)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  aud_track_gain_scale(&t, 0, 100, 1000.0f);
+  CHECK(t.clips[0].gain == AUD_CLIP_GAIN_MAX);
+
+  /* and it cannot be asked below silence either */
+  aud_track_gain_scale(&t, 0, 100, -1.0f);
+  CHECK(t.clips[0].gain == 0.0f);
+  CHECK(at(&t, 10) == 0.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_gain_survives_a_split_and_an_extract)
+{
+  aud_track t;
+  aud_track piece;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  aud_track_gain_scale(&t, 0, 100, 2.0f);
+  aud_track_split(&t, 50);
+  CHECK_EQ_INT(t.count, 2);
+  CHECK(t.clips[0].gain == 2.0f);
+  CHECK(t.clips[1].gain == 2.0f); /* both halves are the same piece, turned the same */
+
+  CHECK_EQ_INT(aud_track_extract(&t, 20, 40, &piece), 0);
+  CHECK(piece.clips[0].gain == 2.0f);
+  CHECK(at(&piece, 5) == 50.0f);
+  aud_track_free(&piece);
+
+  aud_track_free(&t);
+}
+
+TEST(tidy_will_not_join_two_clips_turned_differently)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  aud_track_gain_scale(&t, 50, 100, 2.0f);
+  CHECK_EQ_INT(t.count, 2);
+
+  aud_track_tidy(&t);
+  CHECK_EQ_INT(t.count, 2); /* the boundary is a real one now */
+  CHECK(at(&t, 60) == 120.0f);
+
+  /* put it back and the two halves are one take again */
+  aud_track_gain_scale(&t, 50, 100, 0.5f);
+  aud_track_tidy(&t);
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(at(&t, 60) == 60.0f);
+
+  aud_track_free(&t);
+}
+
+TEST(a_gain_over_a_range_with_no_audio_leaves_the_clips_alone)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+
+  /* past the end: no clip to turn, and no split left behind for having tried */
+  CHECK_EQ_INT(aud_track_gain_scale(&t, 200, 300, 2.0f), -1);
+  CHECK_EQ_INT(t.count, 1);
+  CHECK(at(&t, 10) == 10.0f);
+
+  aud_track_free(&t);
+}
+
 TEST(the_edges_of_a_track_are_where_its_clips_begin_and_end)
 {
   aud_track t;
@@ -1070,6 +1222,13 @@ int main(void)
   RUN(tidy_will_not_join_two_clips_across_a_fade);
   RUN(a_fade_longer_than_its_clip_is_held_to_it);
   RUN(a_fade_is_asked_for_at_an_edge_and_refused_anywhere_else);
+  RUN(a_gain_scales_what_the_clip_reads_as);
+  RUN(a_gain_over_part_of_a_take_splits_it_at_both_edges);
+  RUN(a_gain_shows_in_the_waveform_as_well_as_the_audio);
+  RUN(a_gain_is_held_to_what_the_model_can_say);
+  RUN(a_gain_survives_a_split_and_an_extract);
+  RUN(tidy_will_not_join_two_clips_turned_differently);
+  RUN(a_gain_over_a_range_with_no_audio_leaves_the_clips_alone);
   RUN(the_edges_of_a_track_are_where_its_clips_begin_and_end);
   RUN(a_split_adds_an_edge_to_step_to);
   RUN(an_empty_track_has_nowhere_to_step_to);

@@ -112,6 +112,74 @@ int aud_edit_move(aud_doc *d, int64_t by);
 int aud_edit_fade_in(aud_doc *d);
 int aud_edit_fade_out(aud_doc *d);
 
+/*
+ * Turn the selection up or down by `db`, on every selected track.
+ *
+ * Relative, and it multiplies what the clips already say rather than replacing
+ * it, so the key that does this can be leant on: three presses of -1 dB is
+ * -3 dB. Like a fade, no sample is touched - it is a number on the clip,
+ * applied on the way out - and like a fade it is exactly the selection that
+ * gets it, the clips at the edges being split first.
+ *
+ * A lane that would go past AUD_CLIP_GAIN_MAX stops there. Returns 0 when
+ * anything was turned, -1 when there was nothing selected to turn.
+ */
+int aud_edit_gain(aud_doc *d, double db);
+
+/*
+ * What a normalize aims at, which are two different questions.
+ *
+ * PEAK is about headroom: the loudest point in the selection is put at `level`
+ * dBTP and everything else follows it up or down. It is the answer to "use the
+ * space that is there" and it says nothing about how loud the result sounds.
+ *
+ * LOUDNESS is about how loud it sounds: the selection's integrated loudness is
+ * put at `level` LUFS, by the BS.1770 measurement --info reports - see
+ * audio/loudness.h. It is the answer to "make these two takes sit together",
+ * which peak normalizing famously does not, and it is allowed to clip: a take
+ * brought up to a loudness target can exceed full scale, and nothing here
+ * limits it.
+ */
+typedef enum
+{
+  AUD_NORMALIZE_PEAK = 0,
+  AUD_NORMALIZE_LOUDNESS
+} aud_normalize_target;
+
+/*
+ * A dB below full scale to put a peak at, and a LUFS to put a loudness at,
+ * for a caller with no reason to choose either.
+ *
+ * -1 dBTP is the ceiling every delivery specification asks for, and the reason
+ * is between the samples: a lossy encoder reconstructs a waveform that goes
+ * higher than the samples it was given, so a file mastered to 0 clips on
+ * playback and one mastered here does not. -18 LUFS is where a track sits in a
+ * mix that has somewhere left to go - a mix of lanes each normalized to a
+ * streaming target would be far past full scale before it was mixed.
+ */
+#define AUD_NORMALIZE_PEAK_DEFAULT (-1.0)
+#define AUD_NORMALIZE_LOUDNESS_DEFAULT (-18.0)
+
+/*
+ * Measure the selection and set the clip gain that lands it on `level`.
+ *
+ * One measurement and one figure per lane, not one for all of them: what makes
+ * two takes comparable is each of them reaching the target, and a single factor
+ * across every selected lane would be a master fader wearing this name. Within
+ * a lane the relative levels are untouched, because it is one number over the
+ * whole selection rather than one per clip.
+ *
+ * Measured through the same read the mix uses, so the fades and any gain
+ * already there are part of what is measured - which is what makes this
+ * idempotent: normalizing something already normalized computes a factor of one.
+ *
+ * A lane with nothing to measure in the selection - silence, or a range under
+ * the 400 ms BS.1770 needs for a loudness - is left alone rather than being
+ * multiplied by a guess. Returns 0 when any lane was normalized, -1 when none
+ * was: nothing selected, or nothing measurable in what is.
+ */
+int aud_edit_normalize(aud_doc *d, aud_normalize_target to, double level);
+
 /* Remove track `index` outright. */
 int aud_edit_remove_track(aud_doc *d, size_t index);
 

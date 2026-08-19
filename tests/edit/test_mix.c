@@ -45,6 +45,29 @@ TEST(tracks_add_up)
   aud_doc_free(&d);
 }
 
+TEST(a_clip_gain_reaches_the_mix_the_way_a_fader_does)
+{
+  aud_doc d;
+  aud_mixer m;
+  float out[8];
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 100, 0.25f);
+  CHECK_EQ_INT(aud_track_gain_scale(&d.tracks[0], 0, 100, 2.0f), 0);
+
+  aud_mix_init(&m, 4);
+  CHECK_EQ_INT(aud_mix_read(&m, &d, 0, out, 4, 2), 0);
+  CHECK_EQ_DBL(out[0], 0.5, 1e-6);
+
+  /* and it multiplies with the track's own fader rather than replacing it */
+  d.tracks[0].gain = 0.5f;
+  CHECK_EQ_INT(aud_mix_read(&m, &d, 0, out, 4, 2), 0);
+  CHECK_EQ_DBL(out[0], 0.25, 1e-6);
+
+  aud_mix_free(&m);
+  aud_doc_free(&d);
+}
+
 TEST(a_mono_track_reaches_both_sides)
 {
   aud_doc d;
@@ -519,6 +542,7 @@ int main(void)
   RUN(solo_silences_everything_that_is_not);
   RUN(pan_moves_a_track_without_making_it_louder);
   RUN(a_gap_and_the_space_past_the_end_are_silent);
+  RUN(a_clip_gain_reaches_the_mix_the_way_a_fader_does);
   RUN(an_export_reads_back_as_what_was_mixed);
   RUN(an_export_of_the_selection_writes_only_that);
   RUN(an_export_that_refuses_leaves_no_file);

@@ -26,6 +26,17 @@
 
 #define AUD_TRACK_NAME_MAX 64
 
+/*
+ * How far a clip's gain may be turned, linear rather than in decibels.
+ *
+ * Zero is silence and 16 is +24 dB, which is enough to bring a take recorded
+ * far too quietly up to where the rest of the session sits and not enough for
+ * a hand-edited project to ask for a number that means nothing. A normalize
+ * that needs more than this lands short of its target rather than being
+ * refused - see aud_edit_normalize().
+ */
+#define AUD_CLIP_GAIN_MAX 16.0f
+
 /* Track heights, in pixels. The view reads them; the track owns them, because
  * how tall you have made one lane is a property of that lane. */
 #define AUD_TRACK_HEIGHT_MIN 48
@@ -50,6 +61,12 @@
  * ramps simply multiply. A split inside a fade truncates it rather than
  * carrying a half-finished ramp into the second half, which the model has no
  * way to say.
+ *
+ * `gain` is the third of these and the simplest: one number the whole window is
+ * multiplied by, applied at the same point and for the same reason. It is what
+ * makes an overdub that came in six decibels hot fixable without turning the
+ * whole lane down, and what a normalize sets - see aud_edit_normalize(). Held
+ * to [0, AUD_CLIP_GAIN_MAX], and 1.0 on every clip that nobody has touched.
  */
 typedef struct
 {
@@ -59,6 +76,7 @@ typedef struct
   uint64_t start;
   size_t fade_in;  /* frames of ramp up from silence at the clip's head */
   size_t fade_out; /* frames of ramp down to silence at its tail */
+  float gain;      /* linear, 1.0 for the audio as it was recorded */
 } aud_clip;
 
 typedef struct
@@ -135,7 +153,9 @@ void aud_track_range(const aud_track *t, unsigned ch, uint64_t from, uint64_t to
  * Render `frames` frames of the timeline from `at` into `interleaved`, which
  * must hold frames * t->channels floats. Gaps and the space past the last clip
  * come back as silence. The track's gain and pan are not applied: this is what
- * the track holds, not what the mix makes of it.
+ * the track holds, not what the mix makes of it. What each clip says about
+ * itself - its fades and its gain - is applied here, because that is part of
+ * what the track holds rather than something the mix decides.
  */
 void aud_track_read(const aud_track *t, uint64_t at, float *interleaved, size_t frames);
 
@@ -173,6 +193,27 @@ int aud_track_fade_out_at(aud_track *t, uint64_t frame, size_t frames);
 
 /* The gain a clip's fades put on one of its frames, counting from its head. */
 float aud_clip_fade_gain(const aud_clip *c, size_t frame);
+
+/*
+ * Multiply the gain of every clip inside timeline frames [from, to) by `by`,
+ * splitting at both edges first so what changes is exactly the range asked for.
+ *
+ * Multiplied rather than set, so that turning a piece down twice is twice as
+ * quiet and normalizing something already normalized changes nothing. Each
+ * clip's result is held to [0, AUD_CLIP_GAIN_MAX], so a range asked for more
+ * than the model can say lands at the ceiling rather than being refused.
+ *
+ * Returns 0 when any clip was touched, -1 when the range held no audio or the
+ * clip list could not grow for the splits.
+ */
+int aud_track_gain_scale(aud_track *t, uint64_t from, uint64_t to, float by);
+
+/*
+ * Set the gain of the clip that starts exactly at `frame`, the way
+ * aud_track_fade_in_at() sets a ramp there. What the project loader rebuilds a
+ * saved clip with. Returns 0, or -1 when no clip starts there.
+ */
+int aud_track_gain_at(aud_track *t, uint64_t frame, float gain);
 
 /*
  * Cut any clip that straddles `frame` into two adjoining clips over the same

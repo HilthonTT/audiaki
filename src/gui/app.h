@@ -295,7 +295,20 @@ typedef enum
   APP_EDIT_SELECT_ALL,
   /* the selection along the timeline, by app.move_by frames */
   APP_EDIT_MOVE,
+  /*
+   * How loud the selection is, rather than where it is or how much of it there
+   * is: a decibel at a time by hand, or measured and put on a target. After
+   * the rest deliberately - the reply the ones above share is a table indexed
+   * by this enum, and these two say what they did in decibels instead.
+   */
+  APP_EDIT_LOUDER,
+  APP_EDIT_QUIETER,
+  APP_EDIT_NORMALIZE_PEAK,
+  APP_EDIT_NORMALIZE_LOUDNESS,
 } app_edit_action;
+
+/* What one press of the gain keys, or one click of the bar, is worth. */
+#define APP_GAIN_STEP_DB 1.0
 
 /*
  * Audio an edit has to touch before it is worth stopping to ask about.

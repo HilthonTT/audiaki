@@ -879,6 +879,58 @@ static void draw_clip_edges(const aud_track *t, Rectangle lane, unsigned rate,
   }
 }
 
+/*
+ * The clips somebody has turned, and how far.
+ *
+ * The waveform already follows the gain - see aud_track_range() - but a take
+ * recorded four decibels louder and one turned up four look exactly alike, and
+ * only one of the two can be put back. Written only where the clip is wide
+ * enough to hold the label, because a number spilling over the clip next door
+ * would be worse than no number at all.
+ */
+static void draw_clip_gains(const aud_track *t, Rectangle lane, unsigned rate,
+                            const aud_timeline *tl)
+{
+  for (size_t i = 0; i < t->count; i++)
+  {
+    const aud_clip *c = &t->clips[i];
+    char label[16];
+    float x;
+    float e;
+
+    if (c->gain == 1.0f)
+    {
+      continue;
+    }
+
+    x = lane.x + aud_timeline_x_of(tl, (double)c->start / rate);
+    e = lane.x + aud_timeline_x_of(tl, (double)(c->start + c->frames) / rate);
+    if (x < lane.x)
+    {
+      x = lane.x; /* a clip running off the left still says so, at the edge */
+    }
+    if (e > lane.x + lane.width)
+    {
+      e = lane.x + lane.width;
+    }
+    if (e - x < 60.0f)
+    {
+      continue;
+    }
+
+    if (c->gain > 0.0f)
+    {
+      snprintf(label, sizeof(label), "%+.1f dB", 20.0 * log10((double)c->gain));
+    }
+    else
+    {
+      snprintf(label, sizeof(label), "silent");
+    }
+
+    aud_ui_text(x + 5.0f, lane.y + 3.0f, TL_SMALL_FONT, AUD_UI_WARN, label);
+  }
+}
+
 /* Selected lanes are tinted, so which tracks an edit would reach is visible. */
 static Color mix_panel_selected(void)
 {
@@ -1186,6 +1238,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       }
       draw_fades(t, lane, d->rate, tl);
       draw_clip_edges(t, lane, d->rate, tl);
+      draw_clip_gains(t, lane, d->rate, tl);
     }
 
     if (tl->moving && t->selected)

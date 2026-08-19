@@ -153,7 +153,10 @@ static double edit_seconds(const app *a, app_edit_action action)
       total += hi - lo;
       break;
     default:
-      /* paste, split, duplicate and the fades move edges about; none discards */
+      /*
+       * Paste, split, duplicate, the fades and the gain move edges about or
+       * change a number on a clip; none of them discards audio.
+       */
       break;
     }
   }
@@ -245,6 +248,13 @@ static const char *edit_name(app_edit_action action)
     return "Fade out";
   case APP_EDIT_MOVE:
     return "Move";
+  case APP_EDIT_LOUDER:
+    return "Turn up";
+  case APP_EDIT_QUIETER:
+    return "Turn down";
+  case APP_EDIT_NORMALIZE_PEAK:
+  case APP_EDIT_NORMALIZE_LOUDNESS:
+    return "Normalize";
   default:
     return "That";
   }

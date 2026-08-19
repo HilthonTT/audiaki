@@ -9,6 +9,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Clip gain, and a Normalize that measures rather than guesses.** `ctrl+-` and
+  `ctrl++` turn the selection down and up a decibel a press; `ctrl+N` measures
+  it and puts it where you asked.
+
+  It is a number on the clip, exactly as a fade is a length on one: applied on
+  the way out by `aud_track_read()`, no sample touched, no audio copied, and an
+  undo step that is a clip list like every other. The selection is what gets it
+  rather than the lane — the clips at its edges are split first — so one bar out
+  of the middle of a take can be brought up on its own, which the **gain**
+  slider in the track's control column cannot do and was never meant to. The two
+  multiply, because "this bar came in quiet" and "this guitar is too loud
+  against the vocal" are different questions.
+
+  The waveform follows it, the way it already follows a fade. A clip somebody
+  has turned also says so in the corner, `+4.2 dB`, because a take recorded four
+  decibels louder and one turned up four otherwise look exactly alike and only
+  one of the two can be put back.
+
+  **Normalize** is the same operation with the number measured. Two targets, and
+  they answer different questions:
+
+  ```
+  ctrl+N          the loudest point to -1 dBTP, by the true peak
+  ctrl+shift+N    the loudness to -18 LUFS, by ITU-R BS.1770
+  ```
+
+  Peak is about headroom and says nothing about how loud something sounds — a
+  bass note and a cymbal normalized to the same peak are nowhere near equally
+  loud. Loudness is the one that makes two takes sit together, and it is the
+  measurement `--info` has reported all along, now pointed at a selection
+  instead of a finished file. The peak target is the true peak rather than the
+  sample peak for the reason it always was: the waveform between two samples
+  goes higher than either, and an encoder reconstructing it clips where a sample
+  peak reported headroom to spare.
+
+  It measures through the same `aud_track_read()` the mix and the export use, so
+  what is measured is what an export of that range would hold — fades, any gain
+  already there, and the silence in the gaps included. Two things follow. It is
+  idempotent: normalizing something already normalized computes a factor of one,
+  because the gain already there was part of what it measured. And every
+  selected lane is measured on its own and gets its own figure, since what makes
+  two takes comparable is each of them reaching the target; one factor across
+  all of them would be a master fader wearing this name.
+
+  A lane with nothing to measure is left alone rather than multiplied by a
+  guess. Silence has no peak to raise and a selection under 400 ms has no
+  loudness — that is what BS.1770 says, not a shortcut here — and every lane is
+  measured before any is changed, so a normalize that finds nothing measurable
+  costs no undo step and says so on the status line rather than appearing to
+  work. A loudness normalize is allowed to clip: bringing a quiet take up to a
+  target can push its peaks past full scale, and this window has no limiter to
+  hide that behind.
+
+  Sessions carry it. The `clip` line gained a seventh field, and it is the one
+  field on that line a project may leave off: every `.aki` written before this
+  opens at unity, and one written after it opens in an older audiaki minus the
+  gain rather than not at all.
+
 - **Export to FLAC, Opus and MP3**, so a mix can leave audiaki as something
   other than a quarter-gigabyte WAV.
 

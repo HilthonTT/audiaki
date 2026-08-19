@@ -106,6 +106,10 @@ static const struct
     {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
     {"Fade in", APP_EDIT_FADE_IN, "ramp the selection up out of silence   ["},
     {"Fade out", APP_EDIT_FADE_OUT, "ramp the selection down into silence   ]"},
+    {"-1 dB", APP_EDIT_QUIETER, "turn the selection down a decibel   ctrl+-"},
+    {"+1 dB", APP_EDIT_LOUDER, "turn the selection up a decibel   ctrl++"},
+    {"Normalize", APP_EDIT_NORMALIZE_PEAK,
+     "measure the selection and put its peak at -1 dBTP   ctrl+N, shift for -18 LUFS"},
 };
 
 #define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
@@ -1158,6 +1162,8 @@ static const char *const help_keys[][2] = {
     {"ctrl+A", "select everything"},
     {"ctrl+X / C / V", "cut, copy, paste"},
     {"[ / ]", "fade the selection in, or out"},
+    {"ctrl+- / +", "turn the selection down or up a decibel"},
+    {"ctrl+N", "normalize the selection to -1 dBTP; shift for -18 LUFS"},
     {", / .", "move the selection earlier or later"},
     {"del", "delete the selection and close the gap"},
     {"ctrl+Z", "undo; ctrl+shift+Z redoes"},

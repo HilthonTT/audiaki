@@ -65,6 +65,7 @@ static void build(aud_doc *d)
   snprintf(d->tracks[0].name, sizeof(d->tracks[0].name), "Guitar DI");
 
   CHECK_EQ_INT(aud_track_fade_in_at(&d->tracks[1], 400, 64), 0);
+  CHECK_EQ_INT(aud_track_gain_at(&d->tracks[1], 400, 0.5f), 0);
   aud_doc_select(d, 100, 300);
 }
 
@@ -602,11 +603,55 @@ TEST(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone
       CHECK_EQ_INT(back.tracks[i].clips[c].offset, d.tracks[i].clips[c].offset);
       CHECK_EQ_INT(back.tracks[i].clips[c].fade_in, d.tracks[i].clips[c].fade_in);
       CHECK_EQ_INT(back.tracks[i].clips[c].fade_out, d.tracks[i].clips[c].fade_out);
+      CHECK_EQ_DBL(back.tracks[i].clips[c].gain, d.tracks[i].clips[c].gain, 1e-6);
     }
   }
 
   aud_doc_free(&d);
   aud_doc_free(&back);
+}
+
+/*
+ * A clip line from before the gain field existed, which is every project any
+ * released audiaki has written. It opens at unity rather than at silence, and
+ * a gain out of range is held to what the model can say rather than refusing
+ * a session whose audio is perfectly good.
+ */
+TEST(a_clip_line_with_no_gain_on_it_opens_at_unity)
+{
+  aud_doc d;
+  char path[256];
+  char take[256];
+  const char *why = NULL;
+  FILE *f;
+
+  in_dir(path, sizeof(path), "nogain" AUD_PROJECT_EXT);
+  /* beside the project, which is how a saved one names a take of its own */
+  snprintf(take, sizeof(take), "take-001.wav");
+
+  f = fopen(path, "wb");
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  fprintf(f,
+          "%s %d\nrate %u\nsource %s\ntrack\nchannels 1\n"
+          "clip 0 0 200 0 0 0\nclip 0 200 300 200 0 0 900\n",
+          AUD_PROJECT_MAGIC, AUD_PROJECT_VERSION, TEST_RATE, take);
+  fclose(f);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), 0);
+  CHECK_EQ_INT(d.count, 1);
+  if (d.count == 1)
+  {
+    CHECK_EQ_INT(d.tracks[0].count, 2);
+    CHECK(d.tracks[0].clips[0].gain == 1.0f);
+    CHECK(d.tracks[0].clips[1].gain == AUD_CLIP_GAIN_MAX);
+  }
+
+  aud_doc_free(&d);
 }
 
 /*
@@ -694,6 +739,7 @@ int main(void)
   RUN(saving_what_was_loaded_writes_the_same_file_again);
   RUN(a_session_opened_and_saved_repeatedly_stops_moving);
   RUN(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone);
+  RUN(a_clip_line_with_no_gain_on_it_opens_at_unity);
   RUN(a_project_that_will_not_open_leaves_the_one_that_is_open_alone);
 
   rc = TEST_RESULT();
@@ -702,9 +748,10 @@ int main(void)
   remove(one);
   remove(two);
   {
-    static const char *const leftovers[] = {
-        "session", "shared", "relative", "missing", "rubbish", "loose",    "tempo",
-        "untimed", "byhand", "trip1",    "trip2",   "settle",  "settings", "wreck"};
+    static const char *const leftovers[] = {"session",  "shared", "relative", "missing",
+                                            "rubbish",  "loose",  "tempo",    "untimed",
+                                            "byhand",   "trip1",  "trip2",    "settle",
+                                            "settings", "wreck",  "nogain"};
 
     for (size_t i = 0; i < sizeof(leftovers) / sizeof(leftovers[0]); i++)
     {

@@ -1,9 +1,15 @@
 /* SPDX-License-Identifier: MIT */
 #include "edit/edit.h"
 
+#include "audio/loudness.h"
+
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* Frames measured at a time, which is a buffer of a few hundred kilobytes. */
+#define EDIT_MEASURE_CHUNK 8192u
 
 void aud_clipboard_init(aud_clipboard *c)
 {
@@ -460,6 +466,179 @@ int aud_edit_fade_in(aud_doc *d)
 int aud_edit_fade_out(aud_doc *d)
 {
   return fade(d, 1);
+}
+
+int aud_edit_gain(aud_doc *d, double db)
+{
+  float by;
+  int any = 0;
+
+  if (!have_work(d))
+  {
+    return -1;
+  }
+
+  /*
+   * Held to what the model can hold anyway, so a caller cannot ask for an
+   * exponent that overflows on the way to being clamped.
+   */
+  if (!(db > -200.0 && db < 200.0))
+  {
+    return -1;
+  }
+
+  by = (float)pow(10.0, db / 20.0);
+  aud_doc_checkpoint(d, db < 0.0 ? "quieter" : "louder");
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (d->tracks[i].selected)
+    {
+      any = aud_track_gain_scale(&d->tracks[i], d->sel_start, d->sel_end, by) == 0 || any;
+    }
+  }
+
+  /* the selection stays: turning something down and then wanting a little more
+   * of it back is the ordinary way this key gets used */
+  d->dirty = 1;
+  return any ? 0 : -1;
+}
+
+/*
+ * How loud [from, to) of one lane is, through the same read the mix does - so
+ * what is measured is what an export of that range would hold, fades, gain and
+ * the silence in the gaps included.
+ *
+ * Returns 0 with `out` filled in, or -1 when this lane cannot be measured at
+ * all: a rate BS.1770 is not defined at, or no memory.
+ */
+static int measure_range(const aud_track *t, uint64_t from, uint64_t to, unsigned rate,
+                         aud_loudness_reading *out)
+{
+  aud_loudness *meter = aud_loudness_create(rate, t->channels);
+  float *buf;
+  int ok = 0;
+
+  if (meter == NULL)
+  {
+    return -1;
+  }
+
+  buf = calloc((size_t)EDIT_MEASURE_CHUNK * t->channels, sizeof(*buf));
+  if (buf == NULL)
+  {
+    aud_loudness_destroy(meter);
+    return -1;
+  }
+
+  for (uint64_t at = from; at < to; at += EDIT_MEASURE_CHUNK)
+  {
+    size_t take = to - at < (uint64_t)EDIT_MEASURE_CHUNK ? (size_t)(to - at)
+                                                         : (size_t)EDIT_MEASURE_CHUNK;
+
+    aud_track_read(t, at, buf, take);
+    if (aud_loudness_feed(meter, buf, take) != 0)
+    {
+      ok = -1;
+      break;
+    }
+  }
+
+  if (ok == 0)
+  {
+    aud_loudness_read(meter, out);
+  }
+
+  free(buf);
+  aud_loudness_destroy(meter);
+  return ok;
+}
+
+/*
+ * What to multiply a lane by to land it on `level`, or 0 when the measurement
+ * gives nothing to work from - silence has no peak to raise and a range under
+ * 400 ms has no loudness, and multiplying either by a guess would be inventing
+ * a number rather than measuring one.
+ */
+static double normalize_factor(const aud_loudness_reading *r, aud_normalize_target to,
+                               double level)
+{
+  if (to == AUD_NORMALIZE_LOUDNESS)
+  {
+    if (!aud_loudness_measured(r->integrated))
+    {
+      return 0.0;
+    }
+    /* LUFS is already a decibel scale, and multiplying a signal by g moves it
+     * by 20 log10 g - the same arithmetic a peak takes */
+    return pow(10.0, (level - r->integrated) / 20.0);
+  }
+
+  if (!(r->true_peak > 0.0))
+  {
+    return 0.0;
+  }
+  return pow(10.0, level / 20.0) / r->true_peak;
+}
+
+int aud_edit_normalize(aud_doc *d, aud_normalize_target to, double level)
+{
+  /* the doc holds no more than this many lanes - see aud_doc_add_track() */
+  double factor[AUD_DOC_MAX_TRACKS];
+  size_t lanes;
+  int wanted = 0;
+  int any = 0;
+
+  if (!have_work(d) || !(level > -200.0 && level < 200.0))
+  {
+    return -1;
+  }
+
+  /*
+   * Every lane measured before any of them is changed. Measuring costs a read
+   * of the selection and changes nothing, so a normalize that turns out to
+   * have found nothing measurable can return without having spent an undo step
+   * - and without a half-normalized session behind it.
+   */
+  lanes = d->count < AUD_DOC_MAX_TRACKS ? d->count : AUD_DOC_MAX_TRACKS;
+  for (size_t i = 0; i < lanes; i++)
+  {
+    aud_loudness_reading r;
+
+    factor[i] = 0.0;
+    if (!d->tracks[i].selected)
+    {
+      continue;
+    }
+
+    if (measure_range(&d->tracks[i], d->sel_start, d->sel_end, d->rate, &r) != 0)
+    {
+      continue;
+    }
+
+    factor[i] = normalize_factor(&r, to, level);
+    wanted = wanted || factor[i] > 0.0;
+  }
+
+  if (!wanted)
+  {
+    return -1;
+  }
+
+  aud_doc_checkpoint(d, "normalize");
+
+  for (size_t i = 0; i < lanes; i++)
+  {
+    if (factor[i] > 0.0)
+    {
+      any = aud_track_gain_scale(&d->tracks[i], d->sel_start, d->sel_end,
+                                 (float)factor[i]) == 0 ||
+            any;
+    }
+  }
+
+  d->dirty = 1;
+  return any ? 0 : -1;
 }
 
 int aud_edit_remove_track(aud_doc *d, size_t index)

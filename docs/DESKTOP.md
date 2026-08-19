@@ -276,6 +276,8 @@ the selection as well; `ctrl+A` selects everything. Then:
 | **Split** | cuts the clips at the selection's edges without removing anything |
 | **Copy to** | the selection onto a new track of its own, at the same position |
 | **Fade in** / **Fade out** | `[` / `]` — ramps the selection out of silence, or into it |
+| **-1 dB** / **+1 dB** | `ctrl+-` / `ctrl++` — turns the selection down or up a decibel |
+| **Normalize** | `ctrl+N` — measures the selection and puts it on a target; see [How loud a piece of it is](#how-loud-a-piece-of-it-is) |
 | **Move** | drag the selection along its lane, or `,` / `.` — see [Moving it](#moving-it) |
 | **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
 
@@ -343,6 +345,60 @@ There are no crossfades. Clips on a lane do not overlap — that is the invarian
 the whole editor is built on — and a crossfade needs two pieces of audio
 sounding at once. Fading one out and the next in gives a dip, not a crossfade,
 and calling it one would be a lie.
+
+### How loud a piece of it is
+
+`ctrl+-` and `ctrl++` turn the selection down and up a decibel a press, and they
+repeat while held. It is a number on the clip, exactly as a fade is a length on
+one — no sample is touched, it costs nothing, it undoes like everything else,
+and the waveform redraws to match so what you see stays what you will hear. A
+clip somebody has turned says so, `+4.2 dB` at its top left, because a take
+recorded four decibels louder and one turned up four otherwise look identical.
+
+It is the selection that gets it, not the lane: the clips at the edges are split
+first, so one bar out of the middle of a take can be brought up on its own. That
+is the difference between this and the **gain** slider in the track's control
+column, which is a fader over the whole lane and lands in the mix afterwards.
+Both are there because they answer different questions — "this bar came in
+quiet" and "this guitar is too loud against the vocal" — and they multiply.
+
+**Normalize** measures instead of guessing. It reads the selection through the
+same mix the export writes, works out what would put it on a target, and sets
+the clip gain to that:
+
+| | |
+| --- | --- |
+| `ctrl+N` | the loudest point to **−1 dBTP** — true peak, so it will not clip an encoder either |
+| `ctrl+shift+N` | the loudness to **−18 LUFS** — the ITU-R BS.1770 measurement `--info` reports |
+
+The two answer different questions and it is worth knowing which you want.
+Peak is about headroom and says nothing about how loud something sounds: a bass
+note and a cymbal normalized to the same peak are nowhere near equally loud.
+Loudness is the one that makes two takes sit together, and it is the reason this
+window measures LUFS at all — see [How loud the mix is](#how-loud-the-mix-is).
+−18 LUFS is where a track sits in a mix with somewhere left to go; a lane
+normalized to a streaming target would leave the mix far past full scale.
+
+Every selected lane is measured on its own and gets its own figure, because what
+makes two takes comparable is each of them reaching the target — one factor
+across all of them would be a master fader wearing this name. Within a lane it
+is one number over the whole selection, so nothing about the playing changes;
+this is a fader being set, not a compressor.
+
+Two things follow from measuring what the mix reads. It is idempotent:
+normalizing something already normalized computes a factor of one and does
+nothing, because the gain already there is part of what gets measured. And a
+lane with nothing to measure is left alone rather than multiplied by a guess —
+silence has no peak to raise, and a selection under 400 ms has no loudness,
+which is what BS.1770 says rather than a limitation here. The status line says
+so instead of appearing to work.
+
+**A loudness normalize is allowed to clip.** Bringing a quiet take up to
+−18 LUFS can push its peaks past full scale, and nothing here limits them —
+this window has no limiter and inventing one silently would be worse than the
+overshoot. Normalize to a peak instead when what you need is a ceiling, or watch
+the meter afterwards. The gain itself stops at +24 dB, so a take recorded far
+too quietly lands short of the target rather than being refused.
 
 ### Moving it
 
@@ -610,6 +666,8 @@ way through takes back the stems it had already written.
 | **Click** | Plays a metronome at the session's tempo; heard, never recorded |
 | `− BPM +` | The tempo, a beat at a time; `shift` for ten |
 | **Grid** | Counts the ruler in bars, and puts edits on the grid |
+| **-1 dB** / **+1 dB** | Turns the selection down or up a decibel, on the clip |
+| **Normalize** | Measures the selection and puts its peak at −1 dBTP |
 | **Overdub** | Plays the project while recording over it |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
@@ -632,6 +690,8 @@ way through takes back the stems it had already written.
 | `ctrl+shift+E` | Export one file a track instead |
 | `ctrl+S` / `ctrl+O` | Save the session / open one; `ctrl+shift+S` saves it as |
 | `[` / `]` | Fade the selection in, or out |
+| `ctrl+-` / `ctrl++` | Turn the selection down or up a decibel; they repeat while held |
+| `ctrl+N` | Normalize the selection to −1 dBTP; `shift` to −18 LUFS instead |
 | `,` / `.` | Move the selection earlier or later, one grid line at a time while the grid is on; `alt` steps off it |
 | `←` / `→` | Move the cursor, one grid line at a time while the grid is on; `ctrl` steps clip edge to clip edge, `alt` steps off the grid |
 | `shift+←` / `→` | Extend the selection instead of moving the cursor |

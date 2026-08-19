@@ -488,6 +488,62 @@ TEST(shift_walks_the_far_end_of_the_selection_rather_than_the_cursor)
   discard(a);
 }
 
+/*
+ * The gain shares its keys with the tempo, the way paste shares V with the
+ * visualiser, and the same modifier tells them apart.
+ */
+TEST(the_gain_keys_are_the_tempo_keys_behind_ctrl)
+{
+  app *a = window(4.0);
+  aud_engine_status st = idle();
+
+  CHECK(a != NULL);
+  if (a == NULL)
+  {
+    return;
+  }
+
+  {
+    app_input in = press(APP_KEY_PLUS, 1, 0, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+    CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_LOUDER);
+  }
+  {
+    app_input in = press(APP_KEY_MINUS, 1, 0, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+    CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_QUIETER);
+  }
+  {
+    app_input in = press(APP_KEY_PLUS, 0, 0, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_NUDGE_TEMPO));
+  }
+
+  /* and the measured version, where shift is which measurement rather than
+   * how big a step - there is only one size of "put it on the target" */
+  {
+    app_input in = press(APP_KEY_N, 1, 0, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+    CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_NORMALIZE_PEAK);
+  }
+  {
+    app_input in = press(APP_KEY_N, 1, 1, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+    CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_NORMALIZE_LOUDNESS);
+  }
+  {
+    app_input in = press(APP_KEY_N, 0, 0, 0);
+
+    CHECK(only(map(a, &in, &st), APP_CMD_DRAWER_SPECTRUM));
+  }
+
+  discard(a);
+}
+
 TEST(ctrl_steps_to_the_next_clip_edge)
 {
   app *a = window(0.0);
@@ -819,6 +875,7 @@ int main(void)
   RUN(a_held_key_repeats_only_where_walking_makes_sense);
   RUN(a_bare_arrow_over_a_selection_lands_on_the_end_it_is_heading_for);
   RUN(shift_walks_the_far_end_of_the_selection_rather_than_the_cursor);
+  RUN(the_gain_keys_are_the_tempo_keys_behind_ctrl);
   RUN(ctrl_steps_to_the_next_clip_edge);
   RUN(an_arrow_lands_on_the_grid_and_alt_steps_off_it);
   RUN(a_nudge_moves_the_selection_to_the_grid_line_it_is_heading_for);
