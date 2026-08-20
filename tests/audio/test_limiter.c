@@ -216,6 +216,41 @@ TEST(a_range_that_opens_on_a_peak_is_still_held_under)
   free(buf);
 }
 
+/*
+ * The case that is hardest on the guarantee, and the one a sample-peak check
+ * cannot catch: material that needs turning down at every single frame, so the
+ * gain is moving the whole time.
+ *
+ * The twelve taps the meter reads around a frame each carry their own gain, not
+ * that frame's, and an earlier tap's gain can be far higher than the one being
+ * applied here - the envelope only ever comes down quickly. So it is not enough
+ * for a frame's own gain to be under what it asked for: every gain reaching into
+ * its window has to be, which is what the widened minimum in limiter.c is for.
+ * Without it this reads about a quarter of a decibel over.
+ */
+TEST(dense_material_is_held_under_by_the_measurement_that_judges_it)
+{
+  size_t frames = RATE / 2u;
+  unsigned channels = 2u;
+  float *buf = malloc(frames * channels * sizeof(*buf));
+  unsigned long long state = 0x2545F491u;
+
+  CHECK(buf != NULL);
+
+  /* full scale noise, the same sequence every run */
+  for (size_t i = 0; i < frames * channels; i++)
+  {
+    state = state * 6364136223846793005ULL + 1442695040888963407ULL;
+    buf[i] = (float)((double)((state >> 33) % 2000001u) / 1000000.0 - 1.0);
+  }
+
+  CHECK(true_peak_db(buf, frames, channels) > -1.0);
+  CHECK_EQ_INT(aud_limiter_apply(buf, frames, channels, RATE, -1.0, NULL), 0);
+  CHECK(true_peak_db(buf, frames, channels) <= -1.0 + 0.05);
+
+  free(buf);
+}
+
 TEST(limiting_something_already_limited_changes_nothing)
 {
   size_t frames = RATE / 2u;
@@ -333,6 +368,7 @@ int main(void)
   RUN(a_lone_transient_is_ridden_rather_than_flattened);
   RUN(every_channel_is_turned_down_by_the_same_amount);
   RUN(a_range_that_opens_on_a_peak_is_still_held_under);
+  RUN(dense_material_is_held_under_by_the_measurement_that_judges_it);
   RUN(limiting_something_already_limited_changes_nothing);
   RUN(a_shape_it_is_not_defined_for_is_refused_rather_than_guessed_at);
   RUN(a_range_shorter_than_the_look_ahead_is_still_limited);

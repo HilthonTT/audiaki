@@ -92,11 +92,19 @@
  * says how much work it did, and a 0 says the press did nothing at all.
  *
  * The ceiling is held to within a few hundredths of a decibel rather than
- * exactly. The gain is worked out from the interpolated peak and then applied
- * to the samples, and it moves very slightly across the twelve samples the
- * interpolator reads, so what comes out is a shade either side of where it was
- * aimed. Every limiter measured this way has that property; it is well inside
- * the 0.4 dB the four-times grid itself is uncertain by - see truepeak.h.
+ * exactly - the last of it is float rounding, and it is well inside the 0.4 dB
+ * the four-times grid itself is uncertain by, see truepeak.h.
+ *
+ * It is held of the *output* rather than of the samples, which is a stronger
+ * thing and takes saying. Each of the twelve samples the interpolator reads
+ * around a frame carries its own gain, not that frame's, and the envelope comes
+ * down fast and back up slowly - so a tap a few samples earlier can be carrying
+ * a much higher gain than the frame being turned down. Bounding a frame's own
+ * gain would therefore not bound what the meter reads there. The minimum the
+ * gain is built from is taken over a window wide enough to cover every gain
+ * that reaches into a frame's window, which is what makes the guarantee hold of
+ * what comes out. Dense material - where the gain is moving at every frame - is
+ * where the difference shows, and it is worth about a quarter of a decibel.
  *
  * Returns 0, or -1 with errno set to EINVAL for a shape this is not defined
  * for - no channels, a rate under AUD_LIMITER_MIN_RATE, an absurd ceiling - or

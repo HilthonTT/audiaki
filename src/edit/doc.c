@@ -724,6 +724,11 @@ static void state_restore(aud_doc *d, aud_doc_state *s)
 
   s->tracks = NULL;
   s->count = 0;
+  /* the markers went the same way as the tracks, and the snapshot must stop
+   * naming them: a popped step that still pointed at them would be a second
+   * owner of what the project has just taken over */
+  s->markers = NULL;
+  s->marker_count = 0;
 }
 
 /* Push `s` onto a stack, dropping the oldest step when it is full. */

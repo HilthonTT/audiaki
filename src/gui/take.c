@@ -487,7 +487,6 @@ void app_stop_take(app *a, const aud_engine_status *st)
       /* the reload appended it, and it brought its own source with it */
       a->last_take_track = (long)a->doc.count - 1;
       app_set_status(a, "the display fell behind; the take was reloaded from disk");
-      a->record_track = -1;
     }
     else
     {
