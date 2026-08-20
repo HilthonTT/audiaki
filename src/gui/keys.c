@@ -180,6 +180,22 @@ static uint64_t app_clip_edge(const app *a, uint64_t from, int back)
       best = edge;
     }
   }
+
+  /*
+   * And the markers, which are landmarks of exactly the same kind: the start of
+   * a take, the cut you made in it, the place you wrote down as the second
+   * chorus. One key that means "the next thing worth landing on" is better than
+   * two that each know about half of them.
+   */
+  {
+    uint64_t mark = aud_doc_marker_step(&a->doc, from, back);
+
+    if (mark != from && (best == from || (back ? mark > best : mark < best)))
+    {
+      best = mark;
+    }
+  }
+
   return best;
 }
 
@@ -390,6 +406,19 @@ static void map_ctrl(const app_input *in, cmd_list *l)
     emit_edit(l, shift ? APP_EDIT_NORMALIZE_LOUDNESS : APP_EDIT_NORMALIZE_PEAK);
   }
 
+  /* L is the loop unmodified, and the limiter behind ctrl - the one that
+   * catches what a normalize to a loudness target can leave over full scale */
+  if (hit(in, APP_KEY_L))
+  {
+    emit_edit(l, APP_EDIT_LIMIT);
+  }
+
+  /* M is monitoring unmodified, and marking the ruler behind ctrl */
+  if (hit(in, APP_KEY_M))
+  {
+    emit(l, APP_CMD_MARK, 0, 0);
+  }
+
   /* E mixes it down, shift+E writes one WAV a track instead */
   if (hit(in, APP_KEY_E))
   {
@@ -422,6 +451,23 @@ static void map_plain(const app_input *in, const aud_engine_status *st, cmd_list
   int alt = in->alt ? APP_MOD_ALT : 0;
 
   map_arrows(in, l, 0);
+
+  /*
+   * K walks the comp: which of the selected lanes is heard over the selection,
+   * one press a lane. Alt+K silences the selection outright instead, which is
+   * the same decision made about every lane at once.
+   */
+  if (hit(in, APP_KEY_K))
+  {
+    if (alt)
+    {
+      emit_edit(l, APP_EDIT_MUTE_TOGGLE);
+    }
+    else
+    {
+      emit(l, APP_CMD_COMP, shift ? -1 : 1, 0);
+    }
+  }
 
   /* the fades, on the bracket keys the selection edges look like */
   if (hit(in, APP_KEY_LEFT_BRACKET))

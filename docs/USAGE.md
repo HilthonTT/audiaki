@@ -1252,12 +1252,33 @@ encoded. Round to an even number, or use a `720p`-style shorthand.
   not.
 - The desktop app's clip gain stops at +24 dB, so a take recorded far too
   quietly is brought as far as that and no further rather than being refused.
-  Normalizing to a loudness target may push peaks past full scale — the window
-  has no limiter behind it, and inventing one silently would be worse than the
-  overshoot — where normalizing to a peak cannot. A lane whose selection holds
-  nothing measurable is left alone: silence has no peak to raise, and a
-  selection under 400 ms has no loudness, which is BS.1770 rather than a
-  shortcut here.
+  Normalizing to a loudness target may push peaks past full scale, where
+  normalizing to a peak cannot — `ctrl+L` is the limiter that holds it under,
+  and it is a separate press rather than something that happens on its own,
+  because rewriting audio nobody asked to have rewritten would be worse than
+  the overshoot. A lane whose selection holds nothing measurable is left alone:
+  silence has no peak to raise, and a selection under 400 ms has no loudness,
+  which is BS.1770 rather than a shortcut here.
+- The limiter holds the ceiling to within a few hundredths of a decibel rather
+  than exactly. The gain is worked out from the interpolated peak and then
+  applied to the samples, and it moves very slightly across the twelve samples
+  the interpolator reads. Every limiter measured this way has that property, and
+  it is well inside the 0.4 dB the four-times grid is itself uncertain by. It
+  costs the range in memory and in time, and it writes a WAV as it goes, the
+  same way the spectrum panel's Apply does and for the same reason.
+- Recording round a loop is one continuous take cut into passes afterwards, so
+  every lap is exactly the loop's length apart. Where nothing is being played
+  along to — no overdub and no click — that length is arithmetic rather than
+  something heard, and playback and capture are not on the same crystal either,
+  so a very long loop recorded through two different devices drifts by whatever
+  those two clocks differ by. A loop take the device dies in the middle of is
+  not cut into passes at all: it stays one take, because what a resumed take
+  starts at is where the last one stopped rather than the top of a lap.
+- Comping is per lane and per range: a marker on the ruler or the grid says
+  where the bars are, and the choice of which pass is heard is one press of `K`
+  over whatever is selected. There is no crossfade at the seams — clips do not
+  overlap — so two passes joined across a note need a fade on either side of
+  the join, `[` and `]`, the same as any other cut.
 - The system file chooser is used when `zenity` or `kdialog` is installed, and
   the built-in folder browser when neither is. That browser has no bookmarks, no
   recent places and no search — it is the fallback rather than the intent, and

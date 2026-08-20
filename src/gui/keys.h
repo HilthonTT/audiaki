@@ -153,6 +153,16 @@ typedef enum
   APP_CMD_PROJECT_SAVE_AS,
   APP_CMD_PROJECT_OPEN,
 
+  /*
+   * Drop a marker where the cursor is, or take away the one that is already
+   * there - one key for both, because a marker is either there or it is not
+   * and two keys for that would be one too many.
+   */
+  APP_CMD_MARK,
+
+  /* arg: +1 the next selected lane, -1 the one before. See app_comp(). */
+  APP_CMD_COMP,
+
   APP_CMD_COUNT
 } app_cmd_kind;
 
@@ -186,7 +196,8 @@ int app_cmd_map(const app *a, const app_input *in, const aud_engine_status *st,
  * Where an arrow puts the cursor: the whole of the arrow keys' arithmetic, and
  * the part of it worth checking.
  *
- * `back` is left, `edge` is ctrl - the next clip edge rather than a nudge -
+ * `back` is left, `edge` is ctrl - the next clip edge or marker rather than a
+ * nudge -
  * `off_grid` is the alt that steps between the beats, and `extend` is the shift
  * that drags the selection along instead of moving the cursor.
  */

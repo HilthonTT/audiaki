@@ -216,6 +216,26 @@ static int write_sources(FILE *f, const source_table *st, const char *dir)
   return 0;
 }
 
+/*
+ * The markers, written before any track for the same reason the tempo is: they
+ * describe the session rather than a lane, and a reader that meets one after a
+ * `track` line would have to decide it was not about that track.
+ */
+static int write_markers(FILE *f, const aud_doc *d)
+{
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    char name[AUD_MARKER_NAME_MAX];
+
+    tidy_name(name, sizeof(name), d->markers[i].name);
+    if (fprintf(f, "marker %llu %s\n", (unsigned long long)d->markers[i].at, name) < 0)
+    {
+      return -1;
+    }
+  }
+  return 0;
+}
+
 static int write_track(FILE *f, const aud_track *t, const source_table *st)
 {
   char name[AUD_TRACK_NAME_MAX];
@@ -253,9 +273,9 @@ static int write_track(FILE *f, const aud_track *t, const source_table *st)
       return -1;
     }
 
-    if (fprintf(f, "clip %ld %zu %zu %llu %zu %zu %.6f\n", index, clip->offset,
+    if (fprintf(f, "clip %ld %zu %zu %llu %zu %zu %.6f %d\n", index, clip->offset,
                 clip->frames, (unsigned long long)clip->start, clip->fade_in,
-                clip->fade_out, (double)clip->gain) < 0)
+                clip->fade_out, (double)clip->gain, clip->muted ? 1 : 0) < 0)
     {
       return -1;
     }
@@ -309,7 +329,7 @@ int aud_project_save(const aud_doc *d, const char *path, const char **why)
       fprintf(f, "cursor %llu\n", (unsigned long long)d->cursor) < 0 ||
       fprintf(f, "selection %llu %llu\n", (unsigned long long)d->sel_start,
               (unsigned long long)d->sel_end) < 0 ||
-      write_sources(f, &st, dir) != 0)
+      write_markers(f, d) != 0 || write_sources(f, &st, dir) != 0)
   {
     goto failed;
   }
@@ -518,13 +538,14 @@ static aud_samples *source_block(loaded_sources *ls, size_t index, const char *d
   return ls->block[index];
 }
 
-/* One `clip` line: SOURCE OFFSET FRAMES START FADE_IN FADE_OUT [GAIN]. */
+/* One `clip` line: SOURCE OFFSET FRAMES START FADE_IN FADE_OUT [GAIN [MUTED]]. */
 static int read_clip(aud_track *t, char *args, loaded_sources *ls, const char *dir,
                      unsigned rate, const char **why)
 {
   uint64_t field[6];
   aud_samples *block;
   float gain;
+  int muted = 0;
 
   for (size_t i = 0; i < 6; i++)
   {
@@ -542,14 +563,28 @@ static int read_clip(aud_track *t, char *args, loaded_sources *ls, const char *d
   }
 
   /*
-   * The gain is the one field on this line that may be missing: it was added
-   * after the format was, and every clip written before that is at unity. A
-   * session from a newer audiaki therefore opens in an older one without it -
+   * The last two fields may be missing, each having been added after the format
+   * was: every clip written before the gain existed is at unity, and every clip
+   * written before the mute existed is heard. A session from a newer audiaki
+   * therefore opens in an older one minus whatever the older one cannot show -
    * see the note on stepping over the unknown in project.h.
    */
   if (take_float(args, &gain) != 0)
   {
     gain = 1.0f;
+  }
+  else
+  {
+    /* past the gain, to wherever the mute would be if this file has one */
+    while (*args == ' ' || *args == '\t')
+    {
+      args++;
+    }
+    while (*args != '\0' && *args != ' ' && *args != '\t')
+    {
+      args++;
+    }
+    (void)take_int(args, &muted, 0, 1);
   }
 
   if (aud_track_place(t, block, (size_t)field[1], (size_t)field[2], field[3],
@@ -560,6 +595,7 @@ static int read_clip(aud_track *t, char *args, loaded_sources *ls, const char *d
   }
 
   aud_track_gain_at(t, field[3], clampf(gain, 0.0f, AUD_CLIP_GAIN_MAX));
+  aud_track_mute_at(t, field[3], muted);
   return 0;
 }
 
@@ -748,6 +784,29 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
         goto out;
       }
       ls.count++;
+      continue;
+    }
+
+    if (strcmp(word, "marker") == 0)
+    {
+      uint64_t frame = 0;
+
+      /*
+       * "marker FRAME NAME", the name being the rest of the line and allowed
+       * to be empty - a marker that is only a place is a marker. A line whose
+       * frame will not parse is stepped over rather than refused: a marker is
+       * a label, and losing one is not losing audio. A file asking for more
+       * than can be held stops taking them at that point, which
+       * aud_doc_mark() says by refusing.
+       */
+      if (take_u64(&args, &frame) == 0)
+      {
+        while (*args == ' ' || *args == '\t')
+        {
+          args++;
+        }
+        (void)aud_doc_mark(&built, frame, args);
+      }
       continue;
     }
 

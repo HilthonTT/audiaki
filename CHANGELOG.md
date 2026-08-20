@@ -9,6 +9,120 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Recording round a loop, with every lap on a lane of its own.** Select a bar,
+  turn Loop on, press Record, and play it until you have it. When you stop, the
+  laps are stacked as passes to choose between.
+
+  Learning a passage means playing it a dozen times, and the good one is rarely
+  the one you were on when you decided to stop. Until now a loop and a take were
+  mutually exclusive — the transport refused to go round while anything was
+  being recorded, on the grounds that a straight take laid over music repeating
+  underneath it was nobody's intention. That was the right answer to the wrong
+  question.
+
+  **It is one recording and one file.** The laps are cut out of what arrived
+  rather than recorded separately, which is the whole design: there is no moment
+  lost either side of a loop point while a device is torn down and stood up
+  again, and every pass came off the same clock, so they line up with each other
+  to the sample. Cutting it up afterwards is the same clip surgery a split
+  already is, so no audio is copied however long the take ran, and one press of
+  ctrl+Z puts it back as the single piece it arrived as.
+
+  Overdub plays the project round the loop underneath you and the metronome
+  counts it, both placing the take a round trip earlier for the reasons they
+  always did. Neither is required — with both off the laps are still cut at the
+  loop's length, because that is arithmetic on a continuous recording rather
+  than something that has to be heard.
+
+  Only the last pass is heard when it stops, so playback is what you just played
+  rather than every attempt at once, and the whole stack is left selected over
+  the first lap ready to choose from.
+
+- **Comping: `K` walks which pass is heard, one press a lane.** `shift+K` walks
+  back, and the status line names the lane and says which of how many it is. So
+  four passes of a bar are auditioned by pressing one key four times. Select the
+  next bar and go again; the choice is per range and per lane, so a comp is
+  built out of whichever pass was best where.
+
+  **Nothing is thrown away by any of it.** A pass that is not being heard is
+  muted rather than cut: its audio is where it was, its clip gain and fades are
+  what they were, and choosing it again brings all of it back. That is the point
+  — you can change your mind on the eleventh bar without having lost the first
+  ten takes of it.
+
+  The flag sits beside the clip's gain rather than being a gain of zero, and
+  that is why: a zero written into the gain field would have thrown away
+  whatever was there on the way past, and the one thing comping has to survive
+  is being redone. It is deliberately not reflected in the waveform, which the
+  fades and the gain are — choosing between four passes means looking at four
+  pictures of the same bar, and a pass whose waveform vanished when you chose
+  another one would take away the thing you were choosing from. A muted stretch
+  is washed over and says so instead.
+
+  `alt+K` is the same decision made by hand: it mutes whatever is selected, on
+  every selected lane, and pressing it again brings it back. Not the same as
+  Silence, which empties the audio and leaves a hole.
+
+- **A limiter behind the normalize, on `ctrl+L`.** Normalizing to a loudness
+  target has always been allowed to clip — it is a gated mean, so a take with
+  one transient far above its average has to go past full scale to reach the
+  target — and the window's answer was to do it and say so, because inventing a
+  limiter nobody asked for would have been worse than a reported overshoot. This
+  is the limiter you ask for.
+
+  It holds the selection under −1 dBTP by turning it down only where it would
+  have gone over, and by turning it down *before* it gets there. That is the
+  whole difference between a limiter and a clipper: a clipper flattens the top
+  of the waveform and the flat is the distortion, where this rides the level
+  down over about five milliseconds, holds it, and lets it back up over a tenth
+  of a second. A passage that never approaches the ceiling comes through sample
+  for sample.
+
+  The ceiling is a **true** peak, measured through the same interpolator
+  `--info` reports and the peak normalize aims at — which now lives in one file
+  that both read, deliberately. A limiter judged by a slightly different filter
+  from the meter that reports on it would leave the window saying a take was
+  over a ceiling it had just been put under, and no amount of care in either
+  place would fix that. It is held to within a few hundredths of a decibel
+  rather than exactly, which every limiter measured this way is and which is
+  well inside what the four-times grid is itself uncertain by.
+
+  Two things are unlike every other edit in the window. **It rewrites audio** —
+  there is no arrangement of clips that means "this take, under a ceiling" — so
+  it costs the range in memory and in time and writes a `limited-NNN.wav` beside
+  your takes as it goes, exactly as the spectrum panel's Apply does and for the
+  same reason: a project refers to files rather than carrying samples. Undoing
+  leaves that file behind, because redo still needs it, and the window says so
+  before it undoes. And **a lane already under the ceiling is not touched at
+  all**: no audio made, no file written, no clip disturbed, so it is safe to
+  reach for over a whole session and does nothing at all the second time.
+
+  It is not on the export, and that is not an oversight. The mixdown
+  deliberately does not clamp, and a limiter there would break the one promise
+  stems make — that they add back up to the mix.
+
+- **Markers, on `ctrl+M`.** One key drops one where the cursor is and takes it
+  away when the cursor is already on one. They are drawn as small flags along
+  the foot of the ruler, and clicking one puts the cursor exactly on it — which
+  is what makes a marker worth having, a place you can get back to precisely
+  rather than approximately.
+
+  `ctrl+←` and `ctrl+→` step to them. That is the key that already stepped
+  between clip edges, and it now means "the next thing worth landing on": the
+  start of a take, the cut you made in it, or the place you wrote down as the
+  second chorus, whichever is nearer. One key that knows about all three beats
+  two that each know about half.
+
+  They are saved with the session, and they move with the audio. A ripple delete
+  that shortens the whole project brings the ruler back with it, a trim takes
+  the head off both, and undoing either puts both back — which is why, unlike
+  the tempo and the grid beside them, markers are part of an undo step. That
+  only happens when the edit rippled *every* lane: a delete on one lane of six
+  leaves the project exactly as long as it was, and moving every marker in the
+  session would be the wrong trade to fix one. A marker inside a range that gets
+  deleted goes with the audio it was pointing at rather than piling up on the
+  seam.
+
 - **A recovery file, so a window that is killed does not take the afternoon
   with it.** While there are unsaved edits the desktop app keeps one, rewritten
   every thirty seconds, and opens it again the next time it starts.
@@ -1016,6 +1130,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the option that had actually been typed.
 
 ### Changed
+
+- **A session file carries two new kinds of line, and older audiaki still opens
+  it.** `marker FRAME NAME` says where a marker is, and a `clip` line gained a
+  field on the end saying whether that clip is muted. Both were added the way
+  the clip gain was: a reader that has never heard of either steps over the
+  marker lines and stops at the gain, so a session written here opens in an
+  older build minus the markers and with every pass audible — the audio and its
+  placement come back either way. There is no version bump, deliberately.
+
+- **`ctrl+←` and `ctrl+→` step to markers as well as to clip edges.** They used
+  to mean "the next clip edge"; they now mean "the next thing worth landing on",
+  whichever of the two is nearer. Nothing that used to be reachable stopped
+  being reachable.
+
+- **The true-peak interpolator moved into `audio/truepeak.h`.** It was inside
+  `audio/loudness.c`, which was the only thing that needed it until the limiter
+  did. Two copies of a filter that have to agree exactly would be two copies
+  drifting apart one fix at a time, so there is one, and both read it. The taps
+  and the numbers they produce are unchanged.
 
 - **The window's shortcuts have tests.** They previously could not: raylib was
   read and acted on in the same breath, so `IsKeyPressed(KEY_SPACE)` and "start

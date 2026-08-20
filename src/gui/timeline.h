@@ -78,6 +78,14 @@ typedef struct
   int scrubbing; /* the ruler is being dragged */
 
   /*
+   * A marker on the ruler took this frame's click, so the scrub must not also
+   * have it. Set and cleared inside one frame of drawing; it is here rather
+   * than a local because the two are drawn by different functions and the one
+   * that has to know comes second.
+   */
+  int marker_taken;
+
+  /*
    * Pixels of lane on screen, and pixels of waveform across, as of the last
    * draw. Kept because the keyboard has to scroll a frame or a track into view
    * and only the drawing knows how much room either ended up with - the window

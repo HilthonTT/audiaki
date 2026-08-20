@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "audio/loudness.h"
 
+#include "audio/truepeak.h"
+
 #include <errno.h>
 #include <math.h>
 #include <stdlib.h>
@@ -39,23 +41,13 @@
 #define LOUD_BLOCKS_MIN 1024u
 
 /*
- * The true peak interpolator: four times oversampling, twelve taps a phase.
- *
- * Both numbers are BS.1770-4 Annex 2's. Four is worth knowing about, because it
- * is the accuracy limit rather than the filter: the oversampled grid only looks
- * between the samples every quarter of one, so a peak that falls between two of
- * those points is still missed by up to about 0.4 dB on content near Nyquist.
- * Widening the filter does not help that - it is the grid, and it is why this
- * reads a little under rather than a little over. Every other implementation of
- * the standard is oversampled four times as well, which is the more useful
- * property: the figure here and the figure another tool reports agree.
- *
- * Phase 0 works out as the identity - a sinc through the sample it sits on is
- * one there and zero at every other sample - so the plain sample peak is inside
- * this rather than needing to be taken alongside it.
+ * The true peak interpolator lives in audio/truepeak.h, where the limiter can
+ * reach it too - a limiter judged by a different filter from this one would be
+ * a take reported over a ceiling it had just been put under. Its width is the
+ * only thing this file still needs a name for: the buffer below is kept in
+ * groups of it.
  */
-#define LOUD_TP_PHASES 4u
-#define LOUD_TP_TAPS 12u
+#define LOUD_TP_TAPS AUD_TRUEPEAK_TAPS
 
 typedef struct
 {
@@ -97,8 +89,7 @@ struct aud_loudness
   double momentary_now;
   double shortterm_now;
 
-  float tp_taps[LOUD_TP_PHASES][LOUD_TP_TAPS];
-  double tp_bound; /* the most the filter can lift a window's largest sample */
+  aud_truepeak tp;
 
   /*
    * Per channel, the previous group of samples followed by the group being
@@ -169,73 +160,6 @@ static void design(aud_loudness *l)
   l->highpass.a2 = (1.0 - k / q + k * k) / a0;
 }
 
-/* -- the interpolator the true peak is looked for on ----------------------- */
-
-static double sinc(double x)
-{
-  if (x > -1e-9 && x < 1e-9)
-  {
-    return 1.0;
-  }
-  return sin(LOUD_PI * x) / (LOUD_PI * x);
-}
-
-/* Blackman, the same window resample.c interpolates through and for the same
- * reason: the stopband is where the images of the oversampled signal land. */
-static double window(double x)
-{
-  double t = (x + (double)(LOUD_TP_TAPS / 2u)) / (double)LOUD_TP_TAPS;
-
-  if (t < 0.0 || t > 1.0)
-  {
-    return 0.0;
-  }
-  return 0.42 - 0.5 * cos(2.0 * LOUD_PI * t) + 0.08 * cos(4.0 * LOUD_PI * t);
-}
-
-/*
- * One row a phase, each normalised to sum to one so the interpolator neither
- * lifts nor drops the level - which matters more here than anywhere, since the
- * whole figure is a level.
- *
- * `tp_bound` falls out of the same loop: the largest a row can make any window
- * is the sum of its magnitudes times the largest sample in that window, and
- * knowing that is what lets most of the audio be dismissed without filtering
- * it. See close_tp_group().
- */
-static void build_taps(aud_loudness *l)
-{
-  l->tp_bound = 0.0;
-
-  for (unsigned p = 0; p < LOUD_TP_PHASES; p++)
-  {
-    double frac = (double)p / (double)LOUD_TP_PHASES;
-    double sum = 0.0;
-    double magnitude = 0.0;
-
-    for (unsigned t = 0; t < LOUD_TP_TAPS; t++)
-    {
-      /* distance from the point being interpolated to the sample this tap reads */
-      double x = (double)t - (double)(LOUD_TP_TAPS / 2u) + 1.0 - frac;
-      double h = sinc(x) * window(x);
-
-      l->tp_taps[p][t] = (float)h;
-      sum += h;
-    }
-
-    for (unsigned t = 0; t < LOUD_TP_TAPS; t++)
-    {
-      l->tp_taps[p][t] = (float)((double)l->tp_taps[p][t] / sum);
-      magnitude += fabs((double)l->tp_taps[p][t]);
-    }
-
-    if (magnitude > l->tp_bound)
-    {
-      l->tp_bound = magnitude;
-    }
-  }
-}
-
 /* -- the meter ------------------------------------------------------------- */
 
 aud_loudness *aud_loudness_create(unsigned rate, unsigned channels)
@@ -278,7 +202,7 @@ aud_loudness *aud_loudness_create(unsigned rate, unsigned channels)
   }
 
   design(l);
-  build_taps(l);
+  aud_truepeak_build(&l->tp);
   return l;
 }
 
@@ -394,19 +318,11 @@ static void interpolate(aud_loudness *l, const float *buf, size_t positions)
   {
     const float *window = buf + i + 1u;
 
-    for (unsigned p = 1; p < LOUD_TP_PHASES; p++)
-    {
-      const float *taps = l->tp_taps[p];
-      float sum = 0.0f;
+    float between = aud_truepeak_between(&l->tp, window);
 
-      for (unsigned t = 0; t < LOUD_TP_TAPS; t++)
-      {
-        sum += taps[t] * window[t];
-      }
-      if (fabsf(sum) > best)
-      {
-        best = fabsf(sum);
-      }
+    if (between > best)
+    {
+      best = between;
     }
   }
 
@@ -422,11 +338,11 @@ static void interpolate(aud_loudness *l, const float *buf, size_t positions)
  *
  * The test is what keeps this affordable. A window never spans more than two
  * groups, so the largest sample any window in this one can hold is known, and
- * the filter cannot lift it past `tp_bound` times itself. Below the peak so far,
- * there is provably nothing here to find and the filtering is skipped outright.
- * On a real take that is nearly every group - the loudest moment is one moment -
- * which turns the true peak from the most expensive thing in the measurement
- * into one of the cheapest, without approximating it anywhere.
+ * the filter cannot lift it past the interpolator's bound times itself. Below the peak so
+ * far, there is provably nothing here to find and the filtering is skipped outright. On a
+ * real take that is nearly every group - the loudest moment is one moment - which turns
+ * the true peak from the most expensive thing in the measurement into one of the
+ * cheapest, without approximating it anywhere.
  */
 static void close_tp_group(aud_loudness *l)
 {
@@ -436,7 +352,7 @@ static void close_tp_group(aud_loudness *l)
     float loudest =
         l->tp_prev_max[c] > l->tp_cur_max[c] ? l->tp_prev_max[c] : l->tp_cur_max[c];
 
-    if (l->tp_bound * (double)loudest > l->true_peak)
+    if (l->tp.bound * (double)loudest > l->true_peak)
     {
       interpolate(l, buf, LOUD_TP_TAPS);
     }

@@ -168,9 +168,9 @@ bounds are fixed when playback starts, so moving the selection while it runs
 does not move the loop out from under you; stop and play again to move it.
 
 It can be turned on and off while something is playing, so a passage can be put
-on repeat without stopping it first. Recording never loops: a take runs
-straight through, and a loop underneath one would be music that repeated behind
-a performance that did not.
+on repeat without stopping it first. Pressing **Record** with it on records
+round the loop, a pass a lap — see
+[Recording round a loop](#recording-round-a-loop).
 
 ### How loud the mix is
 
@@ -278,6 +278,9 @@ the selection as well; `ctrl+A` selects everything. Then:
 | **Fade in** / **Fade out** | `[` / `]` — ramps the selection out of silence, or into it |
 | **-1 dB** / **+1 dB** | `ctrl+-` / `ctrl++` — turns the selection down or up a decibel |
 | **Normalize** | `ctrl+N` — measures the selection and puts it on a target; see [How loud a piece of it is](#how-loud-a-piece-of-it-is) |
+| **Limit** | `ctrl+L` — holds it under −1 dBTP, for when a normalize went over |
+| **Mute** | `alt+K` — stops it being heard without moving or removing it |
+| **Keep this pass** | `K` — which lane is heard here; see [Choosing between the passes](#choosing-between-the-passes) |
 | **Move** | drag the selection along its lane, or `,` / `.` — see [Moving it](#moving-it) |
 | **Undo** / **Redo** | `ctrl+Z` / `ctrl+shift+Z`, 64 steps deep |
 
@@ -394,11 +397,47 @@ which is what BS.1770 says rather than a limitation here. The status line says
 so instead of appearing to work.
 
 **A loudness normalize is allowed to clip.** Bringing a quiet take up to
-−18 LUFS can push its peaks past full scale, and nothing here limits them —
-this window has no limiter and inventing one silently would be worse than the
-overshoot. Normalize to a peak instead when what you need is a ceiling, or watch
-the meter afterwards. The gain itself stops at +24 dB, so a take recorded far
-too quietly lands short of the target rather than being refused.
+−18 LUFS can push its peaks past full scale — it is a gated mean, and a take
+with one transient far above its average has to go over to reach the target.
+The gain itself stops at +24 dB, so a take recorded far too quietly lands short
+of the target rather than being refused.
+
+**Limit**, or `ctrl+L`, is what catches that.
+
+It holds the selection under −1 dBTP by turning it down only where it would
+have gone over, and by turning it down *before* it gets there — which is the
+whole difference between a limiter and a clipper. A clipper flattens the top of
+the waveform and the flat is the distortion; this rides the level down over
+about five milliseconds, holds it, and lets it back up over a tenth of a second.
+A passage that never approaches the ceiling comes through sample for sample.
+
+The ceiling is a **true** peak, measured through the same interpolator `--info`
+reports and the peak normalize aims at. That is deliberate: a limiter judged by
+a different filter from the meter would leave the window reporting a take over a
+ceiling it had just been put under. It is held to within a few hundredths of a
+decibel rather than exactly, which is a property every limiter measured this way
+has and is well inside what the measurement itself is uncertain by.
+
+Two things about it are unlike every other edit here:
+
+- **It rewrites audio.** There is no arrangement of clips that means "this take,
+  under a ceiling", so the range is read out, limited, and put back as new
+  audio — which costs the range in memory and in time where a cut costs neither,
+  and folds in whatever fades and clip gain were there. It writes a
+  `limited-NNN.wav` beside your takes as it goes, for the same reason the
+  spectrum panel does: a project refers to files rather than carrying samples,
+  and audio with nowhere to point at is audio a save cannot write down. Undoing
+  leaves that file behind — redo still needs it — and the window says so before
+  it undoes.
+- **A lane already under the ceiling is not touched at all.** No audio is made
+  for it, no file is written, and its clips are left where they were. So it is
+  safe to reach for over a whole session, it is a no-op everywhere it has
+  nothing to do, and pressing it twice does nothing the second time.
+
+It is not on the export, and that is not an oversight. The mixdown deliberately
+does not clamp, and a limiter there would break the one promise stems make —
+that they add back up to the mix. Here it happens on a lane, where you can see
+on the waveform what it did.
 
 ### Moving it
 
@@ -657,6 +696,99 @@ each other rather than on the same sample. Overdubs land close, not sample
 locked. Use headphones: monitoring plus playback through speakers is two ways
 for the room to get into the take.
 
+## Recording round a loop
+
+Select a bar, turn **Loop** on, and press **Record**. The take starts at the top
+of the loop however far along the cursor was, the transport goes round instead
+of running off the end, and you play the same bar until you have it. When you
+press **Stop**, every lap is on a lane of its own:
+
+```
+take04.wav pass 1   ############
+take04.wav pass 2   ############
+take04.wav pass 3   ############   <- the one you hear
+```
+
+Which is the point. Learning a passage means playing it a dozen times, and the
+good one is rarely the one you were on when you decided to stop.
+
+**It is one recording and one file.** The laps are cut out of what arrived
+rather than recorded separately, so there is no moment lost either side of a
+loop point while a device is torn down and stood up again, and every pass came
+off the same clock — they line up with each other exactly, to the sample. No
+audio is copied doing it either: each pass is a window onto the one take, the
+same way a split is, so slicing a twenty-minute loop take is instant and one
+press of `ctrl+Z` puts it back as the single piece it arrived as.
+
+Everything else works as it always does. **Overdub** plays the project round the
+loop underneath you, **Click** counts it, and both mean the take is placed a
+round trip earlier because you heard them late — see
+[Overdubbing](#overdubbing). Neither is required: with both off, the laps are
+still cut at the loop's length, because that is arithmetic on a continuous
+recording rather than something that has to be heard.
+
+Only the last pass is heard when it stops, so what plays back is what you just
+played rather than every attempt at once. The rest are muted, not thrown away —
+see below. The whole stack is left selected over the first lap, ready to
+choose from.
+
+### Choosing between the passes
+
+Press `K`. It walks which of the selected lanes is heard over the selection, one
+press a lane, wrapping round; `shift+K` walks back. The status line names the
+lane and says which of how many it is, so four passes of a bar are auditioned by
+pressing one key four times.
+
+Comp a bar at a time: select a bar, press `K` until it is the good one, select
+the next bar, and go again. The choice is per range and per lane, so a comp is
+built out of whichever pass was best where.
+
+**Nothing is thrown away by any of this.** A pass that is not being heard is
+muted rather than cut: its audio is exactly where it was, its clip gain and
+fades are exactly what they were, and choosing it again brings all of it back.
+That is the difference between this and deleting the passes you did not want —
+you can change your mind on the eleventh bar without having lost the first ten
+takes of it. It is one press of `ctrl+Z` per comp either way.
+
+A muted stretch is washed over on the timeline and says `muted`, and the
+waveform underneath it stays drawn. That is deliberate: choosing between four
+passes means looking at four pictures of the same bar, and a pass whose waveform
+vanished the moment you chose another one would take away the thing you were
+choosing from.
+
+`alt+K` is the same decision made by hand — it mutes whatever is selected, on
+every selected lane, and pressing it again brings it back. Useful for dropping a
+cough out of a take without moving anything either side of it. It is not
+**Silence**, which empties the audio and leaves a hole: this leaves the audio
+exactly where it is and stops it being heard.
+
+There is no crossfade at a seam, because clips here do not overlap. Two passes
+joined across a note want a fade on either side of the join, `[` and `]`, the
+same as any other cut.
+
+## Marking a place
+
+`ctrl+M` drops a marker where the cursor is, and takes it away again when the
+cursor is already on one. Markers are drawn as small flags along the foot of the
+ruler; clicking one puts the cursor exactly on it, which is what makes a marker
+worth having — a place you can get back to precisely rather than approximately.
+
+`ctrl+←` and `ctrl+→` step to them. That is the same key that steps between
+clip edges, and it now means "the next thing worth landing on" — the start of a
+take, the cut you made in it, or the place you wrote down as the second chorus,
+whichever is nearer. One key for all of them is better than two that each know
+about half.
+
+Markers are saved with the session, and they move with the audio: a ripple
+delete that shortens the whole project brings the ruler back with it, a trim
+takes the head off both, and undoing either puts both back. That only happens
+when the edit rippled *every* lane — a delete on one lane of six leaves the
+project exactly as long as it was, and moving the ruler for it would put every
+marker in the session wrong in order to fix one.
+
+A marker inside a range that gets deleted goes with the audio it was pointing
+at, rather than piling up on the seam with every other marker in the range.
+
 ## Exporting
 
 **Export**, or `ctrl+E`, mixes down: the selection if there is one, the whole
@@ -698,7 +830,7 @@ way through takes back the stems it had already written.
 | Control | Does |
 | --- | --- |
 | **Play** | Plays the selection, or from the cursor |
-| **Loop** | Plays it round and round rather than stopping at the end |
+| **Loop** | Plays it round and round rather than stopping at the end; with **Record**, a pass a lap |
 | **Record** | Records onto the timeline at the cursor |
 | **Pause** / **Resume** | Stops and continues writing, without closing the file |
 | **Stop** | Closes the take; it is already on the timeline |
@@ -711,6 +843,8 @@ way through takes back the stems it had already written.
 | **Grid** | Counts the ruler in bars, and puts edits on the grid |
 | **-1 dB** / **+1 dB** | Turns the selection down or up a decibel, on the clip |
 | **Normalize** | Measures the selection and puts its peak at −1 dBTP |
+| **Limit** | Holds the selection under −1 dBTP, riding the peaks rather than clipping |
+| **Mute** | Stops the selection being heard without moving or removing it |
 | **Overdub** | Plays the project while recording over it |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
@@ -724,7 +858,7 @@ way through takes back the stems it had already written.
 | `space` | Play, or pause and resume once a take is running |
 | `R`, `ctrl+space` | Record from the cursor |
 | `S` | Stop the take or playback, or cancel a video render |
-| `L` | Loop what Play is given |
+| `L` | Loop what Play is given, and what Record goes round |
 | `C` | The metronome |
 | `G` | The bar grid; `alt` steps off it while it is on |
 | `shift+G` | Divides the grid: bars, beats, halves, thirds, quarters |
@@ -735,8 +869,12 @@ way through takes back the stems it had already written.
 | `[` / `]` | Fade the selection in, or out |
 | `ctrl+-` / `ctrl++` | Turn the selection down or up a decibel; they repeat while held |
 | `ctrl+N` | Normalize the selection to −1 dBTP; `shift` to −18 LUFS instead |
+| `ctrl+L` | Limit the selection to −1 dBTP, for when a normalize went over |
+| `K` | Which pass is heard over the selection, one press a lane; `shift` walks back |
+| `alt+K` | Mute the selection where it is, and hear it again |
+| `ctrl+M` | Mark the ruler at the cursor, or take away the marker already there |
 | `,` / `.` | Move the selection earlier or later, one grid line at a time while the grid is on; `alt` steps off it |
-| `←` / `→` | Move the cursor, one grid line at a time while the grid is on; `ctrl` steps clip edge to clip edge, `alt` steps off the grid |
+| `←` / `→` | Move the cursor, one grid line at a time while the grid is on; `ctrl` steps between clip edges and markers, `alt` steps off the grid |
 | `shift+←` / `→` | Extend the selection instead of moving the cursor |
 | `↑` / `↓` | Select the track above or below; `shift` adds it |
 | `home` / `end` | Cursor to the start or the end of the project |

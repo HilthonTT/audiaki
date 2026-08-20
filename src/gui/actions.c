@@ -21,8 +21,10 @@
 #include "gui/timeline.h"
 #include "gui/viz.h"
 
+#include "audio/limiter.h"
 #include "edit/edit.h"
 #include "edit/export.h"
+#include "edit/limit.h"
 #include "edit/load.h"
 #include "util/path.h"
 
@@ -233,6 +235,57 @@ void app_edit_now(app *a, app_edit_action action)
     }
     break;
   }
+  case APP_EDIT_LIMIT:
+  {
+    double reduction = 0.0;
+    const char *why = NULL;
+
+    ok = aud_limit_selection(d, AUD_LIMITER_CEILING_DEFAULT, a->take_dir, &reduction,
+                             &why);
+    if (ok == 0)
+    {
+      a->project_dirty = 1;
+      aud_repair_panel_reset(&a->repair); /* the audio under it is new audio */
+      app_set_status(a, "limited by %.1f dB, to %.0f dBTP", reduction,
+                     AUD_LIMITER_CEILING_DEFAULT);
+      return;
+    }
+
+    /* it says why itself, and its reasons are better than the shared ones */
+    if (why != NULL)
+    {
+      app_set_status(a, "%.90s", why);
+      return;
+    }
+    break;
+  }
+  case APP_EDIT_MUTE_TOGGLE:
+  {
+    /*
+     * Off what the first selected lane is doing, so the key is a toggle rather
+     * than two keys: a selection that is being heard goes silent, and one that
+     * has been silenced comes back.
+     */
+    int muted = 0;
+
+    for (size_t i = 0; i < d->count; i++)
+    {
+      if (d->tracks[i].selected)
+      {
+        muted = aud_track_muted_at(&d->tracks[i], d->sel_start);
+        break;
+      }
+    }
+
+    ok = aud_edit_mute(d, !muted);
+    if (ok == 0)
+    {
+      a->project_dirty = 1;
+      app_set_status(a, muted ? "heard again" : "muted - alt+K brings it back");
+      return;
+    }
+    break;
+  }
   default:
     return;
   }
@@ -285,11 +338,12 @@ void app_apply_transport(app *a)
                                                            : a->doc.grid_div,
                        a->click_gain);
   /*
-   * Never while a take is open. A loop means playing the same seconds over
-   * and over, and a recording made against one would be a single straight
-   * take laid over music that repeated underneath it.
+   * While a take is open, only for the take that was started against a loop.
+   * That one is meant to go round - each lap becomes a pass of its own when it
+   * stops, see aud_edit_take_passes() - where a straight take laid over music
+   * that repeated underneath it would be nobody's intention.
    */
-  aud_player_set_loop(&a->player, a->loop && a->record_track < 0);
+  aud_player_set_loop(&a->player, a->loop && (a->record_track < 0 || a->lap_frames > 0));
 }
 
 void app_nudge_tempo(app *a, double beats)
@@ -487,6 +541,108 @@ static void app_step_track(app *a, int down, int add)
   aud_timeline_reveal_track(&a->timeline, &a->doc, to, a->timeline.rows_h);
 }
 
+/* -- the ruler, and choosing between passes -------------------------------- */
+
+/* Frames either side of the cursor that count as "on" a marker at this zoom. */
+static uint64_t marker_reach(const app *a)
+{
+  if (!(a->timeline.zoom > 0.0) || a->doc.rate == 0)
+  {
+    return 0;
+  }
+  return (uint64_t)((double)a->doc.rate * APP_MARKER_GRAB_PX / a->timeline.zoom);
+}
+
+/*
+ * Drop a marker where the cursor is, or take away the one already there.
+ *
+ * "Already there" is a few pixels' worth of time rather than the exact frame:
+ * the cursor lands where it was clicked or where the grid put it, and a key
+ * that only removed a marker sitting on precisely the same sample would be a
+ * key that never removed one.
+ */
+void app_mark(app *a)
+{
+  uint64_t at = a->doc.cursor;
+  long found = aud_doc_marker_near(&a->doc, at, marker_reach(a));
+
+  if (found >= 0)
+  {
+    aud_doc_unmark(&a->doc, (size_t)found);
+    a->project_dirty = 1;
+    app_set_status(a, "marker removed");
+    return;
+  }
+
+  if (aud_doc_mark(&a->doc, at, "") < 0)
+  {
+    app_set_status(a, "that project already holds as many markers as one can");
+    return;
+  }
+
+  a->project_dirty = 1;
+  app_set_status(a, "marked at %.2f s - ctrl+arrow steps to it",
+                 a->doc.rate > 0 ? (double)at / a->doc.rate : 0.0);
+}
+
+/*
+ * Comp: walk which of the selected lanes is heard over the selection.
+ *
+ * One press a lane, so four passes of a bar are auditioned by pressing the same
+ * key four times rather than by reaching for four different lanes. Where it
+ * starts from is whichever lane is being heard now - which after a loop take is
+ * the last pass, and after an earlier press is whatever that press chose.
+ */
+void app_comp(app *a, int forward)
+{
+  aud_doc *d = &a->doc;
+  size_t lanes[AUD_DOC_MAX_TRACKS];
+  size_t count = 0;
+  size_t at = 0;
+
+  if (!aud_doc_has_range(d))
+  {
+    app_set_status(a, "select the stretch to comp first");
+    return;
+  }
+
+  for (size_t i = 0; i < d->count && count < AUD_DOC_MAX_TRACKS; i++)
+  {
+    if (d->tracks[i].selected)
+    {
+      lanes[count++] = i;
+    }
+  }
+
+  if (count < 2u)
+  {
+    app_set_status(a,
+                   "comping needs two lanes or more - select the passes to choose from");
+    return;
+  }
+
+  /* the lane being heard now, or the first one when none of them is */
+  for (size_t i = 0; i < count; i++)
+  {
+    if (!aud_track_muted_at(&d->tracks[lanes[i]], d->sel_start))
+    {
+      at = i;
+      break;
+    }
+  }
+
+  at = forward ? (at + 1u) % count : (at + count - 1u) % count;
+
+  if (aud_edit_comp(d, lanes[at]) != 0)
+  {
+    app_set_status(a, "there is nothing on those lanes to choose between");
+    return;
+  }
+
+  a->project_dirty = 1;
+  app_set_status(a, "%.40s (%zu of %zu)", d->tracks[lanes[at]].name, at + 1u, count);
+}
+
 /* -- the keyboard's commands ----------------------------------------------- */
 
 /*
@@ -517,6 +673,14 @@ void app_cmd_run(app *a, const app_cmd *cmd, const aud_engine_status *st)
 
   case APP_CMD_EDIT:
     app_edit(a, (app_edit_action)cmd->arg);
+    return;
+
+  case APP_CMD_MARK:
+    app_mark(a);
+    return;
+
+  case APP_CMD_COMP:
+    app_comp(a, cmd->arg > 0);
     return;
 
   case APP_CMD_CURSOR_MOVE:

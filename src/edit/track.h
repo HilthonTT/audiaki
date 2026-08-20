@@ -67,6 +67,18 @@
  * makes an overdub that came in six decibels hot fixable without turning the
  * whole lane down, and what a normalize sets - see aud_edit_normalize(). Held
  * to [0, AUD_CLIP_GAIN_MAX], and 1.0 on every clip that nobody has touched.
+ *
+ * `muted` is the fourth, and it exists for comping. A gain of zero would say
+ * the same thing to the mix, but it would say it by throwing away whatever gain
+ * was there - and the whole point of choosing between four passes of the same
+ * bar is that you change your mind, put the bar back on pass two, and find pass
+ * one exactly as you left it. So it is a flag beside the gain rather than a
+ * value of it: nothing is lost, and flipping it back is free.
+ *
+ * It is deliberately *not* reflected in aud_track_range(), which the fades and
+ * the gain are. A comp is a picture of the passes you are choosing between, and
+ * a waveform that vanished when you chose the other one would take away the
+ * thing you were looking at.
  */
 typedef struct
 {
@@ -77,6 +89,7 @@ typedef struct
   size_t fade_in;  /* frames of ramp up from silence at the clip's head */
   size_t fade_out; /* frames of ramp down to silence at its tail */
   float gain;      /* linear, 1.0 for the audio as it was recorded */
+  int muted;       /* heard as silence, without forgetting anything above */
 } aud_clip;
 
 typedef struct
@@ -126,6 +139,14 @@ uint64_t aud_track_end(const aud_track *t);
 
 /* Whether any clip covers `frame`. Gaps and past the end are silence. */
 int aud_track_covered(const aud_track *t, uint64_t frame);
+
+/*
+ * Whether the clip covering `frame` is silenced. Zero where nothing covers it,
+ * because a gap is silence that has not been chosen against - the question this
+ * answers is "is this lane the one being heard here", and an empty lane is not
+ * an answer to it either way.
+ */
+int aud_track_muted_at(const aud_track *t, uint64_t frame);
 
 /*
  * The nearest clip boundary strictly after or before `frame`, or `frame` itself
@@ -214,6 +235,24 @@ int aud_track_gain_scale(aud_track *t, uint64_t from, uint64_t to, float by);
  * saved clip with. Returns 0, or -1 when no clip starts there.
  */
 int aud_track_gain_at(aud_track *t, uint64_t frame, float gain);
+
+/*
+ * Silence, or unsilence, every clip inside timeline frames [from, to),
+ * splitting at both edges first so what changes is exactly the range asked for.
+ *
+ * Set rather than toggled, because the caller that matters is comping and it
+ * knows which way round it wants every lane - see aud_edit_comp(). Returns 0
+ * when any clip was touched, -1 when the range held no audio or the clip list
+ * could not grow for the splits.
+ */
+int aud_track_mute_range(aud_track *t, uint64_t from, uint64_t to, int muted);
+
+/*
+ * Set the flag on the clip that starts exactly at `frame`, the way
+ * aud_track_gain_at() sets a gain there. What the project loader rebuilds a
+ * saved clip with. Returns 0, or -1 when no clip starts there.
+ */
+int aud_track_mute_at(aud_track *t, uint64_t frame, int muted);
 
 /*
  * Cut any clip that straddles `frame` into two adjoining clips over the same

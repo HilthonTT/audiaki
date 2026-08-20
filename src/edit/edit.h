@@ -180,6 +180,67 @@ typedef enum
  */
 int aud_edit_normalize(aud_doc *d, aud_normalize_target to, double level);
 
+/*
+ * Silence the selection, or unsilence it, on every selected track.
+ *
+ * Not the same as aud_edit_silence(), which takes the audio away and leaves a
+ * hole. This leaves everything where it is and stops it being heard, and it is
+ * undone by asking for the opposite - see track.h on the clip flag it sets.
+ *
+ * Returns 0 when anything was touched, -1 when nothing was selected.
+ */
+int aud_edit_mute(aud_doc *d, int muted);
+
+/*
+ * Comp: of the selected lanes, hear `keep` across the selection and none of
+ * the others.
+ *
+ * What four passes of the same bar are for. Every selected lane is silenced
+ * over the range and `keep` is unsilenced over it, so the mix carries one pass
+ * for that stretch - and doing it again with a different lane is how you change
+ * your mind, because nothing was thrown away either time.
+ *
+ * `keep` has to be one of the selected lanes. A comp that kept a lane which was
+ * not in the selection would silence every lane the selection covers and hear
+ * nothing, which is never what the press meant.
+ *
+ * Returns 0, or -1 when there is no range, no lanes selected, or `keep` is not
+ * among them.
+ */
+int aud_edit_comp(aud_doc *d, size_t keep);
+
+/*
+ * Cut the take on lane `index` that starts at `from` into passes `length`
+ * frames long, and lay each pass on a lane of its own starting at `from`.
+ *
+ * What a take recorded round and round a loop is: one continuous recording, one
+ * file, and a lap of the loop every `length` frames. Slicing it afterwards
+ * rather than starting and stopping the device at each lap is what keeps the
+ * passes exactly in time with each other - there is no gap to lose while a
+ * stream is torn down and stood up, and every pass came off the same clock.
+ *
+ * No audio is copied: every pass is a window onto the one block the take
+ * arrived in, the same way a split is - see samples.h. The new lanes go
+ * directly beneath `index` so the passes of one take stay together, and each
+ * takes its name from the take with the pass number after it.
+ *
+ * Every pass but the last is silenced, so what is heard afterwards is the last
+ * thing that was played rather than all of them at once. Which one to keep for
+ * which bar is what aud_edit_comp() is for, and the selection is left across
+ * every pass over the first lap, ready for it.
+ *
+ * Returns how many passes were made - 1 when the take did not reach a second lap
+ * and nothing was done at all - or -1 when the arguments describe no take.
+ *
+ * The laps are lifted last one first, so a project that runs out of lanes part
+ * way through keeps its latest passes as passes and leaves the early ones end
+ * to end on `index`, which is where they already were. Nothing is lost either
+ * way, and one press of Undo puts all of it back as it arrived.
+ *
+ * One checkpoint, so Undo puts the take back as the single piece it arrived as.
+ */
+int aud_edit_take_passes(aud_doc *d, size_t index, uint64_t from, uint64_t length);
+
 /* Remove track `index` outright. */
 int aud_edit_remove_track(aud_doc *d, size_t index);
 

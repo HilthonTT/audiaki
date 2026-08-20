@@ -110,6 +110,10 @@ static const struct
     {"+1 dB", APP_EDIT_LOUDER, "turn the selection up a decibel   ctrl++"},
     {"Normalize", APP_EDIT_NORMALIZE_PEAK,
      "measure the selection and put its peak at -1 dBTP   ctrl+N, shift for -18 LUFS"},
+    {"Limit", APP_EDIT_LIMIT,
+     "hold the selection under -1 dBTP, riding the peaks rather than clipping   ctrl+L"},
+    {"Mute", APP_EDIT_MUTE_TOGGLE,
+     "stop the selection being heard without moving or removing it   alt+K"},
 };
 
 #define SCREEN_EDIT_COUNT ((int)(sizeof(screen_edits) / sizeof(screen_edits[0])))
@@ -1156,7 +1160,7 @@ static const char *const help_keys[][2] = {
     {"1 - 6", "a visualiser style outright"},
     {"drag", "select audio; ctrl+click adds a track to the selection"},
     {"drag it again", "move the selection along its lane"},
-    {"left / right", "move the cursor; ctrl steps clip to clip, shift selects"},
+    {"left / right", "move the cursor; ctrl steps clip edge to marker, shift selects"},
     {"up / down", "the track above or below; shift adds it to the selection"},
     {"home / end", "the start or the end of the project"},
     {"ctrl+A", "select everything"},
@@ -1164,6 +1168,10 @@ static const char *const help_keys[][2] = {
     {"[ / ]", "fade the selection in, or out"},
     {"ctrl+- / +", "turn the selection down or up a decibel"},
     {"ctrl+N", "normalize the selection to -1 dBTP; shift for -18 LUFS"},
+    {"ctrl+L", "limit the selection to -1 dBTP, for when a normalize went over"},
+    {"K", "which pass is heard over the selection; shift walks back"},
+    {"alt+K", "mute the selection where it is, and hear it again"},
+    {"ctrl+M", "mark the ruler here, or take away the marker that is here"},
     {", / .", "move the selection earlier or later"},
     {"del", "delete the selection and close the gap"},
     {"ctrl+Z", "undo; ctrl+shift+Z redoes"},

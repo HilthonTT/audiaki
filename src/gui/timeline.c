@@ -605,6 +605,69 @@ static void draw_ruler_bars(const aud_timeline *tl, const tl_grid *g, Rectangle 
   }
 }
 
+/*
+ * The markers, along the foot of the ruler.
+ *
+ * A flag rather than a line: the grid already draws lines the whole way down
+ * every lane, and a marker that looked like one more of them would be lost
+ * among them. Drawn last of everything on the ruler so a marker sitting on a
+ * bar line is still legible.
+ *
+ * Clicking one puts the cursor exactly on it, which is what makes a marker
+ * worth having: a place you can get back to precisely rather than
+ * approximately. Handled before the scrub below sees the click, since a scrub
+ * would put the cursor wherever the pixel was instead.
+ */
+static void draw_markers(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle strip,
+                         int enabled)
+{
+  Vector2 mouse = GetMousePosition();
+  float foot = ruler.y + ruler.height - 1.0f;
+
+  if (d->rate == 0)
+  {
+    return;
+  }
+
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    float x = strip.x + aud_timeline_x_of(tl, (double)d->markers[i].at / d->rate);
+    Rectangle grab;
+    int over;
+
+    if (x < strip.x || x > strip.x + strip.width)
+    {
+      continue;
+    }
+
+    grab = (Rectangle){x - 3.0f, ruler.y, 12.0f, ruler.height};
+    over = enabled && CheckCollisionPointRec(mouse, grab);
+
+    DrawRectangleRec((Rectangle){x, foot - 11.0f, 9.0f, 8.0f},
+                     over ? AUD_UI_TEXT : AUD_UI_OK);
+    DrawLine((int)x, (int)(foot - 11.0f), (int)x, (int)foot, AUD_UI_OK);
+
+    if (d->markers[i].name[0] != '\0')
+    {
+      aud_ui_text(x + 12.0f, foot - 13.0f, TL_SMALL_FONT, AUD_UI_OK, d->markers[i].name);
+    }
+
+    if (over)
+    {
+      SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
+      snprintf(tl->hint, sizeof(tl->hint), "%s%s - ctrl+M takes it away",
+               d->markers[i].name[0] != '\0' ? d->markers[i].name : "a marker",
+               d->markers[i].name[0] != '\0' ? "" : " here");
+
+      if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
+      {
+        aud_doc_set_cursor(d, d->markers[i].at);
+        tl->marker_taken = 1;
+      }
+    }
+  }
+}
+
 static void draw_ruler(aud_timeline *tl, aud_doc *d, Rectangle ruler, uint64_t playhead,
                        int enabled)
 {
@@ -666,9 +729,12 @@ static void draw_ruler(aud_timeline *tl, aud_doc *d, Rectangle ruler, uint64_t p
     }
   }
 
+  tl->marker_taken = 0;
+  draw_markers(tl, d, ruler, strip, enabled);
+
   /* clicking or dragging the ruler moves the cursor, the way it does in every
    * editor with one - and it is the only way to place it past the last take */
-  if (enabled && CheckCollisionPointRec(GetMousePosition(), ruler) &&
+  if (enabled && !tl->marker_taken && CheckCollisionPointRec(GetMousePosition(), ruler) &&
       GetMousePosition().x >= strip.x)
   {
     SetMouseCursor(MOUSE_CURSOR_POINTING_HAND);
@@ -875,6 +941,54 @@ static void draw_clip_edges(const aud_track *t, Rectangle lane, unsigned rate,
     {
       DrawLine((int)e, (int)lane.y, (int)e, (int)(lane.y + lane.height),
                Fade(AUD_UI_WARN, 0.5f));
+    }
+  }
+}
+
+/*
+ * The clips that are not being heard, washed over.
+ *
+ * The waveform underneath is left as it is, deliberately: aud_track_range()
+ * follows the fades and the gain and does not follow this one - see track.h.
+ * Comping is choosing between four pictures of the same bar, and a pass whose
+ * waveform vanished the moment you chose another one would take away the thing
+ * you were choosing from. So it is dimmed rather than emptied, and which lane
+ * is live reads at a glance down the stack.
+ */
+static void draw_clip_mutes(const aud_track *t, Rectangle lane, unsigned rate,
+                            const aud_timeline *tl)
+{
+  for (size_t i = 0; i < t->count; i++)
+  {
+    const aud_clip *c = &t->clips[i];
+    float x;
+    float e;
+
+    if (!c->muted)
+    {
+      continue;
+    }
+
+    x = lane.x + aud_timeline_x_of(tl, (double)c->start / rate);
+    e = lane.x + aud_timeline_x_of(tl, (double)(c->start + c->frames) / rate);
+    if (x < lane.x)
+    {
+      x = lane.x;
+    }
+    if (e > lane.x + lane.width)
+    {
+      e = lane.x + lane.width;
+    }
+    if (e <= x)
+    {
+      continue;
+    }
+
+    DrawRectangleRec((Rectangle){x, lane.y, e - x, lane.height}, Fade(AUD_UI_BG, 0.68f));
+    if (e - x >= 52.0f)
+    {
+      aud_ui_text(x + 5.0f, lane.y + lane.height - 16.0f, TL_SMALL_FONT, AUD_UI_MUTED,
+                  "muted");
     }
   }
 }
@@ -1237,6 +1351,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
         }
       }
       draw_fades(t, lane, d->rate, tl);
+      draw_clip_mutes(t, lane, d->rate, tl);
       draw_clip_edges(t, lane, d->rate, tl);
       draw_clip_gains(t, lane, d->rate, tl);
     }

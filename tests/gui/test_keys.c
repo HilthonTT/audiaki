@@ -790,15 +790,88 @@ TEST(ctrl_holds_back_the_bare_keys_behind_it)
   }
 
   /*
-   * Ctrl+M is not the monitor and Ctrl+F is not a fit. Nothing is bound to
-   * either, and a window that fell through to the bare meaning would toggle
-   * the headphones under a chord aimed at something else entirely.
+   * Ctrl+F is not a fit and ctrl+B is not the visualiser panel. Nothing is
+   * bound to either, and a window that fell through to the bare meaning would
+   * rearrange itself under a chord aimed at something else entirely.
    */
   memset(&in, 0, sizeof(in));
   in.ctrl = 1;
-  in.pressed[APP_KEY_M] = 1;
+  in.pressed[APP_KEY_B] = 1;
   in.pressed[APP_KEY_F] = 1;
   CHECK_EQ_INT(map(a, &in, &st), 0);
+
+  /* and the two that ctrl does give a meaning of their own are not the bare
+   * ones: ctrl+M marks the ruler where M alone is the monitor, and ctrl+L
+   * limits where L alone is the loop */
+  in = press(APP_KEY_M, 1, 0, 0);
+  CHECK(only(map(a, &in, &st), APP_CMD_MARK));
+
+  in = press(APP_KEY_L, 1, 0, 0);
+  CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+  CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_LIMIT);
+
+  discard(a);
+}
+
+/*
+ * K walks the comp, and alt+K silences instead. Both are bare keys, so the
+ * thing worth checking is that neither is reachable with ctrl held - where K
+ * already means split.
+ */
+TEST(k_walks_the_comp_and_ctrl_still_splits)
+{
+  app *a = window(4.0);
+  aud_engine_status st = idle();
+  app_input in;
+
+  CHECK(a != NULL);
+  if (a == NULL)
+  {
+    return;
+  }
+
+  in = press(APP_KEY_K, 0, 0, 0);
+  CHECK(only(map(a, &in, &st), APP_CMD_COMP));
+  CHECK_EQ_INT(g_cmds[0].arg, 1);
+
+  in = press(APP_KEY_K, 0, 1, 0);
+  CHECK(only(map(a, &in, &st), APP_CMD_COMP));
+  CHECK_EQ_INT(g_cmds[0].arg, -1);
+
+  in = press(APP_KEY_K, 0, 0, 1);
+  CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+  CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_MUTE_TOGGLE);
+
+  in = press(APP_KEY_K, 1, 0, 0);
+  CHECK(only(map(a, &in, &st), APP_CMD_EDIT));
+  CHECK_EQ_INT(g_cmds[0].arg, APP_EDIT_SPLIT);
+
+  discard(a);
+}
+
+/*
+ * Ctrl+arrow lands on markers as well as on clip edges. One key for "the next
+ * thing worth landing on" rather than two that each know about half of them.
+ */
+TEST(ctrl_arrow_steps_to_a_marker_as_well_as_to_a_clip_edge)
+{
+  app *a = window(4.0);
+
+  CHECK(a != NULL);
+  if (a == NULL)
+  {
+    return;
+  }
+
+  CHECK(aud_doc_mark(&a->doc, TEST_RATE, "chorus") >= 0);
+  aud_doc_set_cursor(&a->doc, 0);
+
+  /* the lane runs 0 to 4 s in one piece, so its only edge ahead is the end -
+   * and the marker at one second is nearer */
+  CHECK_EQ_INT(app_cursor_target(a, 0, 1, 0, 0), TEST_RATE);
+
+  aud_doc_set_cursor(&a->doc, 2u * TEST_RATE);
+  CHECK_EQ_INT(app_cursor_target(a, 1, 1, 0, 0), TEST_RATE);
 
   discard(a);
 }
@@ -884,6 +957,8 @@ int main(void)
   RUN(the_arrows_carry_the_modifiers_the_target_is_worked_out_from);
   RUN(two_keys_in_one_frame_come_out_in_the_order_they_are_carried_out);
   RUN(ctrl_holds_back_the_bare_keys_behind_it);
+  RUN(k_walks_the_comp_and_ctrl_still_splits);
+  RUN(ctrl_arrow_steps_to_a_marker_as_well_as_to_a_clip_edge);
   RUN(every_style_has_a_digit_of_its_own);
   RUN(a_frame_of_every_key_at_once_still_fits);
   return TEST_RESULT();

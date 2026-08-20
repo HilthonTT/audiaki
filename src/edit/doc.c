@@ -182,6 +182,9 @@ static void state_free(aud_doc_state *s)
   free_tracks(s->tracks, s->count);
   s->tracks = NULL;
   s->count = 0;
+  free(s->markers);
+  s->markers = NULL;
+  s->marker_count = 0;
 }
 
 void aud_doc_free(aud_doc *d)
@@ -201,6 +204,7 @@ void aud_doc_free(aud_doc *d)
   }
 
   free_tracks(d->tracks, d->count);
+  free(d->markers);
   memset(d, 0, sizeof(*d));
 }
 
@@ -333,6 +337,226 @@ size_t aud_doc_bytes(const aud_doc *d)
   return bytes;
 }
 
+/* Room for one more marker, growing the list if it has to. Returns 0, or -1. */
+static int marker_room(aud_doc *d)
+{
+  size_t want;
+  aud_marker *grown;
+
+  if (d->marker_count < d->marker_capacity)
+  {
+    return 0;
+  }
+  if (d->marker_count >= AUD_DOC_MAX_MARKERS)
+  {
+    return -1;
+  }
+
+  want = d->marker_capacity == 0 ? 16u : d->marker_capacity * 2u;
+  if (want > AUD_DOC_MAX_MARKERS)
+  {
+    want = AUD_DOC_MAX_MARKERS;
+  }
+
+  grown = realloc(d->markers, want * sizeof(*grown));
+  if (grown == NULL)
+  {
+    return -1;
+  }
+
+  d->markers = grown;
+  d->marker_capacity = want;
+  return 0;
+}
+
+/* Where a marker at `at` belongs in the sorted list. */
+static size_t marker_slot(const aud_doc *d, uint64_t at)
+{
+  size_t i = 0;
+
+  while (i < d->marker_count && d->markers[i].at < at)
+  {
+    i++;
+  }
+  return i;
+}
+
+long aud_doc_mark(aud_doc *d, uint64_t at, const char *name)
+{
+  size_t slot;
+
+  if (d == NULL)
+  {
+    return -1;
+  }
+
+  slot = marker_slot(d, at);
+
+  /* one already here: this is a rename rather than a second marker */
+  if (slot < d->marker_count && d->markers[slot].at == at)
+  {
+    snprintf(d->markers[slot].name, sizeof(d->markers[slot].name), "%s",
+             name != NULL ? name : "");
+    d->dirty = 1;
+    return (long)slot;
+  }
+
+  if (marker_room(d) != 0)
+  {
+    return -1;
+  }
+
+  memmove(&d->markers[slot + 1u], &d->markers[slot],
+          (d->marker_count - slot) * sizeof(*d->markers));
+  d->markers[slot].at = at;
+  snprintf(d->markers[slot].name, sizeof(d->markers[slot].name), "%s",
+           name != NULL ? name : "");
+  d->marker_count++;
+  d->dirty = 1;
+  return (long)slot;
+}
+
+void aud_doc_unmark(aud_doc *d, size_t index)
+{
+  if (d == NULL || index >= d->marker_count)
+  {
+    return;
+  }
+
+  memmove(&d->markers[index], &d->markers[index + 1u],
+          (d->marker_count - index - 1u) * sizeof(*d->markers));
+  d->marker_count--;
+  d->dirty = 1;
+}
+
+void aud_doc_clear_markers(aud_doc *d)
+{
+  if (d == NULL)
+  {
+    return;
+  }
+
+  d->marker_count = 0;
+  d->dirty = 1;
+}
+
+long aud_doc_marker_at(const aud_doc *d, uint64_t at)
+{
+  if (d == NULL)
+  {
+    return -1;
+  }
+
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    if (d->markers[i].at == at)
+    {
+      return (long)i;
+    }
+    if (d->markers[i].at > at)
+    {
+      break;
+    }
+  }
+  return -1;
+}
+
+long aud_doc_marker_near(const aud_doc *d, uint64_t at, uint64_t within)
+{
+  long best = -1;
+  uint64_t closest = 0;
+
+  if (d == NULL)
+  {
+    return -1;
+  }
+
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    uint64_t away = d->markers[i].at > at ? d->markers[i].at - at : at - d->markers[i].at;
+
+    if (away > within)
+    {
+      continue;
+    }
+    /* strictly nearer, so a tie is settled by the earlier marker */
+    if (best < 0 || away < closest)
+    {
+      best = (long)i;
+      closest = away;
+    }
+  }
+  return best;
+}
+
+uint64_t aud_doc_marker_step(const aud_doc *d, uint64_t frame, int back)
+{
+  if (d == NULL || d->marker_count == 0)
+  {
+    return frame;
+  }
+
+  if (back)
+  {
+    for (size_t i = d->marker_count; i > 0; i--)
+    {
+      if (d->markers[i - 1u].at < frame)
+      {
+        return d->markers[i - 1u].at;
+      }
+    }
+    return frame;
+  }
+
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    if (d->markers[i].at > frame)
+    {
+      return d->markers[i].at;
+    }
+  }
+  return frame;
+}
+
+void aud_doc_markers_ripple(aud_doc *d, uint64_t at, int64_t by)
+{
+  size_t kept = 0;
+
+  if (d == NULL || by == 0)
+  {
+    return;
+  }
+
+  for (size_t i = 0; i < d->marker_count; i++)
+  {
+    uint64_t was = d->markers[i].at;
+
+    if (was < at)
+    {
+      d->markers[kept++] = d->markers[i];
+      continue;
+    }
+
+    /*
+     * A marker inside the stretch that has just been taken away. There is no
+     * frame left for it to describe, so it goes with the audio it was pointing
+     * at rather than piling up on the seam with every other marker in the
+     * range.
+     */
+    if (by < 0 && was - at < (uint64_t)(-by))
+    {
+      continue;
+    }
+
+    d->markers[kept] = d->markers[i];
+    d->markers[kept].at = aud_frame_offset(was, by);
+    kept++;
+  }
+
+  d->marker_count = kept;
+  d->dirty = 1;
+}
+
 void aud_doc_set_cursor(aud_doc *d, uint64_t frame)
 {
   if (d == NULL)
@@ -437,6 +661,22 @@ static int state_capture(aud_doc_state *s, const aud_doc *d, const char *label)
   s->sel_start = d->sel_start;
   s->sel_end = d->sel_end;
 
+  /*
+   * A handful of structs beside a clip list, so this costs a snapshot nothing
+   * worth counting - and without it an undo of a ripple delete would put the
+   * audio back and leave the ruler describing where it used to be.
+   */
+  if (d->marker_count > 0)
+  {
+    s->markers = calloc(d->marker_count, sizeof(*s->markers));
+    if (s->markers == NULL)
+    {
+      return -1;
+    }
+    memcpy(s->markers, d->markers, d->marker_count * sizeof(*s->markers));
+    s->marker_count = d->marker_count;
+  }
+
   if (d->count == 0)
   {
     return 0;
@@ -454,6 +694,9 @@ static int state_capture(aud_doc_state *s, const aud_doc *d, const char *label)
     {
       free_tracks(s->tracks, i);
       s->tracks = NULL;
+      free(s->markers);
+      s->markers = NULL;
+      s->marker_count = 0;
       return -1;
     }
   }
@@ -465,6 +708,11 @@ static int state_capture(aud_doc_state *s, const aud_doc *d, const char *label)
 static void state_restore(aud_doc *d, aud_doc_state *s)
 {
   free_tracks(d->tracks, d->count);
+
+  free(d->markers);
+  d->markers = s->markers;
+  d->marker_count = s->marker_count;
+  d->marker_capacity = s->marker_count;
 
   d->tracks = s->tracks;
   d->count = s->count;

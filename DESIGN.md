@@ -460,6 +460,95 @@ is left alone rather than multiplied by a guess, and every lane is measured
 before any is changed, so a normalize that finds nothing measurable costs no
 undo step.
 
+A mute is the fourth thing a clip carries, and the reason it is a flag rather
+than a gain of zero is comping. Choosing between four passes of a bar means
+changing your mind: putting the bar back on pass two has to find pass two
+exactly as it was left, gain and fades and all, and a zero written into the gain
+field would have thrown one of those away on the way past. So it sits beside the
+gain, `aud_track_read()` steps over the clip entirely, and flipping it back is
+free. It is deliberately *not* reflected in `aud_track_range()`, which the fades
+and the gain are: a comp is a picture of the passes being chosen between, and a
+pass whose waveform vanished when another was chosen would take away the thing
+being looked at.
+
+### Comping, and the loop take underneath it
+
+Recording round a loop looks like it wants the device stopped and started at
+every lap, and it does not. The take is one continuous recording into one file,
+and the laps are cut out of it afterwards by `aud_edit_take_passes()`: the clip
+is split every `length` frames and each piece is lifted onto a lane of its own
+at the loop's start. Nothing there is new machinery - it is the same clip
+surgery a split and a move already are, so no audio is copied and one press of
+undo puts the take back as the single piece it arrived as.
+
+Two things fall out of doing it that way rather than the obvious way. There is
+no moment lost either side of a loop point while a stream is torn down and
+stood up again, which on a passage being learned is exactly the moment that
+matters. And every pass came off the same clock, so they line up with each other
+to the sample - where separate recordings would each have started within a drawn
+frame of somewhere.
+
+Comping on top of that is then only the mute flag: `aud_edit_comp()` silences
+the selection on every selected lane except the one being kept, and unsilences
+it there. Which lane that is walks with one key, because auditioning four
+passes of a bar is pressing the same key four times rather than reaching for
+four different lanes. Nothing is cut, so the eleventh bar can be reconsidered
+without the first ten takes of it having been thrown away, and the mix, the
+stems and the export all follow for free - every one of them reads through
+`aud_track_read()`, which is the whole reason there is one reader.
+
+### Holding it under a ceiling
+
+Normalizing to a loudness target can go past full scale. It is a gated mean, so
+a take with one transient far above its average has to go over to reach the
+target, and the window's answer used to be to do it and say so.
+
+`audio/limiter.h` is the other answer, and it is the second edit here that is
+not clip surgery. There is no arrangement of clips that means "this take, under
+a ceiling", so `edit/limit.c` reads the range out, limits it, writes it beside
+the takes as a WAV and puts it back as one clip - which is exactly what
+`edit/repair.c` does with the spectral edit, for exactly the same reasons, down
+to an undo leaving the file behind because redo still refers to it.
+
+The limiter itself is a sliding minimum followed by a moving average, both over
+the look-ahead window. That pairing is what makes it a limiter rather than a
+clipper, and it is also what makes it provable: every minimum in the average was
+taken over a window containing the frame being turned down, so each of them is
+at most what that frame asked for, and so is their mean. The gain is therefore
+already down when the transient arrives, and it got there over five milliseconds
+rather than in one sample.
+
+What it measures is the true peak, through `audio/truepeak.h` - which exists as
+its own file precisely so that this and `audio/loudness.h` cannot disagree. A
+limiter judged by a slightly different interpolator from the meter that reports
+on it would leave the window saying a take was over a ceiling it had just been
+put under, and no amount of care in either file would fix that.
+
+It is not on the export. The mixdown deliberately does not clamp - see
+`edit/export.h` - and a limiter there would break the one property stems have
+that makes them worth anything, that they add back up to the mix.
+
+### Places on the ruler
+
+A marker is a frame and a name. They are a property of the session rather than
+of the view, so they are saved with it, and they are part of an undo step -
+unlike the tempo and the grid beside them, which are not. The difference is that
+an edit which shortens the timeline moves them: a ripple delete brings the ruler
+back with the audio, and undoing it has to put both back or the ruler ends up
+describing bars that are no longer there.
+
+That only happens when the edit rippled every lane. A delete on some of the
+lanes and not others leaves the project exactly as long as it was - the
+untouched lanes still reach where they reached - and moving every marker in the
+session to fix one would be the wrong trade.
+
+They reach the keyboard through the key that already meant "the next thing worth
+landing on". `app_cursor_target()` with ctrl held looked for the nearest clip
+edge; it now looks for the nearest clip edge or marker. The start of a take, the
+cut you made in it and the place you wrote down as the second chorus are the
+same kind of destination, and one key that knows about all three is better than
+two that each know about half.
+
 ### Moving a piece of it
 
 Moving audio along a lane is the same trick once more: the clips inside the

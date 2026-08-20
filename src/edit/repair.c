@@ -1,20 +1,12 @@
 /* SPDX-License-Identifier: MIT */
 #include "edit/repair.h"
 
-#include "media/wav.h"
-#include "take/take.h"
-#include "util/bytes.h"
+#include "edit/load.h"
 #include "util/path.h"
 
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-
-/* What the cleaned-up audio is written at, which is what audiaki records at. */
-#define REPAIR_BITS 24u
-
-/* Frames handed to the WAV writer per pass, so a long repair stages little. */
-#define REPAIR_CHUNK 8192u
 
 static void say(const char **why, const char *text)
 {
@@ -124,108 +116,6 @@ int aud_repair_read(const aud_doc *d, size_t index, uint64_t from, uint64_t to,
   return aud_spectral_has_reading(s) ? 0 : -1;
 }
 
-/*
- * One float sample as REPAIR_BITS of little-endian PCM.
- *
- * Clamped, because a file has to hold something and wrapping round to the
- * opposite polarity would turn a loud passage into a burst of noise. Nothing
- * here should reach full scale that did not arrive at it - the filter only ever
- * takes energy out - but oversubtraction can overshoot by a hair on a transient
- * and a take mastered to the ceiling has no hair to spare.
- */
-static void put_sample(unsigned char *dst, float v)
-{
-  if (v > 1.0f)
-  {
-    v = 1.0f;
-  }
-  if (v < -1.0f)
-  {
-    v = -1.0f;
-  }
-
-  aud_wr_s24le(dst, (int32_t)(v * 8388607.0f));
-}
-
-/*
- * Write `block` into `dir` under the first free AUD_REPAIR_PREFIX name, and
- * put that name into `path`. Returns 0, or -1 with `*why` set.
- */
-static int write_block(const aud_samples *block, unsigned rate, const char *dir,
-                       char *path, size_t size, const char **why)
-{
-  char prefix[AUD_PATH_MAX];
-  wav_writer w;
-  unsigned char *pcm;
-  size_t frame_bytes = (size_t)block->channels * (REPAIR_BITS / 8u);
-
-  if (aud_path_join(prefix, sizeof(prefix), dir, AUD_REPAIR_PREFIX) != 0 ||
-      aud_take_next(path, size, prefix) != 0)
-  {
-    say(why, "there was nowhere to put the cleaned-up audio");
-    return -1;
-  }
-
-  pcm = malloc(REPAIR_CHUNK * frame_bytes);
-  if (pcm == NULL)
-  {
-    say(why, "not enough memory to write the cleaned-up audio");
-    return -1;
-  }
-
-  if (wav_open_ex(&w, path, rate, (uint16_t)block->channels, (uint16_t)REPAIR_BITS, 0,
-                  NULL, WAV_OPEN_LARGE) != 0)
-  {
-    say(why, errno == EEXIST ? "a file of that name is already there"
-                             : "the cleaned-up audio could not be written");
-    free(pcm);
-    return -1;
-  }
-
-  for (size_t at = 0; at < block->frames;)
-  {
-    size_t want = block->frames - at;
-    size_t bytes;
-
-    if (want > REPAIR_CHUNK)
-    {
-      want = REPAIR_CHUNK;
-    }
-
-    for (size_t i = 0; i < want; i++)
-    {
-      for (unsigned c = 0; c < block->channels; c++)
-      {
-        size_t at_sample = (at + i) * block->channels + c;
-
-        put_sample(pcm + (i * block->channels + c) * (REPAIR_BITS / 8u),
-                   block->data[at_sample]);
-      }
-    }
-
-    bytes = want * frame_bytes;
-    if (wav_would_overflow(&w, bytes) || wav_write(&w, pcm, bytes) != 0)
-    {
-      say(why, "the cleaned-up audio could not be written");
-      wav_discard(&w);
-      free(pcm);
-      return -1;
-    }
-
-    at += want;
-  }
-
-  free(pcm);
-
-  if (wav_close(&w) != 0)
-  {
-    say(why, "the cleaned-up audio could not be finished");
-    return -1;
-  }
-
-  return 0;
-}
-
 int aud_repair_apply(aud_doc *d, size_t index, uint64_t from, uint64_t to,
                      aud_spectral *s, const char *dir, const char **why)
 {
@@ -308,7 +198,8 @@ int aud_repair_apply(aud_doc *d, size_t index, uint64_t from, uint64_t to,
 
   aud_samples_index(block);
 
-  if (write_block(block, d->rate, dir, path, sizeof(path), why) != 0)
+  if (aud_edit_write_block(block, d->rate, dir, AUD_REPAIR_PREFIX, path, sizeof(path),
+                           why) != 0)
   {
     aud_samples_release(block);
     return -1;

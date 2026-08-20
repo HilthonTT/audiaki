@@ -45,6 +45,33 @@ static int have_work(const aud_doc *d)
   return d != NULL && aud_doc_has_range(d) && aud_doc_any_track_selected(d);
 }
 
+/*
+ * Whether an edit about to ripple is going to ripple the whole project.
+ *
+ * This is the question the markers turn on. A ripple across every lane makes
+ * the timeline genuinely shorter, and a marker that stayed where it was would
+ * end up describing a bar that had moved out from under it. A ripple across
+ * some of the lanes and not others leaves the project exactly as long as it
+ * was - the untouched lanes still reach where they reached - and moving the
+ * ruler for it would put every marker in the session wrong in order to fix one.
+ */
+static int every_lane_selected(const aud_doc *d)
+{
+  if (d == NULL || d->count == 0)
+  {
+    return 0;
+  }
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (!d->tracks[i].selected)
+    {
+      return 0;
+    }
+  }
+  return 1;
+}
+
 int aud_edit_delete(aud_doc *d)
 {
   if (!have_work(d))
@@ -53,6 +80,11 @@ int aud_edit_delete(aud_doc *d)
   }
 
   aud_doc_checkpoint(d, "delete");
+
+  if (every_lane_selected(d))
+  {
+    aud_doc_markers_ripple(d, d->sel_start, -(int64_t)(d->sel_end - d->sel_start));
+  }
 
   for (size_t i = 0; i < d->count; i++)
   {
@@ -152,6 +184,7 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
   size_t targets[AUD_DOC_MAX_TRACKS];
   size_t target_count = 0;
   uint64_t at;
+  int whole;
 
   if (d == NULL || aud_clipboard_empty(c))
   {
@@ -162,6 +195,7 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
     return -1; /* pasting 48 kHz into 44.1 would play back at the wrong pitch */
   }
 
+  whole = every_lane_selected(d);
   aud_doc_checkpoint(d, "paste");
 
   /*
@@ -171,6 +205,10 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
    */
   if (aud_doc_has_range(d) && aud_doc_any_track_selected(d))
   {
+    if (whole)
+    {
+      aud_doc_markers_ripple(d, d->sel_start, -(int64_t)(d->sel_end - d->sel_start));
+    }
     for (size_t i = 0; i < d->count; i++)
     {
       if (d->tracks[i].selected)
@@ -180,6 +218,12 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
     }
   }
   at = d->sel_start;
+
+  /* and the room the clipboard is about to open, for the same reason */
+  if (whole)
+  {
+    aud_doc_markers_ripple(d, at, (int64_t)c->frames);
+  }
 
   for (size_t i = 0; i < d->count && target_count < AUD_DOC_MAX_TRACKS; i++)
   {
@@ -240,6 +284,18 @@ int aud_edit_trim(aud_doc *d)
   from = d->sel_start;
   to = d->sel_end;
   aud_doc_checkpoint(d, "trim");
+
+  /* the same two removals the loop below makes, said to the ruler */
+  if (every_lane_selected(d))
+  {
+    uint64_t end = aud_doc_end(d);
+
+    if (end > to)
+    {
+      aud_doc_markers_ripple(d, to, -(int64_t)(end - to));
+    }
+    aud_doc_markers_ripple(d, 0, -(int64_t)from);
+  }
 
   for (size_t i = 0; i < d->count; i++)
   {
@@ -639,6 +695,180 @@ int aud_edit_normalize(aud_doc *d, aud_normalize_target to, double level)
 
   d->dirty = 1;
   return any ? 0 : -1;
+}
+
+int aud_edit_mute(aud_doc *d, int muted)
+{
+  int any = 0;
+
+  if (!have_work(d))
+  {
+    return -1;
+  }
+
+  aud_doc_checkpoint(d, muted ? "mute" : "unmute");
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (d->tracks[i].selected)
+    {
+      any = aud_track_mute_range(&d->tracks[i], d->sel_start, d->sel_end, muted) == 0 ||
+            any;
+    }
+  }
+
+  d->dirty = 1;
+  return any ? 0 : -1;
+}
+
+int aud_edit_comp(aud_doc *d, size_t keep)
+{
+  int any = 0;
+
+  if (!have_work(d) || keep >= d->count || !d->tracks[keep].selected)
+  {
+    return -1;
+  }
+
+  aud_doc_checkpoint(d, "comp");
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (!d->tracks[i].selected)
+    {
+      continue;
+    }
+
+    /*
+     * The kept lane is unsilenced rather than left alone: comping is something
+     * you do repeatedly over the same bar, and the lane being chosen this time
+     * is usually one that a previous press silenced.
+     */
+    any = aud_track_mute_range(&d->tracks[i], d->sel_start, d->sel_end, i != keep) == 0 ||
+          any;
+  }
+
+  d->dirty = 1;
+  return any ? 0 : -1;
+}
+
+/*
+ * Lift frames [from, to) of `src` onto a lane of its own, placed directly
+ * beneath `index`, and take them off `src`.
+ *
+ * Returns the index the new lane ended up at, or -1 having changed nothing -
+ * which for the caller means the project has run out of lanes and the rest of
+ * the take stays where it is.
+ */
+static long lift_pass(aud_doc *d, size_t index, const char *name, uint64_t from,
+                      uint64_t to, uint64_t at)
+{
+  aud_track lifted;
+  aud_track *fresh;
+  size_t landed;
+
+  if (aud_track_extract(&d->tracks[index], from, to, &lifted) != 0)
+  {
+    return -1;
+  }
+
+  fresh = aud_doc_add_track(d, name, d->tracks[index].channels);
+  if (fresh == NULL)
+  {
+    aud_track_free(&lifted);
+    return -1;
+  }
+
+  if (aud_track_paste(fresh, at, &lifted) != 0)
+  {
+    aud_track_free(&lifted);
+    aud_doc_remove_track(d, d->count - 1u);
+    return -1;
+  }
+  aud_track_free(&lifted);
+
+  /*
+   * Walked up from the bottom to just under the take it came off. Passes of one
+   * take belong next to each other: choosing between them means looking at them
+   * side by side, and a lane of the same take four rows down is one nobody
+   * finds.
+   */
+  landed = d->count - 1u;
+  while (landed > index + 1u)
+  {
+    aud_doc_move_track(d, landed, 0);
+    landed--;
+  }
+
+  aud_track_delete(&d->tracks[index], from, to, 0);
+  return (long)landed;
+}
+
+int aud_edit_take_passes(aud_doc *d, size_t index, uint64_t from, uint64_t length)
+{
+  char base[AUD_TRACK_NAME_MAX];
+  uint64_t end;
+  uint64_t passes;
+  uint64_t made = 1;
+
+  if (d == NULL || index >= d->count || length == 0)
+  {
+    return -1;
+  }
+
+  end = aud_track_end(&d->tracks[index]);
+  if (end <= from || end - from <= length)
+  {
+    return 1; /* the take never came round again; it is already one pass */
+  }
+
+  passes = (end - from + length - 1u) / length;
+  snprintf(base, sizeof(base), "%s", d->tracks[index].name);
+
+  aud_doc_checkpoint(d, "loop take");
+
+  /*
+   * Backwards, so that each pass lifted lands directly under the take and
+   * pushes the ones lifted before it down: the last pass is lifted first and
+   * ends up last. Going forwards would need every earlier pass moved again
+   * each time round.
+   */
+  for (uint64_t k = passes - 1u; k >= 1u; k--)
+  {
+    char name[AUD_TRACK_NAME_MAX];
+    uint64_t start = from + k * length;
+    uint64_t stop = start + length < end ? start + length : end;
+
+    snprintf(name, sizeof(name), "%.48s pass %llu", base, (unsigned long long)(k + 1u));
+    if (lift_pass(d, index, name, start, stop, from) < 0)
+    {
+      break;
+    }
+    made++;
+  }
+
+  if (made > 1)
+  {
+    snprintf(d->tracks[index].name, sizeof(d->tracks[index].name), "%.48s pass 1", base);
+  }
+
+  /*
+   * Everything but the last pass silenced, so what plays back is what was just
+   * played rather than every attempt at once, and the whole stack selected over
+   * the first lap so the next press can be a comp.
+   */
+  aud_doc_select_tracks(d, 0);
+  for (uint64_t k = 0; k < made; k++)
+  {
+    aud_track *t = &d->tracks[index + (size_t)k];
+
+    t->selected = 1;
+    aud_track_mute_range(t, from, from + length, k + 1u < made);
+  }
+
+  aud_doc_select(d, from, from + length);
+  d->dirty = 1;
+  return (int)made;
 }
 
 int aud_edit_remove_track(aud_doc *d, size_t index)

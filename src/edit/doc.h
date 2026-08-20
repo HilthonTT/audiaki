@@ -45,6 +45,27 @@
 /* What a project counts on until someone says otherwise. */
 #define AUD_DOC_DEFAULT_TEMPO 120.0
 
+/*
+ * A place on the ruler worth coming back to, and what it is called.
+ *
+ * The grid says where the bars are and a marker says where the second chorus
+ * is, which is a different question: one is arithmetic from the tempo and the
+ * other is something only the person playing knows. Forty-eight characters is
+ * enough for "solo - come in late" and short enough to draw on a ruler beside
+ * a dozen others.
+ *
+ * More of them than any session has, and few enough that a hand-edited project
+ * asking for thousands is refused rather than believed.
+ */
+#define AUD_MARKER_NAME_MAX 48
+#define AUD_DOC_MAX_MARKERS 512
+
+typedef struct
+{
+  uint64_t at;
+  char name[AUD_MARKER_NAME_MAX];
+} aud_marker;
+
 typedef struct
 {
   aud_track *tracks;
@@ -52,6 +73,15 @@ typedef struct
   uint64_t cursor;
   uint64_t sel_start;
   uint64_t sel_end;
+
+  /*
+   * The markers as they stood, because an edit that ripples moves them - see
+   * aud_doc_markers_ripple(). Undoing the edit has to put them back where they
+   * were or the ruler ends up describing audio that has been taken away.
+   */
+  aud_marker *markers;
+  size_t marker_count;
+
   char label[AUD_DOC_LABEL_MAX]; /* the edit this was taken before */
 } aud_doc_state;
 
@@ -86,6 +116,17 @@ typedef struct
   aud_track *tracks;
   size_t count;
   size_t capacity;
+
+  /*
+   * Places on the ruler, sorted by where they are and never two at one frame.
+   *
+   * A property of the session like the tempo is, and saved with it - but unlike
+   * the tempo these are part of an undo step, because an edit that shortens the
+   * timeline moves them and undoing it has to move them back.
+   */
+  aud_marker *markers;
+  size_t marker_count;
+  size_t marker_capacity;
 
   /*
    * The selection. `sel_start == sel_end` is a cursor rather than a range, and
@@ -187,6 +228,58 @@ uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame);
  * grid, which the caller should read as "nothing to step to".
  */
 uint64_t aud_doc_grid_step(const aud_doc *d, uint64_t frame, int back);
+
+/* -- markers --------------------------------------------------------------- */
+
+/*
+ * Put a marker at `at`, called `name` - which may be NULL or empty for one that
+ * is only a place. Returns its index, or -1 when there is no room for another.
+ *
+ * A marker already at that exact frame is renamed rather than joined by a
+ * second: two markers at one place would draw on top of each other and there
+ * would be no way to pick either.
+ */
+long aud_doc_mark(aud_doc *d, uint64_t at, const char *name);
+
+/* Take marker `index` away. An index past the end changes nothing. */
+void aud_doc_unmark(aud_doc *d, size_t index);
+
+/* Take every marker away. */
+void aud_doc_clear_markers(aud_doc *d);
+
+/* The marker at exactly `at`, or -1 when there is none there. */
+long aud_doc_marker_at(const aud_doc *d, uint64_t at);
+
+/*
+ * The marker nearest `at` and no further from it than `within`, or -1.
+ *
+ * What a click on the ruler lands on, and what tells a key that drops a marker
+ * that it is being pressed on one that is already there. Ties go to the earlier
+ * one, so a pointer exactly between two behaves the same way twice.
+ */
+long aud_doc_marker_near(const aud_doc *d, uint64_t at, uint64_t within);
+
+/*
+ * The marker one before or one after `frame`, or `frame` itself when there is
+ * none that way - which the caller should read as "nothing to step to", the
+ * same answer aud_doc_grid_step() gives.
+ *
+ * Always moves: sitting exactly on a marker steps off it rather than returning
+ * it again, so the key can be leant on.
+ */
+uint64_t aud_doc_marker_step(const aud_doc *d, uint64_t frame, int back);
+
+/*
+ * Move every marker from `at` on by `by` frames, and drop any that lands
+ * before `at` - which is what a delete does to the markers inside the range it
+ * took away.
+ *
+ * Called by the edits that change how long the timeline is, and only when they
+ * changed it for every lane. A ripple on some of the lanes and not others
+ * leaves the project no shorter than it was, and moving the ruler for it would
+ * put every marker in the session wrong to fix one of them.
+ */
+void aud_doc_markers_ripple(aud_doc *d, uint64_t at, int64_t by);
 
 /* -- selection ------------------------------------------------------------- */
 

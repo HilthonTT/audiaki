@@ -24,6 +24,7 @@
 #include "backend/backend.h"
 #include "backend/device.h"
 #include "backend/monitor.h"
+#include "edit/edit.h"
 #include "edit/load.h"
 #include "take/latency.h"
 #include "take/take.h"
@@ -268,7 +269,20 @@ void app_begin_take(app *a)
 
   aud_player_stop(&a->player);
 
-  at = a->doc.cursor;
+  /*
+   * Loop turned on with a stretch selected means recording round that stretch:
+   * the take starts at the top of it however far along the cursor is, the
+   * transport goes round rather than running off the end, and every lap becomes
+   * a pass of its own when the take stops.
+   *
+   * One recording and one file for all of it. The laps are cut out of what
+   * arrived rather than being recorded separately - see aud_edit_take_passes()
+   * - because tearing the device down and standing it up again at each lap
+   * would lose the moment either side of every loop point.
+   */
+  a->lap_frames =
+      a->loop && aud_doc_has_range(&a->doc) ? a->doc.sel_end - a->doc.sel_start : 0;
+  at = a->lap_frames > 0 ? a->doc.sel_start : a->doc.cursor;
 
   /*
    * Playback first, because whether it started is what decides where the take
@@ -281,17 +295,21 @@ void app_begin_take(app *a)
   latency = 0;
   along = a->overdub && aud_doc_end(&a->doc) > at;
 
-  if (along || a->click_on)
+  if (along || a->click_on || a->lap_frames > 0)
   {
-    /* the project only when it was asked for; the click runs either way, and
-     * past the end of what is there, so the pass has no end of its own */
-    aud_player_set_mix(&a->player, along);
-    app_apply_transport(a);
-    aud_player_set_loop(&a->player, 0);
+    /*
+     * A loop take is bounded by the loop, whatever else is on. Otherwise the
+     * project only when it was asked for, and the click runs either way and
+     * past the end of what is there, so the pass has no end of its own.
+     */
+    uint64_t until = a->lap_frames > 0 ? a->doc.sel_end
+                     : a->click_on     ? AUD_PLAYER_OPEN_ENDED
+                                       : aud_doc_end(&a->doc);
 
-    if (aud_player_start(&a->player, &a->doc, at,
-                         a->click_on ? AUD_PLAYER_OPEN_ENDED : aud_doc_end(&a->doc),
-                         a->cfg.monitor_device) == 0)
+    aud_player_set_mix(&a->player, along);
+    app_apply_transport(a); /* which is what turns the loop on, see it for why */
+
+    if (aud_player_start(&a->player, &a->doc, at, until, a->cfg.monitor_device) == 0)
     {
       latency = app_latency_frames(a);
     }
@@ -305,6 +323,7 @@ void app_begin_take(app *a)
   if (target < 0)
   {
     aud_player_stop(&a->player);
+    a->lap_frames = 0;
     app_set_status(a, "no room for another track");
     return;
   }
@@ -313,6 +332,7 @@ void app_begin_take(app *a)
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {
     aud_player_stop(&a->player);
+    a->lap_frames = 0;
     app_set_status(a, "there is already audio there - move the cursor");
     return;
   }
@@ -328,6 +348,14 @@ void app_begin_take(app *a)
     aud_track_record_end(&a->doc.tracks[target]);
     a->record_track = -1;
     a->record_skip = 0;
+    a->lap_frames = 0;
+    return;
+  }
+
+  if (a->lap_frames > 0)
+  {
+    app_set_status(a, "recording round %.2f s - every lap becomes a pass",
+                   (double)a->lap_frames / aud_engine_rate(a->engine));
     return;
   }
 
@@ -463,12 +491,37 @@ void app_stop_take(app *a, const aud_engine_status *st)
     }
     else
     {
+      int passes = 1;
+
       snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
-      app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
+
+      /*
+       * A take recorded round a loop, cut into one lane a lap. After the name,
+       * because the passes take theirs from it - and only here, where the take
+       * and the timeline are known to agree: the reload above rebuilds the lane
+       * from the file at frame zero, which is not where the laps were.
+       */
+      if (a->lap_frames > 0)
+      {
+        passes = aud_edit_take_passes(&a->doc, (size_t)a->record_track, a->record_at,
+                                      a->lap_frames);
+      }
+
+      if (passes > 1)
+      {
+        a->project_dirty = 1;
+        app_set_status(a, "%d passes of %.2f s - K walks them, alt+K mutes one", passes,
+                       (double)a->lap_frames / a->doc.rate);
+      }
+      else
+      {
+        app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
+      }
     }
   }
   a->record_track = -1;
   a->record_skip = 0;
+  a->lap_frames = 0;
   a->render_note[0] = '\0';
 
   /*
@@ -569,6 +622,14 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
 
   a->record_track = -1;
   a->record_skip = 0;
+  /*
+   * A loop take that was cut short is not cut into passes. What is on the lane
+   * is however many laps got through before the cable went, and a second half
+   * recorded when the device comes back starts wherever the first one stopped
+   * rather than at the top of a lap - so the laps are no longer a fixed number
+   * of frames apart and there is nothing honest to cut on. It stays one take.
+   */
+  a->lap_frames = 0;
   a->render_note[0] = '\0';
 
   app_set_status(a, "the device went during %.40s - %.1f s kept%s",

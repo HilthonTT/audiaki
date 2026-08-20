@@ -477,6 +477,16 @@ void aud_track_read(const aud_track *t, uint64_t at, float *interleaved, size_t 
      */
     copy = c->audio->channels < t->channels ? c->audio->channels : t->channels;
 
+    /*
+     * A muted clip is read as the silence it would be in the mix. Stepped over
+     * rather than multiplied by zero: the buffer was cleared on the way in, so
+     * there is nothing to write.
+     */
+    if (c->muted)
+    {
+      continue;
+    }
+
     /* where in the clip this window starts, which is what the ramp counts from */
     {
       size_t head = (size_t)(overlap_from - c->start);
@@ -541,6 +551,7 @@ int aud_track_place(aud_track *t, aud_samples *audio, size_t offset, size_t fram
   slot->fade_in = fade_in;
   slot->fade_out = fade_out;
   slot->gain = 1.0f;
+  slot->muted = 0;
   clip_clamp_fades(slot);
   return 0;
 }
@@ -605,8 +616,10 @@ int aud_track_split(aud_track *t, uint64_t frame)
    */
   right->fade_in = 0;
   right->fade_out = left->fade_out;
-  /* both halves are still the same piece, and turned the same way */
+  /* both halves are still the same piece, turned the same way and heard or
+   * not heard together */
   right->gain = left->gain;
+  right->muted = left->muted;
   left->fade_out = 0;
   left->frames = before;
   clip_clamp_fades(left);
@@ -735,6 +748,74 @@ int aud_track_gain_at(aud_track *t, uint64_t frame, float gain)
   }
 
   c->gain = clamp_gain(gain);
+  return 0;
+}
+
+int aud_track_muted_at(const aud_track *t, uint64_t frame)
+{
+  size_t i;
+
+  if (t == NULL)
+  {
+    return 0;
+  }
+
+  i = clip_at_or_after(t, frame);
+  if (i >= t->count || t->clips[i].start > frame)
+  {
+    return 0;
+  }
+  return t->clips[i].muted ? 1 : 0;
+}
+
+int aud_track_mute_range(aud_track *t, uint64_t from, uint64_t to, int muted)
+{
+  size_t first;
+  int any = 0;
+
+  if (t == NULL || from >= to)
+  {
+    return -1;
+  }
+
+  /* answered before anything is split, the way aud_track_gain_scale() is */
+  first = clip_at_or_after(t, from);
+  if (first >= t->count || t->clips[first].start >= to)
+  {
+    return -1;
+  }
+
+  if (aud_track_split(t, from) != 0 || aud_track_split(t, to) != 0)
+  {
+    return -1;
+  }
+
+  for (size_t i = clip_at_or_after(t, from); i < t->count; i++)
+  {
+    aud_clip *c = &t->clips[i];
+
+    if (c->start >= to)
+    {
+      break;
+    }
+
+    c->muted = muted ? 1 : 0;
+    any = 1;
+  }
+
+  return any ? 0 : -1;
+}
+
+int aud_track_mute_at(aud_track *t, uint64_t frame, int muted)
+{
+  aud_clip *c = clip_starting_at(t, frame);
+
+  if (c == NULL)
+  {
+    return -1;
+  }
+
+  c->muted = muted ? 1 : 0;
   return 0;
 }
 
@@ -1000,6 +1081,7 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
     slot->fade_in = overlap_from == c->start ? c->fade_in : 0;
     slot->fade_out = overlap_to == clip_end(c) ? c->fade_out : 0;
     slot->gain = c->gain; /* how loud it is belongs to all of it, not to an end */
+    slot->muted = c->muted;
     clip_clamp_fades(slot);
   }
 
@@ -1070,11 +1152,12 @@ void aud_track_tidy(aud_track *t)
      * end of a split put back together. Two clips that merely touch are left
      * alone, because the boundary between them is a real one - and so is a
      * fade at the join or a gain that differs across it, either of which
-     * merging would silently throw away.
+     * merging would silently throw away. So is a mute: joining a chosen bar to
+     * the rejected one beside it would undo a comp.
      */
     if (a->audio == b->audio && clip_end(a) == b->start &&
         a->offset + a->frames == b->offset && a->fade_out == 0 && b->fade_in == 0 &&
-        a->gain == b->gain)
+        a->gain == b->gain && a->muted == b->muted)
     {
       a->frames += b->frames;
       a->fade_out = b->fade_out;
@@ -1133,6 +1216,7 @@ int aud_track_record_begin(aud_track *t, uint64_t start, size_t capacity_hint)
   slot->fade_in = 0;
   slot->fade_out = 0;
   slot->gain = 1.0f;
+  slot->muted = 0;
   t->recording = (long)index;
   return 0;
 }

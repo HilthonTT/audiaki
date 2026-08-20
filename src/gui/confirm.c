@@ -27,6 +27,7 @@
 
 #include "gui/ui.h"
 
+#include "edit/limit.h"
 #include "edit/project.h"
 #include "edit/repair.h"
 
@@ -255,6 +256,10 @@ static const char *edit_name(app_edit_action action)
   case APP_EDIT_NORMALIZE_PEAK:
   case APP_EDIT_NORMALIZE_LOUDNESS:
     return "Normalize";
+  case APP_EDIT_LIMIT:
+    return "Limit";
+  case APP_EDIT_MUTE_TOGGLE:
+    return "Mute";
   default:
     return "That";
   }
@@ -380,24 +385,41 @@ int app_confirm_undo(app *a)
   }
 
   label = aud_doc_undo_label(&a->doc);
-  if (label == NULL || strcmp(label, AUD_REPAIR_LABEL) != 0)
+  if (label == NULL)
   {
-    return 0; /* an ordinary undo is the safety net, not a thing to guard */
+    return 0;
   }
 
   /*
-   * The one undo worth stopping for. It puts the audio back, which is all
-   * anybody asked - but the cleaned-up WAV it wrote stays on disk with nothing
-   * pointing at it, and it cannot be deleted here because redo still refers to
-   * it. See edit/repair.h.
+   * The two undos worth stopping for, and they are the two edits that made
+   * audio rather than rearranging it. Either puts the audio back, which is all
+   * anybody asked - but the WAV it wrote stays on disk with nothing pointing at
+   * it, and it cannot be deleted here because redo still refers to it. See
+   * edit/repair.h and edit/limit.h.
    */
-  ask(a, APP_CONFIRM_UNDO, "Undo", "Undo the clean-up?");
-  because(a, 0, "The audio comes back as it was recorded.");
-  because(a, 0,
-          "The " AUD_REPAIR_PREFIX
-          "-NNN.wav it wrote stays in your takes folder with nothing");
-  because(a, 0, "pointing at it - redo still needs it, so it is not deleted here.");
-  return 1;
+  if (strcmp(label, AUD_REPAIR_LABEL) == 0)
+  {
+    ask(a, APP_CONFIRM_UNDO, "Undo", "Undo the clean-up?");
+    because(a, 0, "The audio comes back as it was recorded.");
+    because(a, 0,
+            "The " AUD_REPAIR_PREFIX
+            "-NNN.wav it wrote stays in your takes folder with nothing");
+    because(a, 0, "pointing at it - redo still needs it, so it is not deleted here.");
+    return 1;
+  }
+
+  if (strcmp(label, AUD_LIMIT_LABEL) == 0)
+  {
+    ask(a, APP_CONFIRM_UNDO, "Undo", "Undo the limiting?");
+    because(a, 0, "The peaks come back where they were, over full scale and all.");
+    because(a, 0,
+            "The " AUD_LIMIT_PREFIX
+            "-NNN.wav it wrote stays in your takes folder with nothing");
+    because(a, 0, "pointing at it - redo still needs it, so it is not deleted here.");
+    return 1;
+  }
+
+  return 0; /* an ordinary undo is the safety net, not a thing to guard */
 }
 
 int app_confirm_apply(app *a, double seconds, const char *track)

@@ -306,10 +306,33 @@ typedef enum
   APP_EDIT_QUIETER,
   APP_EDIT_NORMALIZE_PEAK,
   APP_EDIT_NORMALIZE_LOUDNESS,
+  /*
+   * And the one that catches what a loudness normalize can leave behind. After
+   * the two above rather than beside them because it is not clip surgery: it
+   * rewrites the audio and writes a file, the way the spectrum panel's Apply
+   * does - see edit/limit.h.
+   */
+  APP_EDIT_LIMIT,
+  /*
+   * Silencing a stretch of a lane without taking it away, which is the half of
+   * comping you reach for by hand: the other lane was better here, and this one
+   * should stop without being cut.
+   */
+  APP_EDIT_MUTE_TOGGLE,
 } app_edit_action;
 
 /* What one press of the gain keys, or one click of the bar, is worth. */
 #define APP_GAIN_STEP_DB 1.0
+
+/*
+ * How near the cursor has to be to a marker to count as being on it, in pixels.
+ *
+ * A marker is a flag a few pixels wide, and the cursor lands where it was
+ * clicked or where the grid put it - never on precisely the frame a marker was
+ * dropped at. Read as a distance in time at the current zoom, so it means the
+ * same thing on screen however far in you are.
+ */
+#define APP_MARKER_GRAB_PX 6.0
 
 /*
  * Audio an edit has to touch before it is worth stopping to ask about.
@@ -424,6 +447,17 @@ typedef struct
    */
   long last_take_track;
   uint64_t record_at;
+  /*
+   * Frames to a lap, when the take being recorded is going round a loop, and 0
+   * when it is not. Fixed when Record was pressed, like `record_at` beside it:
+   * the loop may be dragged somewhere else while the take runs, and the passes
+   * belong to the loop that was set when it started.
+   *
+   * A loop take is one continuous recording into one file - the laps are cut
+   * out of it afterwards, by aud_edit_take_passes(). Stopping and starting the
+   * device at each lap would put a gap in every one of them.
+   */
+  uint64_t lap_frames;
   /*
    * Frames of the take still to be thrown away before it starts landing on the
    * timeline. Only ever non-zero when a take begins so near the start of the
@@ -695,6 +729,18 @@ void app_edit_now(app *a, app_edit_action action);
 
 /* Move the selection along the timeline by `by` frames; see APP_EDIT_MOVE. */
 void app_move_selection(app *a, int64_t by);
+
+/*
+ * Put a marker where the cursor is, or take away the one that is already
+ * there - one key does both, because a marker either is or is not there.
+ */
+void app_mark(app *a);
+
+/*
+ * Step which of the selected lanes is heard over the selection, one press a
+ * lane, forward or back. What choosing between the passes of a loop take is.
+ */
+void app_comp(app *a, int forward);
 
 /* Play from the cursor, or from the start of the selection. Stops if playing. */
 void app_toggle_play(app *a);
