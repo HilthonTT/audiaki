@@ -49,12 +49,27 @@
 #define SCREEN_GAIN_W 96.0f
 
 /*
- * The transport, in the order it is laid out and described by the longest label
- * each slot ever carries. Widths come from these rather than from what the
- * button says this frame: Play becomes Playing while it runs and Save grows a
- * star when there is something to save, and a bar that resized itself around
- * that would shuffle every button along it out from under the pointer.
+ * One slot on a toolbar.
+ *
+ * `widest` is the longest label the slot ever carries rather than what it says
+ * this frame: Play becomes Playing while it runs and Save grows a star when
+ * there is something to save, and a bar that resized itself around that would
+ * shuffle every button along it out from under the pointer.
+ *
+ * `group` is what the row is about. Buttons sharing a number sit shoulder to
+ * shoulder and get a hairline and a wider gap where the number changes - which
+ * is the difference between a row of seventeen buttons and four short lists of
+ * things that belong together. Nothing here reads the number itself; only
+ * whether it is the same as the one before.
  */
+typedef struct
+{
+  const char *widest;
+  aud_ui_icon icon;
+  int group;
+} screen_slot;
+
+/* The transport, in the order it is laid out. */
 enum
 {
   SCREEN_PLAY = 0,
@@ -70,9 +85,18 @@ enum
   SCREEN_TRANSPORT_COUNT
 };
 
-static const char *const screen_transport[SCREEN_TRANSPORT_COUNT] = {
-    "Playing", "Loop",   "Recording", "Resume", "Cancel",
-    "Import",  "Export", "Stems",     "Open",   "Save *"};
+/*
+ * The five that move the tape carry the shapes they have carried since tape,
+ * and are a group of their own. The file buttons beside them stay words -
+ * there is no fifty-year-old symbol for "export the stems" - and split again
+ * between what leaves as audio and what leaves as a session.
+ */
+static const screen_slot screen_transport[SCREEN_TRANSPORT_COUNT] = {
+    {"Playing", AUD_UI_ICON_PLAY, 0},     {"Loop", AUD_UI_ICON_LOOP, 0},
+    {"Recording", AUD_UI_ICON_RECORD, 0}, {"Resume", AUD_UI_ICON_PAUSE, 0},
+    {"Cancel", AUD_UI_ICON_STOP, 0},      {"Import", AUD_UI_ICON_NONE, 1},
+    {"Export", AUD_UI_ICON_NONE, 1},      {"Stems", AUD_UI_ICON_NONE, 1},
+    {"Open", AUD_UI_ICON_NONE, 2},        {"Save *", AUD_UI_ICON_NONE, 2}};
 
 /* The capture options at the other end of the same row, likewise. */
 enum
@@ -84,35 +108,43 @@ enum
   SCREEN_CAPTURE_COUNT
 };
 
-static const char *const screen_capture[SCREEN_CAPTURE_COUNT] = {
-    "Overdub", "Video", "No audio", "Monitor on"};
+static const screen_slot screen_capture[SCREEN_CAPTURE_COUNT] = {
+    {"Overdub", AUD_UI_ICON_NONE, 0},
+    {"Video", AUD_UI_ICON_NONE, 1},
+    {"No audio", AUD_UI_ICON_NONE, 1},
+    {"Monitor on", AUD_UI_ICON_NONE, 2}};
 
-/* Every button on the edit bar, in order, with what each is for. */
+/*
+ * Every button on the edit bar, in order, with what each is for and which of
+ * the four things an edit bar does it belongs to: take it back, move it about,
+ * change its shape, change how loud it is.
+ */
 static const struct
 {
   const char *label;
   app_edit_action action;
+  int group;
   const char *tip;
 } screen_edits[] = {
-    {"Undo", APP_EDIT_UNDO, "take back the last edit   ctrl+Z"},
-    {"Redo", APP_EDIT_REDO, "put it back   ctrl+shift+Z"},
-    {"Cut", APP_EDIT_CUT, "remove the selection and keep it   ctrl+X"},
-    {"Copy", APP_EDIT_COPY, "keep the selection   ctrl+C"},
-    {"Paste", APP_EDIT_PASTE, "drop the clipboard in at the cursor   ctrl+V"},
-    {"Delete", APP_EDIT_DELETE, "remove the selection and close the gap   del"},
-    {"Silence", APP_EDIT_SILENCE, "empty the selection, leaving the timing alone"},
-    {"Trim", APP_EDIT_TRIM, "throw away everything outside the selection"},
-    {"Split", APP_EDIT_SPLIT, "cut the clips at the edges of the selection"},
-    {"Copy to", APP_EDIT_DUPLICATE, "the selection onto a new track of its own"},
-    {"Fade in", APP_EDIT_FADE_IN, "ramp the selection up out of silence   ["},
-    {"Fade out", APP_EDIT_FADE_OUT, "ramp the selection down into silence   ]"},
-    {"-1 dB", APP_EDIT_QUIETER, "turn the selection down a decibel   ctrl+-"},
-    {"+1 dB", APP_EDIT_LOUDER, "turn the selection up a decibel   ctrl++"},
-    {"Normalize", APP_EDIT_NORMALIZE_PEAK,
+    {"Undo", APP_EDIT_UNDO, 0, "take back the last edit   ctrl+Z"},
+    {"Redo", APP_EDIT_REDO, 0, "put it back   ctrl+shift+Z"},
+    {"Cut", APP_EDIT_CUT, 1, "remove the selection and keep it   ctrl+X"},
+    {"Copy", APP_EDIT_COPY, 1, "keep the selection   ctrl+C"},
+    {"Paste", APP_EDIT_PASTE, 1, "drop the clipboard in at the cursor   ctrl+V"},
+    {"Delete", APP_EDIT_DELETE, 1, "remove the selection and close the gap   del"},
+    {"Silence", APP_EDIT_SILENCE, 2, "empty the selection, leaving the timing alone"},
+    {"Trim", APP_EDIT_TRIM, 2, "throw away everything outside the selection"},
+    {"Split", APP_EDIT_SPLIT, 2, "cut the clips at the edges of the selection"},
+    {"Copy to", APP_EDIT_DUPLICATE, 2, "the selection onto a new track of its own"},
+    {"Fade in", APP_EDIT_FADE_IN, 3, "ramp the selection up out of silence   ["},
+    {"Fade out", APP_EDIT_FADE_OUT, 3, "ramp the selection down into silence   ]"},
+    {"-1 dB", APP_EDIT_QUIETER, 3, "turn the selection down a decibel   ctrl+-"},
+    {"+1 dB", APP_EDIT_LOUDER, 3, "turn the selection up a decibel   ctrl++"},
+    {"Normalize", APP_EDIT_NORMALIZE_PEAK, 3,
      "measure the selection and put its peak at -1 dBTP   ctrl+N, shift for -18 LUFS"},
-    {"Limit", APP_EDIT_LIMIT,
+    {"Limit", APP_EDIT_LIMIT, 3,
      "hold the selection under -1 dBTP, riding the peaks rather than clipping   ctrl+L"},
-    {"Mute", APP_EDIT_MUTE_TOGGLE,
+    {"Mute", APP_EDIT_MUTE_TOGGLE, 3,
      "stop the selection being heard without moving or removing it   alt+K"},
 };
 
@@ -167,12 +199,36 @@ static void tip(const app *a, Rectangle bounds, const char *text)
   aud_ui_tooltip(bounds, text);
 }
 
+/*
+ * One of the little rounded plates the header states a fact on: the rate, the
+ * channel count, the sample format. Three numbers in a row read as one long
+ * number; three numbers each on their own plate read as three facts, which is
+ * what they are. Returns its own left edge, so the next one can be put beside
+ * it working right to left.
+ */
+static float header_chip(float right, float mid, const char *text)
+{
+  float w = aud_ui_measure(AUD_UI_MONO, text, 14) + 18.0f;
+  Rectangle chip = {right - w, mid - 11.0f, w, 22.0f};
+
+  aud_ui_panel(chip, 6.0f, AUD_UI_PANEL, AUD_UI_EDGE_SOFT);
+  aud_ui_write_centred(AUD_UI_MONO, chip, 14, AUD_UI_MUTED, text);
+  return chip.x;
+}
+
 static void draw_header(app *a, Rectangle r)
 {
   Rectangle help = header_help(r);
-  char detail[128];
+  float mid = r.y + r.height / 2.0f;
 
-  aud_ui_text(r.x, r.y + 6.0f, 26, AUD_UI_TEXT, AUDIAKI_NAME);
+  /*
+   * The name, and a dot in the accent beside it. It is the only mark this
+   * program has and it costs one circle - but a window that opens with a
+   * wordmark rather than with a line of text looks like something somebody
+   * made on purpose.
+   */
+  DrawCircleV((Vector2){r.x + 5.0f, mid + 1.0f}, 5.0f, AUD_UI_ACCENT);
+  aud_ui_write(AUD_UI_STRONG, r.x + 18.0f, mid - 13.0f, 25, AUD_UI_TEXT, AUDIAKI_NAME);
 
   /*
    * The keys are the fast way to drive this and they are invisible, so there is
@@ -188,10 +244,17 @@ static void draw_header(app *a, Rectangle r)
   /* what the device negotiated, immediately left of the picker that chose it */
   if (a->engine != NULL)
   {
-    snprintf(detail, sizeof(detail), "%u Hz   %u ch   %s", aud_engine_rate(a->engine),
-             aud_engine_channels(a->engine),
-             aud_format_name(aud_engine_format(a->engine)));
-    aud_ui_text_right(help.x - 16.0f, r.y + 12.0f, 16, AUD_UI_MUTED, detail);
+    char detail[64];
+    float right = help.x - 14.0f;
+
+    snprintf(detail, sizeof(detail), "%s", aud_format_name(aud_engine_format(a->engine)));
+    right = header_chip(right, mid, detail) - 6.0f;
+
+    snprintf(detail, sizeof(detail), "%u ch", aud_engine_channels(a->engine));
+    right = header_chip(right, mid, detail) - 6.0f;
+
+    snprintf(detail, sizeof(detail), "%u Hz", aud_engine_rate(a->engine));
+    header_chip(right, mid, detail);
   }
 }
 
@@ -261,21 +324,40 @@ static float label_pad(int font)
 
 static float button_width(const char *label, int font)
 {
-  return (float)MeasureText(label, font) + 2.0f * label_pad(font);
+  return aud_ui_measure(AUD_UI_STRONG, label, font) + 2.0f * label_pad(font);
+}
+
+/* The same, for a button that carries a transport glyph ahead of its label. */
+static float icon_button_width(const char *label, int font)
+{
+  return button_width(label, font) + aud_ui_icon_width(font);
+}
+
+/* What one slot is worth, its glyph included. */
+static float slot_width(const screen_slot *slot, int font)
+{
+  return slot->icon != AUD_UI_ICON_NONE ? icon_button_width(slot->widest, font)
+                                        : button_width(slot->widest, font);
+}
+
+/* The gap before slot `i`, which widens where one group ends and the next starts. */
+static float slot_gap(const screen_slot *slots, int i)
+{
+  if (i <= 0)
+  {
+    return 0.0f;
+  }
+  return slots[i].group == slots[i - 1].group ? SCREEN_BUTTON_GAP : SCREEN_GROUP_GAP;
 }
 
 /* The room `count` buttons need side by side, the gaps between them included. */
-static float row_width(const char *const *labels, int count, int font)
+static float row_width(const screen_slot *slots, int count, int font)
 {
   float w = 0.0f;
 
   for (int i = 0; i < count; i++)
   {
-    w += button_width(labels[i], font);
-  }
-  if (count > 1)
-  {
-    w += SCREEN_BUTTON_GAP * (float)(count - 1);
+    w += slot_width(&slots[i], font) + slot_gap(slots, i);
   }
   return w;
 }
@@ -293,19 +375,42 @@ static float monitor_slider_width(int font)
   return 6.0f * (float)font;
 }
 
-/* Lay `labels` out along `row` from `x`, and return the edge they reach. */
-static float place_row(Rectangle row, float x, const char *const *labels, int count,
+/* Lay `slots` out along `row` from `x`, and return the edge they reach. */
+static float place_row(Rectangle row, float x, const screen_slot *slots, int count,
                        int font, Rectangle *out)
 {
+  float end = x;
+
   for (int i = 0; i < count; i++)
   {
+    x += slot_gap(slots, i);
     out[i].x = x;
     out[i].y = row.y;
-    out[i].width = button_width(labels[i], font);
+    out[i].width = slot_width(&slots[i], font);
     out[i].height = row.height;
-    x += out[i].width + SCREEN_BUTTON_GAP;
+    x += out[i].width;
+    end = x;
   }
-  return x - SCREEN_BUTTON_GAP;
+  return end;
+}
+
+/*
+ * The hairline that stands where one group of buttons gives way to the next.
+ * Half the height of the row and the softest line in the palette: it is there
+ * to be seen out of the corner of the eye while looking for a button, and not
+ * at all while looking at one.
+ */
+static void draw_group_rules(const screen_slot *slots, const Rectangle *at, int count)
+{
+  for (int i = 1; i < count; i++)
+  {
+    if (slots[i].group == slots[i - 1].group)
+    {
+      continue;
+    }
+    aud_ui_rule(at[i].x - SCREEN_GROUP_GAP / 2.0f, at[i].y + at[i].height * 0.24f,
+                at[i].height * 0.52f, AUD_UI_EDGE);
+  }
 }
 
 /*
@@ -315,11 +420,16 @@ static float place_row(Rectangle row, float x, const char *const *labels, int co
  * five gaps - the tempo's own three butt up against each other, being one
  * control rather than three.
  */
+/* The tempo readout, which is lettered in the mono face and so measured in it. */
+static float tempo_width(int font)
+{
+  return aud_ui_measure(AUD_UI_MONO, "188 BPM", font) + 2.0f * label_pad(font);
+}
+
 static float edit_tail_width(int font)
 {
-  return button_width("Click", font) + button_width("188 BPM", font) +
-         button_width("Grid", font) + button_width("[ ]", font) +
-         4.0f * step_width(font) + 5.0f * SCREEN_BUTTON_GAP;
+  return button_width("Click", font) + tempo_width(font) + button_width("Grid", font) +
+         button_width("[ ]", font) + 4.0f * step_width(font) + 5.0f * SCREEN_BUTTON_GAP;
 }
 
 static float transport_row_width(int font)
@@ -335,9 +445,14 @@ static float edit_row_width(int font)
 
   for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
   {
-    w += button_width(screen_edits[i].label, font) + SCREEN_BUTTON_GAP;
+    w += button_width(screen_edits[i].label, font);
+    if (i > 0)
+    {
+      w += screen_edits[i].group == screen_edits[i - 1].group ? SCREEN_BUTTON_GAP
+                                                              : SCREEN_GROUP_GAP;
+    }
   }
-  return w - SCREEN_BUTTON_GAP + SCREEN_GROUP_GAP + edit_tail_width(font);
+  return w + SCREEN_GROUP_GAP + edit_tail_width(font);
 }
 
 /*
@@ -383,6 +498,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   Rectangle save_project;
   float filled = place_row(r, r.x, screen_transport, SCREEN_TRANSPORT_COUNT, font, slot);
 
+  draw_group_rules(screen_transport, slot, SCREEN_TRANSPORT_COUNT);
+
   play = slot[SCREEN_PLAY];
   loop = slot[SCREEN_LOOP];
   rec = slot[SCREEN_REC];
@@ -401,8 +518,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    */
   /* the metronome is something to play even with an empty timeline, and
    * counting a bar in before the first take is exactly what it is for */
-  if (aud_ui_button(play, playing ? "Playing" : "Play", AUD_UI_OK,
-                    !covered(a) && !live && (a->doc.count > 0 || a->transport.click_on)))
+  if (aud_ui_toggle_icon(
+          play, AUD_UI_ICON_PLAY, playing ? "Playing" : "Play", playing, AUD_UI_OK,
+          !covered(a) && !live && (a->doc.count > 0 || a->transport.click_on)))
   {
     app_toggle_play(a);
   }
@@ -419,7 +537,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    * out. Settable while it is running, so a passage can be put on repeat
    * without stopping it first.
    */
-  if (aud_ui_toggle(loop, "Loop", a->transport.loop, AUD_UI_OK, !covered(a) && !live))
+  if (aud_ui_toggle_icon(loop, AUD_UI_ICON_LOOP, "Loop", a->transport.loop, AUD_UI_OK,
+                         !covered(a) && !live))
   {
     a->transport.loop = !a->transport.loop;
     app_apply_transport(a);
@@ -431,8 +550,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
                   : "play round and round; select a passage to loop that   L"));
 
   /* a render holds the drawing thread, so no new take can start under it */
-  if (aud_ui_button(rec, live ? "Recording" : "Record", AUD_UI_RECORD,
-                    usable && !live && !rendering))
+  if (aud_ui_toggle_icon(rec, AUD_UI_ICON_RECORD, live ? "Recording" : "Record", live,
+                         AUD_UI_RECORD, usable && !live && !rendering))
   {
     app_begin_take(a);
   }
@@ -454,7 +573,8 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
     tip(a, rec, "record from the cursor onto the timeline   R");
   }
 
-  if (aud_ui_button(pause, paused ? "Resume" : "Pause", AUD_UI_WARN, live))
+  if (aud_ui_toggle_icon(pause, AUD_UI_ICON_PAUSE, paused ? "Resume" : "Pause", paused,
+                         AUD_UI_WARN, live))
   {
     if (paused)
     {
@@ -476,7 +596,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    */
   if (rendering)
   {
-    if (aud_ui_button(stop, "Cancel", AUD_UI_WARN, !covered(a)))
+    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Cancel", AUD_UI_WARN, !covered(a)))
     {
       app_cancel_render(a);
     }
@@ -484,7 +604,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   }
   else
   {
-    if (aud_ui_button(stop, "Stop", AUD_UI_ACCENT, live))
+    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Stop", AUD_UI_ACCENT, live))
     {
       app_stop_take(a, st);
     }
@@ -544,12 +664,24 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
 
   /* the capture options sit at the right hand end, away from the transport */
   {
+    float buttons_w = row_width(screen_capture, SCREEN_CAPTURE_COUNT, font);
     float slider_w = monitor_slider_width(font);
-    float group_w = row_width(screen_capture, SCREEN_CAPTURE_COUNT, font) +
-                    SCREEN_BUTTON_GAP + slider_w;
+    float group_w = buttons_w + SCREEN_BUTTON_GAP + slider_w;
+    /*
+     * The monitoring level goes before the switches do. On a narrow window
+     * there is not room for both, and being able to turn monitoring on at all
+     * matters more than being able to set how loud it is - which the status bar
+     * says in decibels anyway, and which the command line can be told.
+     */
+    int with_slider = r.x + r.width - group_w >= filled + SCREEN_GROUP_GAP;
     Rectangle group[SCREEN_CAPTURE_COUNT];
     Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f,
                         slider_w, 22.0f};
+
+    if (!with_slider)
+    {
+      group_w = buttons_w;
+    }
     Rectangle overdub;
     Rectangle video;
     Rectangle audio;
@@ -565,11 +697,12 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
 
     if (r.x + r.width - group_w < filled + SCREEN_GROUP_GAP)
     {
-      return; /* too narrow a window for these; the transport comes first */
+      return; /* too narrow a window even for those; the transport comes first */
     }
 
     place_row(r, r.x + r.width - group_w, screen_capture, SCREEN_CAPTURE_COUNT, font,
               group);
+    draw_group_rules(screen_capture, group, SCREEN_CAPTURE_COUNT);
     overdub = group[SCREEN_OVERDUB];
     video = group[SCREEN_VIDEO];
     audio = group[SCREEN_VIDEO_AUDIO];
@@ -616,11 +749,14 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
     }
     tip(a, monitor, "hear the input through the default output   M");
 
-    if (aud_ui_slider(slider, &a->levels.monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
+    if (with_slider)
     {
-      aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
+      if (aud_ui_slider(slider, &a->levels.monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
+      {
+        aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
+      }
+      tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
     }
-    tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
   }
 }
 
@@ -650,19 +786,31 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
       a->transport.click_on ? "the metronome is playing - it is heard, never recorded   C"
                             : "play a metronome over whatever is being heard   C");
 
-  if (aud_ui_button(slower, "-", AUD_UI_ACCENT, usable))
+  /*
+   * One plate under the step, the reading and the other step, and the two steps
+   * drawn with nothing of their own on top of it. Three pills in a row is three
+   * controls; a plate with a number in the middle of it and a way to nudge it
+   * at each end is a tempo, which is what this is.
+   */
+  {
+    Rectangle plate = {slower.x, slower.y, faster.x + faster.width - slower.x,
+                       slower.height};
+
+    aud_ui_panel(plate, 8.0f, AUD_UI_PANEL, AUD_UI_EDGE_SOFT);
+  }
+
+  if (aud_ui_ghost(slower, "-", AUD_UI_ACCENT, usable))
   {
     app_nudge_tempo(a, -step);
   }
   tip(a, slower, "slower; hold shift for ten at a time   -");
 
-  DrawRectangleRec(reading, AUD_UI_PANEL);
   snprintf(text, sizeof(text), "%.0f BPM", a->doc.tempo);
-  aud_ui_text_centred(reading, font, a->transport.click_on ? AUD_UI_TEXT : AUD_UI_MUTED,
-                      text);
+  aud_ui_write_centred(AUD_UI_MONO, reading, font,
+                       a->transport.click_on ? AUD_UI_TEXT : AUD_UI_MUTED, text);
   tip(a, reading, "the tempo this session is counted on; it is saved with it");
 
-  if (aud_ui_button(faster, "+", AUD_UI_ACCENT, usable))
+  if (aud_ui_ghost(faster, "+", AUD_UI_ACCENT, usable))
   {
     app_nudge_tempo(a, step);
   }
@@ -700,8 +848,7 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area, int font)
                     button_width("Grid", font), r.height};
   /* the three of these butt up against each other: one control, not three */
   Rectangle faster = {grid.x - SCREEN_BUTTON_GAP - step, r.y, step, r.height};
-  Rectangle reading = {faster.x - button_width("188 BPM", font), r.y,
-                       button_width("188 BPM", font), r.height};
+  Rectangle reading = {faster.x - tempo_width(font), r.y, tempo_width(font), r.height};
   Rectangle slower = {reading.x - step, r.y, step, r.height};
   Rectangle click = {slower.x - SCREEN_BUTTON_GAP - button_width("Click", font), r.y,
                      button_width("Click", font), r.height};
@@ -720,14 +867,25 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area, int font)
   x = row.x;
   for (int i = 0; i < SCREEN_EDIT_COUNT; i++)
   {
-    Rectangle slot = {x, row.y, button_width(screen_edits[i].label, font), row.height};
+    float gap =
+        i == 0 ? 0.0f
+               : (screen_edits[i].group == screen_edits[i - 1].group ? SCREEN_BUTTON_GAP
+                                                                     : SCREEN_GROUP_GAP);
+    Rectangle slot = {x + gap, row.y, button_width(screen_edits[i].label, font),
+                      row.height};
     int enabled = usable;
 
     if (slot.x + slot.width > row.x + row.width)
     {
       break; /* the window is too narrow for the rest; zoom stays reachable */
     }
-    x += slot.width + SCREEN_BUTTON_GAP;
+    x = slot.x + slot.width;
+
+    if (gap > SCREEN_BUTTON_GAP)
+    {
+      aud_ui_rule(slot.x - SCREEN_GROUP_GAP / 2.0f, slot.y + slot.height * 0.24f,
+                  slot.height * 0.52f, AUD_UI_EDGE);
+    }
 
     /*
      * Greyed out when they would refuse, so the toolbar answers "why is
@@ -812,33 +970,37 @@ static void draw_drawer(app *a, Rectangle r)
   bar.height = APP_VIZ_BAR_H;
 
   DrawRectangleRec(bar, AUD_UI_PANEL);
+  DrawRectangleRec((Rectangle){bar.x, bar.y + bar.height - 1.0f, bar.width, 1.0f},
+                   AUD_UI_EDGE_SOFT);
 
   /*
    * The strip is short, so its two names are lettered to fit it rather than to
-   * match the toolbars, and each is as wide as what it says.
+   * match the toolbars, and each is as wide as what it says. The chevron on
+   * each says which way the click goes - down to open the panel, right to put
+   * it away - which is the one thing the name alone does not.
    */
   aud_ui_label_size(SCREEN_TAB_FONT);
 
-  viz_tab.x = bar.x;
-  viz_tab.y = bar.y;
-  viz_tab.width = button_width("v  Visualiser", SCREEN_TAB_FONT);
-  viz_tab.height = bar.height;
+  viz_tab.x = bar.x + 4.0f;
+  viz_tab.y = bar.y + 2.0f;
+  viz_tab.width = icon_button_width("Visualiser", SCREEN_TAB_FONT);
+  viz_tab.height = bar.height - 4.0f;
 
   fix_tab = viz_tab;
-  fix_tab.x = viz_tab.x + viz_tab.width + 2.0f;
-  fix_tab.width = button_width("v  Spectrum", SCREEN_TAB_FONT);
+  fix_tab.x = viz_tab.x + viz_tab.width + 4.0f;
+  fix_tab.width = icon_button_width("Spectrum", SCREEN_TAB_FONT);
 
-  if (aud_ui_toggle(viz_tab,
-                    a->drawer == APP_DRAWER_VIZ ? "v  Visualiser" : ">  Visualiser",
-                    a->drawer == APP_DRAWER_VIZ, AUD_UI_ACCENT, !covered(a)))
+  if (aud_ui_toggle_icon(
+          viz_tab, a->drawer == APP_DRAWER_VIZ ? AUD_UI_ICON_OPEN : AUD_UI_ICON_SHUT,
+          "Visualiser", a->drawer == APP_DRAWER_VIZ, AUD_UI_ACCENT, !covered(a)))
   {
     a->drawer = a->drawer == APP_DRAWER_VIZ ? APP_DRAWER_NONE : APP_DRAWER_VIZ;
   }
   tip(a, viz_tab, "show or hide the live visualiser   B");
 
-  if (aud_ui_toggle(fix_tab,
-                    a->drawer == APP_DRAWER_SPECTRUM ? "v  Spectrum" : ">  Spectrum",
-                    a->drawer == APP_DRAWER_SPECTRUM, AUD_UI_ACCENT, !covered(a)))
+  if (aud_ui_toggle_icon(
+          fix_tab, a->drawer == APP_DRAWER_SPECTRUM ? AUD_UI_ICON_OPEN : AUD_UI_ICON_SHUT,
+          "Spectrum", a->drawer == APP_DRAWER_SPECTRUM, AUD_UI_ACCENT, !covered(a)))
   {
     a->drawer = a->drawer == APP_DRAWER_SPECTRUM ? APP_DRAWER_NONE : APP_DRAWER_SPECTRUM;
     aud_repair_panel_reset(&a->repair);
@@ -957,14 +1119,21 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   float said = r.x; /* how far along the second line the message reached */
   float top = r.y + 2.0f;
 
-  DrawLine(0, (int)r.y, GetScreenWidth(), (int)r.y, AUD_UI_EDGE);
+  DrawRectangleRec((Rectangle){0.0f, r.y, (float)GetScreenWidth(), 1.0f},
+                   AUD_UI_EDGE_SOFT);
 
   draw_record_light((Rectangle){r.x, top, 16.0f, 20.0f}, st->state, GetTime());
   x += 24.0f;
 
+  /*
+   * The clock in the mono face, and so is every number below. A proportional
+   * face gives a 1 less room than a 0, which means a running clock twitches
+   * sideways on every tenth of a second - and a meter you are watching is
+   * exactly where that is least forgivable.
+   */
   aud_ui_format_clock(clock, sizeof(clock), st->elapsed);
-  aud_ui_text(x, top, 22, AUD_UI_TEXT, clock);
-  x += (float)MeasureText(clock, 22) + 16.0f;
+  aud_ui_write(AUD_UI_MONO, x, top, 22, AUD_UI_TEXT, clock);
+  x += aud_ui_measure(AUD_UI_MONO, clock, 22) + 18.0f;
 
   aud_ui_text(x, top + 4.0f, 16, AUD_UI_MUTED, state_label(st->state));
   x += 92.0f;
@@ -979,8 +1148,9 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     x += meter_w + 10.0f;
 
     snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
-    aud_ui_text(x, top + 4.0f, 15, st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
-    x += 76.0f;
+    aud_ui_write(AUD_UI_MONO, x, top + 4.0f, 15,
+                 st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
+    x += 80.0f;
 
     /*
      * The capture gain, next to the meter it moves - which is the whole point
@@ -1010,8 +1180,8 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
       x += SCREEN_GAIN_W + 8.0f;
       format_input_gain(level, sizeof(level), a->levels.input_gain);
       snprintf(text, sizeof(text), "in %s", level);
-      aud_ui_text(x, top + 4.0f, 15,
-                  a->levels.input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED, text);
+      aud_ui_write(AUD_UI_MONO, x, top + 4.0f, 15,
+                   a->levels.input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED, text);
       x += 84.0f;
     }
   }
@@ -1037,7 +1207,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     {
       snprintf(text, sizeof(text), "cursor  %s", from);
     }
-    aud_ui_text_right(r.x + r.width, top + 4.0f, 15, AUD_UI_MUTED, text);
+    aud_ui_write_right(AUD_UI_MONO, r.x + r.width, top + 4.0f, 15, AUD_UI_MUTED, text);
   }
 
   /* the second line: what just happened, and what the project is costing */
@@ -1068,7 +1238,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     }
 
     aud_ui_text(r.x, r.y + 24.0f, 14, colour, say);
-    said = r.x + (float)MeasureText(say, 14) + 24.0f;
+    said = r.x + aud_ui_measure(AUD_UI_SANS, say, 14) + 24.0f;
   }
 
   /*
@@ -1088,7 +1258,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     snprintf(text, sizeof(text), "monitor %s", level);
     if (x + 130.0f < r.x + r.width - 260.0f)
     {
-      aud_ui_text(x + 16.0f, top + 4.0f, 15, AUD_UI_EDGE, text);
+      aud_ui_write(AUD_UI_MONO, x + 16.0f, top + 4.0f, 15, AUD_UI_FAINT, text);
     }
   }
 
@@ -1100,8 +1270,8 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     {
       snprintf(text, sizeof(text), "%zu track(s)   %.1f MiB", a->doc.count,
                (double)bytes / (1024.0 * 1024.0));
-      aud_ui_text_right(right, r.y + 24.0f, 14, AUD_UI_EDGE, text);
-      right -= (float)MeasureText(text, 14) + 24.0f;
+      aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_FAINT, text);
+      right -= aud_ui_measure(AUD_UI_MONO, text, 14) + 24.0f;
     }
 
     /*
@@ -1132,9 +1302,9 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
                integrated);
 
       /* the message on the left is what just happened and wins the room */
-      if (right - (float)MeasureText(text, 14) > said)
+      if (right - aud_ui_measure(AUD_UI_MONO, text, 14) > said)
       {
-        aud_ui_text_right(right, r.y + 24.0f, 14, AUD_UI_MUTED, text);
+        aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_MUTED, text);
       }
     }
   }
@@ -1188,22 +1358,79 @@ static const char *const help_keys[][2] = {
 
 #define HELP_ROWS ((int)(sizeof(help_keys) / sizeof(help_keys[0])))
 
+/*
+ * A description cut to fit its column. In two columns each is half as wide as
+ * the list used to be, and the longest of these lines does not fit it.
+ */
+static const char *shortened_help(const char *text, float room)
+{
+  static char buf[128];
+  size_t len;
+
+  if (aud_ui_measure(AUD_UI_SANS, text, 14) <= room)
+  {
+    return text;
+  }
+
+  snprintf(buf, sizeof(buf), "%s", text);
+  len = strlen(buf);
+  while (len > 1)
+  {
+    buf[--len] = '\0';
+    if (aud_ui_measure(AUD_UI_SANS, TextFormat("%s...", buf), 14) <= room)
+    {
+      break;
+    }
+  }
+  snprintf(buf + len, sizeof(buf) - len, "...");
+  return buf;
+}
+
+/* The room one row of the shortcut list takes, and what the panel keeps clear. */
+#define HELP_ROW 25.0f
+#define HELP_PAD 24.0f
+#define HELP_HEAD 56.0f
+#define HELP_KEY_W 126.0f
+#define HELP_COL_W 520.0f
+
 static void draw_help(app *a, Rectangle header)
 {
   Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
   Rectangle panel;
-  float y;
+  float room = screen.height - 2.0f * APP_PAD - HELP_HEAD - HELP_PAD;
+  int per_col = (int)(room / HELP_ROW);
+  int columns = 1;
 
   /* the window dimmed rather than hidden: this is a note over the app, not a
    * place you have gone to, and the meter behind it is still worth seeing */
   DrawRectangleRec(screen, Fade(BLACK, 0.7f));
 
-  panel.width = 560.0f;
+  /*
+   * Two columns when the window is not tall enough for one, which at this many
+   * shortcuts it usually is not. The list used to be drawn in a single column
+   * whatever the height was, and the last third of it fell off the bottom of
+   * its own panel - which is a poor advertisement for a list of the things you
+   * would otherwise not know about.
+   */
+  if (per_col < 1)
+  {
+    per_col = 1;
+  }
+  while (columns * per_col < HELP_ROWS && columns < 3 &&
+         (float)(columns + 1) * HELP_COL_W + 2.0f * HELP_PAD <=
+             screen.width - 2.0f * APP_PAD)
+  {
+    columns++;
+  }
+
+  per_col = (HELP_ROWS + columns - 1) / columns;
+
+  panel.width = (float)columns * HELP_COL_W + 2.0f * HELP_PAD;
   if (panel.width > screen.width - 2.0f * APP_PAD)
   {
     panel.width = screen.width - 2.0f * APP_PAD;
   }
-  panel.height = 70.0f + (float)HELP_ROWS * 26.0f;
+  panel.height = HELP_HEAD + HELP_PAD + (float)per_col * HELP_ROW;
   if (panel.height > screen.height - 2.0f * APP_PAD)
   {
     panel.height = screen.height - 2.0f * APP_PAD;
@@ -1211,17 +1438,31 @@ static void draw_help(app *a, Rectangle header)
   panel.x = (screen.width - panel.width) / 2.0f;
   panel.y = (screen.height - panel.height) / 2.0f;
 
-  DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
-  DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, AUD_UI_ACCENT);
+  aud_ui_shadow(panel, 14.0f, 22.0f);
+  aud_ui_panel(panel, 14.0f, AUD_UI_SURFACE, AUD_UI_EDGE);
 
-  aud_ui_text(panel.x + 24.0f, panel.y + 18.0f, 20, AUD_UI_TEXT, "Keyboard");
+  aud_ui_write(AUD_UI_STRONG, panel.x + HELP_PAD, panel.y + 18.0f, 20, AUD_UI_TEXT,
+               "Keyboard");
+  aud_ui_text_right(panel.x + panel.width - HELP_PAD, panel.y + 22.0f, 14, AUD_UI_FAINT,
+                    "click anywhere, or Esc, to put this away");
+  DrawRectangleRec((Rectangle){panel.x + HELP_PAD, panel.y + 44.0f,
+                               panel.width - 2.0f * HELP_PAD, 1.0f},
+                   AUD_UI_EDGE_SOFT);
 
-  y = panel.y + 52.0f;
-  for (int i = 0; i < HELP_ROWS; i++)
+  /* the keys in the mono face, which is what tells a key from the sentence
+   * about it without a box round either */
   {
-    aud_ui_text(panel.x + 24.0f, y, 15, AUD_UI_ACCENT, help_keys[i][0]);
-    aud_ui_text(panel.x + 150.0f, y, 15, AUD_UI_MUTED, help_keys[i][1]);
-    y += 26.0f;
+    float col_w = (panel.width - 2.0f * HELP_PAD) / (float)columns;
+
+    for (int i = 0; i < HELP_ROWS; i++)
+    {
+      float x = panel.x + HELP_PAD + col_w * (float)(i / per_col);
+      float y = panel.y + HELP_HEAD + HELP_ROW * (float)(i % per_col);
+
+      aud_ui_write(AUD_UI_MONO, x, y, 14, AUD_UI_ACCENT, help_keys[i][0]);
+      aud_ui_text(x + HELP_KEY_W, y, 14, AUD_UI_MUTED,
+                  shortened_help(help_keys[i][1], col_w - HELP_KEY_W - 12.0f));
+    }
   }
 
   /*

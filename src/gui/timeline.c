@@ -35,6 +35,18 @@
     214, 234, 255, 255   \
   }
 
+/*
+ * What a lane is drawn on. Darker than any panel, so the waveform has the
+ * contrast it needs, and not black: black is a hole in the window rather than a
+ * surface in it, and a stack of holes with lines between them is what the
+ * tracks used to look like.
+ */
+#define TL_LANE     \
+  CLITERAL(Color)   \
+  {                 \
+    14, 15, 20, 255 \
+  }
+
 #define TL_RULER_FONT 14
 #define TL_LABEL_FONT 16
 #define TL_SMALL_FONT 14
@@ -754,17 +766,25 @@ static void draw_ruler(aud_timeline *tl, aud_doc *d, Rectangle ruler, uint64_t p
   }
 }
 
-/* The amplitude labels down the left of a lane: 1.0, 0.5, 0.0, -0.5, -1.0. */
+/*
+ * The amplitude labels down the left of a lane: 1.0, 0.5, 0.0, -0.5, -1.0.
+ *
+ * The outer two are dropped on a short lane rather than crowded in. Two
+ * channels stacked put the -1.0 of one within a few pixels of the 1.0 of the
+ * next, and two numbers touching at a boundary read as one wrong number.
+ */
 static void draw_scale(Rectangle lane, int channels)
 {
   static const float marks[] = {1.0f, 0.5f, 0.0f, -0.5f, -1.0f};
   float per = lane.height / (float)channels;
+  int room_for_ends = per >= 74.0f;
 
   DrawRectangleRec(lane, AUD_UI_PANEL);
+  aud_ui_rule(lane.x + lane.width, lane.y, lane.height, AUD_UI_EDGE_SOFT);
 
-  if (per < 46.0f)
+  if (per < 40.0f)
   {
-    return; /* no room for five labels; the waveform is the point, not these */
+    return; /* no room for any of them; the waveform is the point, not these */
   }
 
   for (int ch = 0; ch < channels; ch++)
@@ -777,10 +797,16 @@ static void draw_scale(Rectangle lane, int channels)
       float y = mid - marks[i] * (per / 2.0f - 3.0f);
       char text[8];
 
+      if (!room_for_ends && (i == 0 || i == 4))
+      {
+        continue;
+      }
+
       snprintf(text, sizeof(text), "%.1f", (double)marks[i]);
-      aud_ui_text_right(lane.x + lane.width - 5.0f, y - 5.0f, 11, AUD_UI_MUTED, text);
-      DrawLine((int)(lane.x + lane.width - 3.0f), (int)y, (int)(lane.x + lane.width),
-               (int)y, AUD_UI_EDGE);
+      aud_ui_write_right(AUD_UI_MONO, lane.x + lane.width - 7.0f, y - 6.0f, 11,
+                         i == 2 ? AUD_UI_MUTED : AUD_UI_FAINT, text);
+      DrawRectangleRec((Rectangle){lane.x + lane.width - 4.0f, y, 4.0f, 1.0f},
+                       i == 2 ? AUD_UI_EDGE : AUD_UI_EDGE_SOFT);
     }
   }
 }
@@ -805,8 +831,7 @@ static void draw_wave(const aud_track *t, unsigned ch, Rectangle lane, unsigned 
     return;
   }
 
-  DrawLine((int)lane.x, (int)mid, (int)(lane.x + lane.width), (int)mid,
-           Fade(AUD_UI_EDGE, 0.8f));
+  DrawRectangleRec((Rectangle){lane.x, mid, lane.width, 1.0f}, Fade(AUD_UI_EDGE, 0.55f));
 
   for (float px = 0.0f; px < lane.width; px += 1.0f)
   {
@@ -1056,9 +1081,79 @@ static Color mix_panel_selected(void)
   return c;
 }
 
+/* Halfway between the edge and the muted text: the scrollbar's grip at rest,
+ * which has to be findable without being the brightest thing under the tracks. */
+static Color mix_edge_muted(void)
+{
+  Color c = AUD_UI_EDGE;
+
+  c.r = (unsigned char)(c.r + 24);
+  c.g = (unsigned char)(c.g + 25);
+  c.b = (unsigned char)(c.b + 28);
+  return c;
+}
+
+/* A selected lane, lifted towards the accent by about as much as its panel is. */
+static Color mix_lane_selected(void)
+{
+  Color c = TL_LANE;
+
+  c.r = (unsigned char)(c.r + 8);
+  c.g = (unsigned char)(c.g + 12);
+  c.b = (unsigned char)(c.b + 26);
+  return c;
+}
+
 static int hovering_bar(Rectangle r)
 {
   return CheckCollisionPointRec(GetMousePosition(), r);
+}
+
+/*
+ * How a lane says how loud it is, or how far over it is: a word, the value it
+ * is currently at, and the slider under both.
+ *
+ * The number is what the old two-character marks at the ends of the track were
+ * missing. A slider with a "-" at one end and a "+" at the other says which way
+ * is louder and nothing else; a slider that says "+1.4 dB" can be set to the
+ * same place on two tracks, which is the whole reason for touching it.
+ */
+static void draw_knob(Rectangle panel, float *y, const char *what, float *value,
+                      float min, float max, int enabled)
+{
+  Rectangle slider = {panel.x + 10.0f, *y + 13.0f, panel.width - 20.0f, 16.0f};
+  char reading[24];
+
+  if (max > 1.5f)
+  {
+    if (*value > 0.001f)
+    {
+      snprintf(reading, sizeof(reading), "%+.1f dB", 20.0 * log10((double)*value));
+    }
+    else
+    {
+      snprintf(reading, sizeof(reading), "off");
+    }
+  }
+  else if (*value < -0.005f)
+  {
+    snprintf(reading, sizeof(reading), "L%.0f", (double)(-*value * 100.0f));
+  }
+  else if (*value > 0.005f)
+  {
+    snprintf(reading, sizeof(reading), "R%.0f", (double)(*value * 100.0f));
+  }
+  else
+  {
+    snprintf(reading, sizeof(reading), "centre");
+  }
+
+  aud_ui_text(panel.x + 10.0f, *y, TL_SMALL_FONT - 2, AUD_UI_FAINT, what);
+  aud_ui_write_right(AUD_UI_MONO, panel.x + panel.width - 10.0f, *y, TL_SMALL_FONT - 2,
+                     enabled ? AUD_UI_MUTED : AUD_UI_FAINT, reading);
+  aud_ui_slider(slider, value, min, max, AUD_UI_ACCENT, enabled);
+
+  *y += 30.0f;
 }
 
 /* The control column: the name, what it is doing, and how loud. */
@@ -1066,32 +1161,46 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
                        aud_timeline *tl)
 {
   aud_track *t = &d->tracks[index];
-  Rectangle close = {panel.x + 6.0f, panel.y + 6.0f, 18.0f, 18.0f};
-  Rectangle fold = {panel.x + panel.width - 24.0f, panel.y + 6.0f, 18.0f, 18.0f};
-  float y = panel.y + 30.0f;
+  Rectangle close = {panel.x + panel.width - 26.0f, panel.y + 7.0f, 20.0f, 20.0f};
+  Rectangle fold = {close.x - 24.0f, panel.y + 7.0f, 20.0f, 20.0f};
+  float y = panel.y + 34.0f;
 
   DrawRectangleRec(panel, t->selected ? mix_panel_selected() : AUD_UI_PANEL);
-  DrawLine((int)(panel.x + panel.width), (int)panel.y, (int)(panel.x + panel.width),
-           (int)(panel.y + panel.height), AUD_UI_EDGE);
+  aud_ui_rule(panel.x + panel.width, panel.y, panel.height, AUD_UI_EDGE_SOFT);
 
-  if (aud_ui_button(close, "x", AUD_UI_RECORD, enabled))
+  /*
+   * A selected lane is marked down its leading edge as well as filled: the fill
+   * is a shade away from the one beside it, which is enough to see when the two
+   * are next to each other and not enough on a lane at the top of the window
+   * with nothing to compare it against.
+   */
+  if (t->selected)
+  {
+    DrawRectangleRec((Rectangle){panel.x, panel.y + 1.0f, 2.5f, panel.height - 2.0f},
+                     AUD_UI_ACCENT);
+  }
+
+  /* the two at the right hand end, away from the name, so that closing a track
+   * is never the thing the pointer lands on while reaching for it */
+  if (aud_ui_button_icon(fold, t->collapsed ? AUD_UI_ICON_OPEN : AUD_UI_ICON_FOLD, NULL,
+                         AUD_UI_ACCENT, enabled))
+  {
+    t->collapsed = !t->collapsed;
+  }
+
+  if (aud_ui_button_icon(close, AUD_UI_ICON_CLOSE, NULL, AUD_UI_RECORD, enabled))
   {
     /* asked for, not done: see aud_timeline.close_requested */
     tl->close_requested = (long)index;
     return;
   }
 
-  if (aud_ui_button(fold, t->collapsed ? "v" : "^", AUD_UI_ACCENT, enabled))
-  {
-    t->collapsed = !t->collapsed;
-  }
-
   {
     char name[AUD_TRACK_NAME_MAX + 8];
 
     snprintf(name, sizeof(name), "%s", t->name);
-    aud_ui_text(close.x + 24.0f, panel.y + 8.0f, TL_LABEL_FONT,
-                t->selected ? AUD_UI_TEXT : AUD_UI_MUTED, name);
+    aud_ui_write(AUD_UI_STRONG, panel.x + 10.0f, panel.y + 10.0f, TL_LABEL_FONT,
+                 t->selected ? AUD_UI_TEXT : AUD_UI_MUTED, name);
   }
 
   if (t->collapsed || panel.height < 74.0f)
@@ -1100,8 +1209,8 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
   }
 
   {
-    Rectangle mute = {panel.x + 8.0f, y, 52.0f, 22.0f};
-    Rectangle solo = {panel.x + 66.0f, y, 52.0f, 22.0f};
+    Rectangle mute = {panel.x + 10.0f, y, 54.0f, 22.0f};
+    Rectangle solo = {panel.x + 70.0f, y, 54.0f, 22.0f};
 
     if (aud_ui_toggle(mute, "Mute", t->muted, AUD_UI_WARN, enabled))
     {
@@ -1114,34 +1223,19 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
     y += 28.0f;
   }
 
-  if (panel.height < 108.0f)
+  /* each of these asks for thirty pixels below where the last one ended, and
+   * is left out rather than drawn over the lane below when the lane is short */
+  if (y + 30.0f > panel.y + panel.height)
   {
     return;
   }
+  draw_knob(panel, &y, "gain", &t->gain, 0.0f, 2.0f, enabled);
 
-  {
-    Rectangle gain = {panel.x + 20.0f, y, panel.width - 40.0f, 18.0f};
-
-    aud_ui_text(panel.x + 6.0f, y + 2.0f, 12, AUD_UI_MUTED, "-");
-    aud_ui_text_right(panel.x + panel.width - 4.0f, y + 2.0f, 12, AUD_UI_MUTED, "+");
-    aud_ui_slider(gain, &t->gain, 0.0f, 2.0f, AUD_UI_ACCENT, enabled);
-    y += 22.0f;
-  }
-
-  if (panel.height < 132.0f)
+  if (y + 30.0f > panel.y + panel.height)
   {
     return;
   }
-
-  {
-    Rectangle pan = {panel.x + 20.0f, y, panel.width - 40.0f, 18.0f};
-
-    aud_ui_text(panel.x + 6.0f, y + 2.0f, 12, AUD_UI_MUTED, "L");
-    aud_ui_text_right(panel.x + panel.width - 4.0f, y + 2.0f, 12, AUD_UI_MUTED, "R");
-    aud_ui_slider(pan, &t->pan, -1.0f, 1.0f, AUD_UI_ACCENT, enabled);
-  }
-
-  (void)tl;
+  draw_knob(panel, &y, "pan", &t->pan, -1.0f, 1.0f, enabled);
 }
 
 static int track_row_height(const aud_track *t)
@@ -1186,7 +1280,8 @@ static void draw_hbar(aud_timeline *tl, const aud_doc *d, Rectangle area, int en
   grip.y += 2.0f;
   grip.height -= 4.0f;
 
-  DrawRectangleRounded(grip, 1.0f, 6, hovering_bar(grip) ? AUD_UI_MUTED : AUD_UI_EDGE);
+  DrawRectangleRounded(grip, 1.0f, 6,
+                       hovering_bar(grip) ? AUD_UI_MUTED : mix_edge_muted());
 
   if (enabled && CheckCollisionPointRec(GetMousePosition(), track_bar) &&
       IsMouseButtonDown(MOUSE_BUTTON_LEFT))
@@ -1318,7 +1413,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       DrawRectangleRec(scale, AUD_UI_PANEL);
     }
 
-    DrawRectangleRec(lane, t->selected ? Fade(AUD_UI_ACCENT, 0.05f) : BLACK);
+    DrawRectangleRec(lane, t->selected ? mix_lane_selected() : TL_LANE);
 
     /* the selected range, behind the waveform so the waveform stays readable */
     if (aud_doc_has_range(d) && t->selected && d->rate > 0)
@@ -1346,8 +1441,8 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
         draw_wave(t, ch, one, d->rate, tl, t->selected, d->sel_start, d->sel_end);
         if (ch > 0)
         {
-          DrawLine((int)one.x, (int)one.y, (int)(one.x + one.width), (int)one.y,
-                   Fade(AUD_UI_EDGE, 0.7f));
+          DrawRectangleRec((Rectangle){one.x, one.y, one.width, 1.0f},
+                           Fade(AUD_UI_EDGE_SOFT, 0.9f));
         }
       }
       draw_fades(t, lane, d->rate, tl);

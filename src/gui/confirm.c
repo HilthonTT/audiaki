@@ -526,11 +526,17 @@ int app_confirm_draw(app *a)
 
   tint = a->confirm.irreversible ? AUD_UI_RECORD : AUD_UI_WARN;
 
-  DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
-  DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, tint);
+  aud_ui_shadow(panel, 14.0f, 22.0f);
+  aud_ui_panel(panel, 14.0f, AUD_UI_SURFACE, AUD_UI_EDGE);
 
-  aud_ui_text(panel.x + CONFIRM_PAD, panel.y + CONFIRM_PAD, 19, AUD_UI_TEXT,
-              a->confirm.title);
+  /* the colour of the question along its top edge rather than all the way round
+   * it: a border in the record red reads as an error, and this is a choice */
+  DrawRectangleRounded(
+      (Rectangle){panel.x + 14.0f, panel.y + 1.0f, panel.width - 28.0f, 3.0f}, 1.0f, 4,
+      tint);
+
+  aud_ui_write(AUD_UI_STRONG, panel.x + CONFIRM_PAD, panel.y + CONFIRM_PAD, 19,
+               AUD_UI_TEXT, a->confirm.title);
 
   y = panel.y + CONFIRM_PAD + 34.0f;
   for (int i = 0; i < a->confirm.reasons; i++)
@@ -558,7 +564,9 @@ int app_confirm_draw(app *a)
     return 0;
   }
 
-  if (aud_ui_button(accept, a->confirm.accept, tint, 1))
+  /* filled rather than outlined: it is the answer the dialog was put up to get,
+   * and the one beside it is the way back to where you were */
+  if (aud_ui_toggle(accept, a->confirm.accept, 1, tint, 1))
   {
     app_confirm_kind kind = a->confirm.kind;
     app_edit_action action = a->confirm.action;

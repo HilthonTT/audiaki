@@ -792,7 +792,8 @@ static void draw_waterfall(const aud_viz *v, Rectangle area)
 /* Text centred on `cx`, which is how every line of the tuner is placed. */
 static void draw_centred(const char *text, float cx, float y, int size, Color tint)
 {
-  DrawText(text, (int)(cx - (float)MeasureText(text, size) / 2.0f), (int)y, size, tint);
+  aud_ui_write(AUD_UI_STRONG, cx - aud_ui_measure(AUD_UI_STRONG, text, size) / 2.0f, y,
+               size, tint, text);
 }
 
 static float clampf(float v, float lo, float hi)
@@ -910,9 +911,9 @@ static void draw_tuner(const aud_viz *v, Rectangle area)
 
   /* the reference pitch, out of the way, because it changes what all of this means */
   snprintf(line, sizeof(line), "A = %.0f Hz", v->a4_hz);
-  DrawText(line, (int)(area.x + (float)small_size * 0.5f),
-           (int)(area.y + area.height - (float)small_size * 1.6f), small_size,
-           AUD_UI_MUTED);
+  aud_ui_write(AUD_UI_MONO, area.x + (float)small_size * 0.5f,
+               area.y + area.height - (float)small_size * 1.6f, small_size, AUD_UI_MUTED,
+               line);
 }
 
 /* -- dispatch -------------------------------------------------------------- */

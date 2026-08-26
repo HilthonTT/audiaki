@@ -98,12 +98,38 @@ shows what is happening now rather than an empty panel filling up; the spectrum
 does not, because it reads the timeline rather than the interface and reading a
 take nobody is looking at would cost real work for nothing.
 
-Each track has a control column of its own — its name, **Mute**, **Solo**, a
-gain slider and a pan slider, with `x` to close it and `^` to fold it down to a
-strip. Dragging the line under a track makes it taller. Beside it is a strip of
-amplitude labels, and then the waveform: the peak envelope in deep blue with the
-RMS as a lighter core inside it, so how loud it got and how loud it is are both
-legible at a glance.
+Both toolbars are laid out in groups with a hairline between them — the
+transport apart from the file buttons, the four things an edit does apart from
+each other — and the five transport buttons carry the shapes a transport has
+always carried. A window too narrow for a whole bar drops the tail of the edit
+bar and then the monitoring level rather than overlapping anything; every button
+that is drawn can be read and pressed at the minimum window size.
+
+Each track has a control column of its own — its name, **Mute**, **Solo**, and a
+gain and a pan slider each with its current value beside it, with the chevron to
+fold the lane down to a strip and the cross to close it. Dragging the line under
+a track makes it taller. Beside it is a strip of amplitude labels, and then the
+waveform: the peak envelope in deep blue with the RMS as a lighter core inside
+it, so how loud it got and how loud it is are both legible at a glance.
+
+### What it is lettered in
+
+The window looks for a typeface on the machine when it opens and draws itself in
+it: a sans for words, a heavier cut of it for what controls are called, and a
+monospace for anything whose digits change in place — the clock, the meters, the
+tempo, the cursor. Nothing is installed and nothing is shipped; it takes the
+best of whatever is already there, preferring Inter and falling back through
+Ubuntu, Noto Sans, Roboto, DejaVu and Liberation. A machine with no fonts at all
+gets raylib's built-in one and everything still lines up.
+
+`$AUDIAKI_FONT`, `$AUDIAKI_FONT_STRONG` and `$AUDIAKI_FONT_MONO` each name a
+`.ttf` to use instead, for a machine that keeps its fonts somewhere unusual or
+an owner who wants a different one:
+
+```sh
+AUDIAKI_FONT_MONO=/usr/share/fonts/truetype/jetbrains/JetBrainsMono-Regular.ttf \
+  audiaki-gui
+```
 
 ## Recording onto the timeline
 

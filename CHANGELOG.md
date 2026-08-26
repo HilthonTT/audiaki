@@ -9,6 +9,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **The window is drawn in a real typeface.** raylib carries one font and it is
+  a bitmap, which is what made this look like a program written against a game
+  library rather than a program that belongs on a desktop. It now finds a sans,
+  a heavier cut of it and a monospace on the machine when it opens and letters
+  itself in those — Inter for preference, falling back through Ubuntu, Noto
+  Sans, Roboto, DejaVu and Liberation to whatever is there.
+
+  Nothing is shipped and nothing is installed: there is no asset to package and
+  no licence to carry, and a machine with no fonts on it at all gets raylib's
+  own and every control still lines up exactly where it did. `$AUDIAKI_FONT`,
+  `$AUDIAKI_FONT_STRONG` and `$AUDIAKI_FONT_MONO` name a `.ttf` outright.
+
+  Every number that changes in place — the clock, the peak, the input and
+  monitoring gains, the tempo, the cursor, the LUFS readouts, the amplitude
+  scale down the side of each lane — is now set in the monospace, so a running
+  clock counts without shuffling sideways under itself.
+
+- **Transport buttons carry the shapes a transport carries.** Play, Loop,
+  Record, Pause and Stop each have their glyph ahead of the label, drawn rather
+  than lettered so there is nothing to install for it.
+
+- **Each toolbar is laid out in groups.** A wider gap and a hairline separate
+  the transport from the file buttons and those from the session buttons, and
+  the edit bar into taking an edit back, moving it about, changing its shape and
+  changing how loud it is. Seventeen buttons in an even row is a row you have to
+  read; four short lists is one you can aim at.
+
+- **The gain and pan sliders on each lane say what they are set to**, in dB and
+  in L/R, where they used to have a `-` and a `+` at the ends and nothing else.
+  A slider that says `+1.4 dB` can be matched on another track, which is most of
+  what one is for.
+
 - **Recording round a loop, with every lap on a lane of its own.** Select a bar,
   turn Loop on, press Record, and play it until you have it. When you stop, the
   laps are stacked as passes to choose between.
@@ -929,6 +961,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   place. `cli.h` had always kept an audio system out of the option handling, so
   the only thing needed to test it was the backend name table, which the test
   links directly and supplies the ops for.
+
+### Changed
+
+- **The whole window has been redrawn.** A four-step neutral ramp instead of two
+  — the window, a panel on it, a control raised off that, and the same control
+  under the pointer — so depth comes from surfaces rather than from borders.
+  Controls are lit in their own colour when they are on rather than merely
+  outlined in it, and a pale tint is taken down towards black behind a white
+  label so the amber and the green are readable rather than only bright.
+
+  The level meter is cut into blocks the way a hardware meter is, so it says how
+  fast the input is moving as well as how loud. Sliders have a ringed knob that
+  can be seen where it crosses its own track. Menus, dialogs and tooltips have a
+  shadow under them and a highlight along the top edge of every raised control.
+  The drawer's two tabs carry a chevron saying which way the click goes. Lanes
+  are drawn on a surface rather than on black.
+
+- **The shortcut list fits the window it is in.** It lays itself out in as many
+  columns as the window is tall enough to need; the last third of it used to
+  fall off the bottom of its own panel.
+
+- **The button that does the thing a dialog is named after is filled**, so it is
+  not the same shape as the button that walks away from it.
+
+- **A narrow window keeps the monitoring switch.** The monitoring level is
+  dropped first when the transport bar runs out of room, where the whole group
+  including the switch used to go at once.
 
 ### Fixed
 

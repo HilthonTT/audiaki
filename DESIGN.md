@@ -112,7 +112,10 @@ src/
     repair.c/.h   the spectrum of what was recorded, and drawing on it
     confirm.c     the question that stops an action until it is answered
     autosave.c    the copy of the session that survives the window dying
-    ui.c/.h       immediate-mode buttons, slider and meter
+    ui.c/.h       immediate-mode buttons, slider and meter, and the palette
+                  and lettering the whole window is drawn from
+    fonts.c/.h    finding a typeface on the machine, so the window is not
+                  lettered in a bitmap
   hotreload/    only in a development build of the window
     plug.h        the five calls the shell reaches the app through
     hotreload.h   how it reaches them: directly, or through a library

@@ -1053,10 +1053,11 @@ void app_save_draw(app *a)
   panel.x = (screen.width - panel.width) / 2.0f;
   panel.y = (screen.height - panel.height) / 2.0f;
 
-  DrawRectangleRounded(panel, 12.0f / panel.height, 8, AUD_UI_PANEL);
-  DrawRectangleRoundedLines(panel, 12.0f / panel.height, 8, AUD_UI_ACCENT);
+  aud_ui_shadow(panel, 14.0f, 22.0f);
+  aud_ui_panel(panel, 14.0f, AUD_UI_SURFACE, AUD_UI_EDGE);
 
-  aud_ui_text(panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT, save_title(s->mode));
+  aud_ui_write(AUD_UI_STRONG, panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT,
+               save_title(s->mode));
 
   /* how long it was, so the dialog says which take it is asking about */
   if (s->mode == APP_SAVE_MODE_KEEP || APP_SAVE_IS_EXPORT(s->mode))
@@ -1254,7 +1255,10 @@ void app_save_draw(app *a)
     return;
   }
 
-  if (aud_ui_button(save, save_action(s->mode), AUD_UI_ACCENT, 1) && save_confirm(a) == 0)
+  /* filled, so the button that does the thing the dialog is named after is not
+   * the same shape as the one that walks away from it */
+  if (aud_ui_toggle(save, save_action(s->mode), 1, AUD_UI_ACCENT, 1) &&
+      save_confirm(a) == 0)
   {
     return;
   }

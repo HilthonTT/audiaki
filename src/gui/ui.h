@@ -18,52 +18,110 @@
 
 #include <stddef.h>
 
-/* The palette the whole window is drawn from. */
+/*
+ * The palette the whole window is drawn from.
+ *
+ * Four neutrals rather than two, because depth is what tells a control from
+ * the thing it sits on: the window is BG, a panel laid on it is PANEL, a
+ * control raised off that panel is SURFACE, and SURFACE_HI is the same control
+ * with the pointer over it. Nothing here is pure grey - the whole ramp is
+ * pulled a little towards blue so that the accent and the level colours read as
+ * colour rather than as the only thing on the screen that has any.
+ */
 #define AUD_UI_BG   \
   CLITERAL(Color)   \
   {                 \
-    12, 12, 14, 255 \
+    11, 12, 16, 255 \
   }
 #define AUD_UI_PANEL \
   CLITERAL(Color)    \
   {                  \
-    22, 22, 26, 255  \
+    20, 22, 29, 255  \
+  }
+#define AUD_UI_SURFACE \
+  CLITERAL(Color)      \
+  {                    \
+    30, 33, 43, 255    \
+  }
+#define AUD_UI_SURFACE_HI \
+  CLITERAL(Color)         \
+  {                       \
+    41, 45, 58, 255       \
   }
 #define AUD_UI_EDGE \
   CLITERAL(Color)   \
   {                 \
-    44, 44, 52, 255 \
+    54, 59, 76, 255 \
+  }
+/* The line between two things that belong together, as opposed to two that do
+ * not: a lane and the next lane, rather than a panel and the window. */
+#define AUD_UI_EDGE_SOFT \
+  CLITERAL(Color)        \
+  {                      \
+    34, 37, 48, 255      \
   }
 #define AUD_UI_TEXT    \
   CLITERAL(Color)      \
   {                    \
-    228, 228, 235, 255 \
+    232, 235, 242, 255 \
   }
 #define AUD_UI_MUTED   \
   CLITERAL(Color)      \
   {                    \
-    128, 128, 142, 255 \
+    148, 155, 176, 255 \
+  }
+/* Text that is there to be found rather than to be read: counts, sizes, units. */
+#define AUD_UI_FAINT  \
+  CLITERAL(Color)     \
+  {                   \
+    97, 104, 124, 255 \
   }
 #define AUD_UI_ACCENT \
   CLITERAL(Color)     \
   {                   \
-    88, 168, 255, 255 \
+    91, 157, 255, 255 \
   }
 #define AUD_UI_RECORD \
   CLITERAL(Color)     \
   {                   \
-    236, 68, 76, 255  \
+    242, 85, 95, 255  \
   }
 #define AUD_UI_WARN   \
   CLITERAL(Color)     \
   {                   \
-    246, 176, 60, 255 \
+    245, 178, 60, 255 \
   }
 #define AUD_UI_OK     \
   CLITERAL(Color)     \
   {                   \
-    76, 208, 132, 255 \
+    53, 211, 153, 255 \
   }
+
+/* -- lettering -------------------------------------------------------------- */
+
+/*
+ * The three faces the window letters in. They are found on the machine at
+ * startup and fall back to the one raylib carries, so this adds no file to
+ * install and no dependency to build against - but on any desktop with fonts
+ * on it the window is drawn in a real typeface rather than in a bitmap.
+ */
+typedef enum
+{
+  AUD_UI_SANS = 0, /* everything that is words */
+  AUD_UI_STRONG,   /* what a control is called, and headings */
+  AUD_UI_MONO,     /* clocks, decibels, anything whose digits change in place */
+  AUD_UI_FACE_COUNT
+} aud_ui_face;
+
+/*
+ * Let the faces go. Called on the way out and before a hot reload: they are
+ * textures on the card, and the library that made them is the one that must
+ * free them. The next call to draw anything finds them again.
+ */
+void aud_ui_fonts_release(void);
+
+/* How wide `text` is in `face` at `size`, which is what a toolbar lays out from. */
+float aud_ui_measure(aud_ui_face face, const char *text, int size);
 
 /*
  * The size buttons and toggles letter their labels at from here on, or 0 for
@@ -76,11 +134,53 @@
 void aud_ui_label_size(int size);
 
 /*
+ * The glyphs a transport button can carry ahead of its label. They are drawn
+ * from shapes rather than lettered, because there is no character for "record"
+ * in a font that is guaranteed to be on the machine - and because a triangle
+ * and a disc are what every transport in the world has used for fifty years,
+ * which is worth more here than any word.
+ */
+typedef enum
+{
+  AUD_UI_ICON_NONE = 0,
+  AUD_UI_ICON_PLAY,
+  AUD_UI_ICON_RECORD,
+  AUD_UI_ICON_PAUSE,
+  AUD_UI_ICON_STOP,
+  AUD_UI_ICON_LOOP,
+  /* and the four that are not about the transport at all: a drawer that is
+   * open or shut, a lane that is folded away, and a thing to be closed */
+  AUD_UI_ICON_OPEN,
+  AUD_UI_ICON_SHUT,
+  AUD_UI_ICON_FOLD,
+  AUD_UI_ICON_CLOSE
+} aud_ui_icon;
+
+/* The room a glyph and its gap ask for beside a label lettered at `font`. */
+float aud_ui_icon_width(int font);
+
+/*
  * A button. `tint` colours the label and the border when it is active.
  * Returns non-zero on the frame it is clicked. A disabled button dims itself
  * and never reports a click.
  */
 int aud_ui_button(Rectangle bounds, const char *label, Color tint, int enabled);
+
+/* The same button with a glyph ahead of the label; see aud_ui_icon. */
+int aud_ui_button_icon(Rectangle bounds, aud_ui_icon icon, const char *label, Color tint,
+                       int enabled);
+
+/* And the same toggle. */
+int aud_ui_toggle_icon(Rectangle bounds, aud_ui_icon icon, const char *label, int on,
+                       Color tint, int enabled);
+
+/*
+ * A button with no plate under it: a label that lights when the pointer is on
+ * it and nothing at all when it is not. For the parts of a compound control -
+ * the two steps either side of a reading - which are buttons but are not
+ * separate things, and would say they were if each had a border of its own.
+ */
+int aud_ui_ghost(Rectangle bounds, const char *label, Color tint, int enabled);
 
 /*
  * A button that stays lit while `on`. Returns non-zero when clicked, leaving
@@ -183,10 +283,42 @@ void aud_ui_tooltip(Rectangle bounds, const char *text);
 /* Draw whatever tooltip was asked for this frame. Called last, exactly once. */
 void aud_ui_tooltip_draw(void);
 
-/* Text helpers that take a colour and an alignment rather than raw positions. */
+/*
+ * Text helpers that take a colour and an alignment rather than raw positions.
+ * The aud_ui_write family names the face; aud_ui_text and its two are the same
+ * calls in AUD_UI_SANS, which is what most of the window wants.
+ */
+void aud_ui_write(aud_ui_face face, float x, float y, int size, Color color,
+                  const char *text);
+void aud_ui_write_right(aud_ui_face face, float right, float y, int size, Color color,
+                        const char *text);
+void aud_ui_write_centred(aud_ui_face face, Rectangle bounds, int size, Color color,
+                          const char *text);
+
 void aud_ui_text(float x, float y, int size, Color color, const char *text);
 void aud_ui_text_right(float right, float y, int size, Color color, const char *text);
 void aud_ui_text_centred(Rectangle bounds, int size, Color color, const char *text);
+
+/* -- the shapes everything else is built from ------------------------------- */
+
+/*
+ * A rounded rectangle with a border, at a radius in pixels rather than the
+ * fraction of its own height raylib asks for - which is the wrong unit for a
+ * window where a 20 pixel button and a 200 pixel panel should have the same
+ * corner. Either colour may be blank to leave that half undrawn.
+ */
+void aud_ui_panel(Rectangle bounds, float radius, Color fill, Color edge);
+
+/*
+ * The soft dark spread under something that floats: a menu, a dialog, a
+ * tooltip. Drawn before the thing itself. It is what says the panel is over the
+ * window rather than cut out of it, and it is the one bit of depth here that is
+ * not a border.
+ */
+void aud_ui_shadow(Rectangle bounds, float radius, float spread);
+
+/* The thin vertical rule that separates one group of buttons from the next. */
+void aud_ui_rule(float x, float y, float height, Color color);
 
 /* Format `seconds` as mm:ss.t into `dst`, which must hold at least 16 bytes. */
 void aud_ui_format_clock(char *dst, size_t size, double seconds);

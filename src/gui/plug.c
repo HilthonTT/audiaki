@@ -638,6 +638,7 @@ void aud_plug_shutdown(void)
   aud_clipboard_clear(&a->clipboard);
   aud_doc_free(&a->doc);
   aud_device_watch_destroy(a->picker.watch);
+  aud_ui_fonts_release();
   CloseWindow();
   app_free(a);
   plug = NULL;
@@ -667,6 +668,10 @@ void *aud_plug_pre_reload(void)
 
   aud_viz_destroy(a->viz);
   a->viz = NULL;
+
+  /* the faces too: they are textures this build put on the card, and the next
+   * one goes looking for them again the first time it letters anything */
+  aud_ui_fonts_release();
 
   return a;
 }

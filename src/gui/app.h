@@ -61,8 +61,8 @@
 #define APP_MIN_HEIGHT 460
 
 #define APP_PAD 14.0f
-#define APP_HEADER_H 40.0f
-#define APP_TOOLBAR_H 34.0f
+#define APP_HEADER_H 44.0f
+#define APP_TOOLBAR_H 36.0f
 #define APP_RULER_H 26.0f
 #define APP_STATUS_H 34.0f
 
@@ -74,7 +74,7 @@
  * reads fine at a glance; the other is a graph with two rows of controls under
  * it and a spike you have to be able to aim at.
  */
-#define APP_VIZ_BAR_H 24.0f
+#define APP_VIZ_BAR_H 28.0f
 #define APP_VIZ_OPEN_H 190.0f
 #define APP_FIX_OPEN_H 320.0f
 #define APP_VIZ_MIN_H 90.0f
