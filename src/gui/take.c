@@ -42,17 +42,17 @@ int app_open_engine(app *a)
   unsigned channels;
 
   a->fatal[0] = '\0';
-  a->take_buf_frames = 0;
+  a->rec.buf_frames = 0;
 
-  if (a->device_selected < 0 || a->device_selected >= a->devices.count)
+  if (a->picker.selected < 0 || a->picker.selected >= a->picker.list.count)
   {
-    a->device_selected = 0;
+    a->picker.selected = 0;
   }
 
   /* a copy, because the list it came from is rebuilt as hardware comes and goes */
-  snprintf(a->active_device, sizeof(a->active_device), "%s",
-           a->devices.name[a->device_selected]);
-  a->cfg.device = a->active_device;
+  snprintf(a->picker.active, sizeof(a->picker.active), "%s",
+           a->picker.list.name[a->picker.selected]);
+  a->cfg.device = a->picker.active;
 
   a->engine = aud_engine_create(&a->cfg);
   if (a->engine == NULL)
@@ -77,13 +77,13 @@ int app_open_engine(app *a)
    * more than that would have the engine write the extra channels past the end.
    */
   channels = aud_engine_channels(a->engine);
-  a->take_buf_frames = channels > 0 ? APP_TAKE_BUF_SAMPLES / channels : 0;
+  a->rec.buf_frames = channels > 0 ? APP_TAKE_BUF_SAMPLES / channels : 0;
 
   /* the style survives a device change; the analyser behind it does not */
   aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
-  aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
+  aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
   /* set again on every engine, so a device swap does not undo the level */
-  aud_engine_set_input_gain(a->engine, a->input_gain);
+  aud_engine_set_input_gain(a->engine, a->levels.input_gain);
   return 0;
 }
 
@@ -93,7 +93,7 @@ void app_close_engine(app *a)
   a->viz = NULL;
   aud_engine_destroy(a->engine);
   a->engine = NULL;
-  a->take_buf_frames = 0;
+  a->rec.buf_frames = 0;
 }
 
 /*
@@ -117,8 +117,8 @@ void app_switch_device(app *a, int previous)
     return;
   }
 
-  aud_warn("falling back to '%s'", a->devices.name[previous]);
-  a->device_selected = previous;
+  aud_warn("falling back to '%s'", a->picker.list.name[previous]);
+  a->picker.selected = previous;
 
   if (app_open_engine(a) == 0)
   {
@@ -151,7 +151,7 @@ static void app_resume_take(app *a);
  */
 void app_recover_engine(app *a)
 {
-  if (a->devices.absent == a->device_selected)
+  if (a->picker.list.absent == a->picker.selected)
   {
     return;
   }
@@ -173,7 +173,7 @@ void app_recover_engine(app *a)
 
   if (app_open_engine(a) == 0)
   {
-    aud_info("'%s' is back", a->active_device);
+    aud_info("'%s' is back", a->picker.active);
     aud_engine_set_monitor(a->engine, a->start_monitor);
     app_resume_take(a);
   }
@@ -247,7 +247,7 @@ static uint64_t app_latency_frames(const app *a)
    * defaults monitor.c uses rather than from a second copy of them */
   aud_monitor_config_defaults(&out, aud_engine_rate(a->engine), 2u);
 
-  return aud_latency_frames(a->latency_ms, aud_engine_rate(a->engine),
+  return aud_latency_frames(a->transport.latency_ms, aud_engine_rate(a->engine),
                             aud_engine_capture_frames(a->engine),
                             (unsigned long)out.period_frames * out.periods);
 }
@@ -262,7 +262,7 @@ void app_begin_take(app *a)
   long target;
   int along;
 
-  if (a->engine == NULL || aud_take_next(path, sizeof(path), a->prefix) != 0)
+  if (a->engine == NULL || aud_take_next(path, sizeof(path), a->rec.prefix) != 0)
   {
     return;
   }
@@ -280,9 +280,10 @@ void app_begin_take(app *a)
    * - because tearing the device down and standing it up again at each lap
    * would lose the moment either side of every loop point.
    */
-  a->lap_frames =
-      a->loop && aud_doc_has_range(&a->doc) ? a->doc.sel_end - a->doc.sel_start : 0;
-  at = a->lap_frames > 0 ? a->doc.sel_start : a->doc.cursor;
+  a->rec.lap_frames = a->transport.loop && aud_doc_has_range(&a->doc)
+                          ? a->doc.sel_end - a->doc.sel_start
+                          : 0;
+  at = a->rec.lap_frames > 0 ? a->doc.sel_start : a->doc.cursor;
 
   /*
    * Playback first, because whether it started is what decides where the take
@@ -293,18 +294,18 @@ void app_begin_take(app *a)
    * not open, and the take belongs exactly on the line where it was asked for.
    */
   latency = 0;
-  along = a->overdub && aud_doc_end(&a->doc) > at;
+  along = a->transport.overdub && aud_doc_end(&a->doc) > at;
 
-  if (along || a->click_on || a->lap_frames > 0)
+  if (along || a->transport.click_on || a->rec.lap_frames > 0)
   {
     /*
      * A loop take is bounded by the loop, whatever else is on. Otherwise the
      * project only when it was asked for, and the click runs either way and
      * past the end of what is there, so the pass has no end of its own.
      */
-    uint64_t until = a->lap_frames > 0 ? a->doc.sel_end
-                     : a->click_on     ? AUD_PLAYER_OPEN_ENDED
-                                       : aud_doc_end(&a->doc);
+    uint64_t until = a->rec.lap_frames > 0   ? a->doc.sel_end
+                     : a->transport.click_on ? AUD_PLAYER_OPEN_ENDED
+                                             : aud_doc_end(&a->doc);
 
     aud_player_set_mix(&a->player, along);
     app_apply_transport(a); /* which is what turns the loop on, see it for why */
@@ -323,7 +324,7 @@ void app_begin_take(app *a)
   if (target < 0)
   {
     aud_player_stop(&a->player);
-    a->lap_frames = 0;
+    a->rec.lap_frames = 0;
     app_set_status(a, "no room for another track");
     return;
   }
@@ -332,30 +333,30 @@ void app_begin_take(app *a)
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {
     aud_player_stop(&a->player);
-    a->lap_frames = 0;
+    a->rec.lap_frames = 0;
     app_set_status(a, "there is already audio there - move the cursor");
     return;
   }
 
-  a->render_note[0] = '\0';
-  a->record_track = target;
-  a->record_at = start;
-  a->record_skip = skip;
+  a->video.note[0] = '\0';
+  a->rec.track = target;
+  a->rec.at = start;
+  a->rec.skip = skip;
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
     aud_player_stop(&a->player);
     aud_track_record_end(&a->doc.tracks[target]);
-    a->record_track = -1;
-    a->record_skip = 0;
-    a->lap_frames = 0;
+    a->rec.track = -1;
+    a->rec.skip = 0;
+    a->rec.lap_frames = 0;
     return;
   }
 
-  if (a->lap_frames > 0)
+  if (a->rec.lap_frames > 0)
   {
     app_set_status(a, "recording round %.2f s - every lap becomes a pass",
-                   (double)a->lap_frames / aud_engine_rate(a->engine));
+                   (double)a->rec.lap_frames / aud_engine_rate(a->engine));
     return;
   }
 
@@ -389,16 +390,16 @@ void app_pump_take(app *a)
   unsigned channels;
   size_t got;
 
-  if (a->record_track < 0 || (size_t)a->record_track >= a->doc.count)
+  if (a->rec.track < 0 || (size_t)a->rec.track >= a->doc.count)
   {
     return;
   }
 
   channels = aud_engine_channels(a->engine);
 
-  while ((got = aud_engine_read_take(a->engine, a->take_buf, a->take_buf_frames)) > 0)
+  while ((got = aud_engine_read_take(a->engine, a->rec.buf, a->rec.buf_frames)) > 0)
   {
-    const float *frames = a->take_buf;
+    const float *frames = a->rec.buf;
     size_t take = got;
 
     /*
@@ -406,22 +407,22 @@ void app_pump_take(app *a)
      * because there was no timeline before frame zero to shift it into. Those
      * frames describe a moment the project does not have.
      */
-    if (a->record_skip > 0)
+    if (a->rec.skip > 0)
     {
-      size_t drop = a->record_skip < take ? (size_t)a->record_skip : take;
+      size_t drop = a->rec.skip < take ? (size_t)a->rec.skip : take;
 
       frames += drop * channels;
       take -= drop;
-      a->record_skip -= drop;
+      a->rec.skip -= drop;
     }
 
     if (take > 0)
     {
-      aud_track_record_push(&a->doc.tracks[a->record_track], frames, take);
+      aud_track_record_push(&a->doc.tracks[a->rec.track], frames, take);
       a->doc.dirty = 1;
     }
 
-    if (got < a->take_buf_frames)
+    if (got < a->rec.buf_frames)
     {
       break;
     }
@@ -453,11 +454,11 @@ void app_stop_take(app *a, const aud_engine_status *st)
   /* whatever was still in flight when the take closed belongs on the track */
   app_pump_take(a);
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
 
-  if (a->record_track >= 0 && (size_t)a->record_track < a->doc.count)
+  if (a->rec.track >= 0 && (size_t)a->rec.track < a->doc.count)
   {
-    aud_track *t = &a->doc.tracks[a->record_track];
+    aud_track *t = &a->doc.tracks[a->rec.track];
 
     /*
      * Tell the block which file it is, while the clip that holds it is still
@@ -469,7 +470,7 @@ void app_stop_take(app *a, const aud_engine_status *st)
     {
       aud_samples_set_source(t->clips[t->recording].audio, take);
     }
-    a->last_take_track = a->record_track;
+    a->rec.last_track = a->rec.track;
 
     aud_track_record_end(t);
 
@@ -481,11 +482,11 @@ void app_stop_take(app *a, const aud_engine_status *st)
      */
     if (dropped > 0)
     {
-      aud_doc_remove_track(&a->doc, (size_t)a->record_track);
-      a->record_track = -1;
+      aud_doc_remove_track(&a->doc, (size_t)a->rec.track);
+      a->rec.track = -1;
       app_load_track(a, take);
       /* the reload appended it, and it brought its own source with it */
-      a->last_take_track = (long)a->doc.count - 1;
+      a->rec.last_track = (long)a->doc.count - 1;
       app_set_status(a, "the display fell behind; the take was reloaded from disk");
     }
     else
@@ -500,17 +501,17 @@ void app_stop_take(app *a, const aud_engine_status *st)
        * and the timeline are known to agree: the reload above rebuilds the lane
        * from the file at frame zero, which is not where the laps were.
        */
-      if (a->lap_frames > 0)
+      if (a->rec.lap_frames > 0)
       {
-        passes = aud_edit_take_passes(&a->doc, (size_t)a->record_track, a->record_at,
-                                      a->lap_frames);
+        passes = aud_edit_take_passes(&a->doc, (size_t)a->rec.track, a->rec.at,
+                                      a->rec.lap_frames);
       }
 
       if (passes > 1)
       {
-        a->project_dirty = 1;
+        a->session.dirty = 1;
         app_set_status(a, "%d passes of %.2f s - K walks them, alt+K mutes one", passes,
-                       (double)a->lap_frames / a->doc.rate);
+                       (double)a->rec.lap_frames / a->doc.rate);
       }
       else
       {
@@ -518,17 +519,17 @@ void app_stop_take(app *a, const aud_engine_status *st)
       }
     }
   }
-  a->record_track = -1;
-  a->record_skip = 0;
-  a->lap_frames = 0;
-  a->render_note[0] = '\0';
+  a->rec.track = -1;
+  a->rec.skip = 0;
+  a->rec.lap_frames = 0;
+  a->video.note[0] = '\0';
 
   /*
    * The video waits for the dialog rather than starting beside it: it is
    * rendered from the take, and it should be rendered from wherever the take
    * ends up rather than from where it happened to be written.
    */
-  if (a->want_dialog && take[0] != '\0')
+  if (a->rec.want_dialog && take[0] != '\0')
   {
     app_save_open(a, take, seconds);
     return;
@@ -575,19 +576,19 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
   /* whatever reached the ring before the stream went belongs on the track */
   app_pump_take(a);
 
-  a->project_dirty = 1;
-  memset(&a->interrupted, 0, sizeof(a->interrupted));
-  a->interrupted.track = -1;
+  a->session.dirty = 1;
+  memset(&a->rec.interrupted, 0, sizeof(a->rec.interrupted));
+  a->rec.interrupted.track = -1;
 
-  if (a->record_track >= 0 && (size_t)a->record_track < a->doc.count)
+  if (a->rec.track >= 0 && (size_t)a->rec.track < a->doc.count)
   {
-    aud_track *t = &a->doc.tracks[a->record_track];
+    aud_track *t = &a->doc.tracks[a->rec.track];
 
     if (aud_track_recording(t))
     {
       aud_samples_set_source(t->clips[t->recording].audio, take);
     }
-    a->last_take_track = a->record_track;
+    a->rec.last_track = a->rec.track;
     aud_track_record_end(t);
 
     if (dropped > 0)
@@ -598,29 +599,29 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
        * normally - and not offered to be carried on, because the frame the
        * reload lands on is not the frame the take stopped at.
        */
-      aud_doc_remove_track(&a->doc, (size_t)a->record_track);
-      a->record_track = -1;
+      aud_doc_remove_track(&a->doc, (size_t)a->rec.track);
+      a->rec.track = -1;
       app_load_track(a, take);
-      a->last_take_track = (long)a->doc.count - 1;
+      a->rec.last_track = (long)a->doc.count - 1;
     }
     else
     {
       snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
 
-      a->interrupted.waiting = 1;
-      a->interrupted.track = a->record_track;
+      a->rec.interrupted.waiting = 1;
+      a->rec.interrupted.track = a->rec.track;
       /* one past the last frame that arrived, so a second half butts up
        * against the first rather than being refused for overlapping it */
-      a->interrupted.at = aud_track_end(t);
-      a->interrupted.lost_at = GetTime();
-      a->interrupted.rate = aud_engine_rate(a->engine);
-      a->interrupted.channels = aud_engine_channels(a->engine);
-      snprintf(a->interrupted.path, sizeof(a->interrupted.path), "%s", take);
+      a->rec.interrupted.at = aud_track_end(t);
+      a->rec.interrupted.lost_at = GetTime();
+      a->rec.interrupted.rate = aud_engine_rate(a->engine);
+      a->rec.interrupted.channels = aud_engine_channels(a->engine);
+      snprintf(a->rec.interrupted.path, sizeof(a->rec.interrupted.path), "%s", take);
     }
   }
 
-  a->record_track = -1;
-  a->record_skip = 0;
+  a->rec.track = -1;
+  a->rec.skip = 0;
   /*
    * A loop take that was cut short is not cut into passes. What is on the lane
    * is however many laps got through before the cable went, and a second half
@@ -628,12 +629,12 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
    * rather than at the top of a lap - so the laps are no longer a fixed number
    * of frames apart and there is nothing honest to cut on. It stays one take.
    */
-  a->lap_frames = 0;
-  a->render_note[0] = '\0';
+  a->rec.lap_frames = 0;
+  a->video.note[0] = '\0';
 
   app_set_status(a, "the device went during %.40s - %.1f s kept%s",
                  aud_path_basename(take), seconds,
-                 a->interrupted.waiting ? "; plug it back in to carry on" : "");
+                 a->rec.interrupted.waiting ? "; plug it back in to carry on" : "");
 }
 
 /*
@@ -648,7 +649,7 @@ void app_check_capture_loss(app *a)
 {
   aud_engine_status st;
 
-  if (a->engine == NULL || a->record_track < 0)
+  if (a->engine == NULL || a->rec.track < 0)
   {
     return;
   }
@@ -684,21 +685,21 @@ static void app_resume_take(app *a)
   char path[AUD_ENGINE_PATH_MAX];
   aud_track *t;
 
-  if (!a->interrupted.waiting || a->engine == NULL)
+  if (!a->rec.interrupted.waiting || a->engine == NULL)
   {
     return;
   }
 
-  a->interrupted.waiting = 0;
+  a->rec.interrupted.waiting = 0;
 
-  if (GetTime() - a->interrupted.lost_at > APP_RESUME_SECONDS)
+  if (GetTime() - a->rec.interrupted.lost_at > APP_RESUME_SECONDS)
   {
     app_set_status(a, "'%.40s' is back - press Record for the next take",
-                   a->active_device);
+                   a->picker.active);
     return;
   }
 
-  if (a->interrupted.track < 0 || (size_t)a->interrupted.track >= a->doc.count)
+  if (a->rec.interrupted.track < 0 || (size_t)a->rec.interrupted.track >= a->doc.count)
   {
     return; /* the lane was edited away while the device was gone */
   }
@@ -708,18 +709,18 @@ static void app_resume_take(app *a)
    * running at another rate or another width cannot be laid onto the end of a
    * lane recorded at the old one.
    */
-  if (aud_engine_rate(a->engine) != a->interrupted.rate ||
-      aud_engine_channels(a->engine) != a->interrupted.channels)
+  if (aud_engine_rate(a->engine) != a->rec.interrupted.rate ||
+      aud_engine_channels(a->engine) != a->rec.interrupted.channels)
   {
     app_set_status(a,
                    "'%.30s' is back, but at %u Hz / %u ch - press Record to "
                    "start a take on it",
-                   a->active_device, aud_engine_rate(a->engine),
+                   a->picker.active, aud_engine_rate(a->engine),
                    aud_engine_channels(a->engine));
     return;
   }
 
-  t = &a->doc.tracks[a->interrupted.track];
+  t = &a->doc.tracks[a->rec.interrupted.track];
 
   /*
    * The rest of the take on the end of the same file and the same clip, when
@@ -727,17 +728,17 @@ static void app_resume_take(app *a)
    * files, or two clips over one file, would each be a lane that plays back
    * wrong once the project is saved and reloaded.
    */
-  if (a->interrupted.path[0] != '\0' &&
-      aud_track_record_continue(t, a->interrupted.at) == 0)
+  if (a->rec.interrupted.path[0] != '\0' &&
+      aud_track_record_continue(t, a->rec.interrupted.at) == 0)
   {
-    if (aud_engine_continue(a->engine, a->interrupted.path) == 0)
+    if (aud_engine_continue(a->engine, a->rec.interrupted.path) == 0)
     {
-      a->record_track = a->interrupted.track;
-      a->record_at = a->interrupted.at;
-      a->record_skip = 0;
-      a->render_note[0] = '\0';
-      app_set_status(a, "'%.30s' is back - carrying on in %.40s", a->active_device,
-                     aud_path_basename(a->interrupted.path));
+      a->rec.track = a->rec.interrupted.track;
+      a->rec.at = a->rec.interrupted.at;
+      a->rec.skip = 0;
+      a->video.note[0] = '\0';
+      app_set_status(a, "'%.30s' is back - carrying on in %.40s", a->picker.active,
+                     aud_path_basename(a->rec.interrupted.path));
       return;
     }
     /* the file would not take it; put the clip back and fall through */
@@ -750,30 +751,30 @@ static void app_resume_take(app *a)
    * not what it was - and the half that is coming is worth more than the tidy
    * arrangement.
    */
-  if (aud_take_next(path, sizeof(path), a->prefix) != 0)
+  if (aud_take_next(path, sizeof(path), a->rec.prefix) != 0)
   {
     return;
   }
 
-  if (aud_track_record_begin(t, a->interrupted.at,
+  if (aud_track_record_begin(t, a->rec.interrupted.at,
                              (size_t)aud_engine_rate(a->engine) * 8u) != 0)
   {
     return;
   }
 
-  a->record_track = a->interrupted.track;
-  a->record_at = a->interrupted.at;
-  a->record_skip = 0;
-  a->render_note[0] = '\0';
+  a->rec.track = a->rec.interrupted.track;
+  a->rec.at = a->rec.interrupted.at;
+  a->rec.skip = 0;
+  a->video.note[0] = '\0';
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
     aud_track_record_end(t);
-    a->record_track = -1;
+    a->rec.track = -1;
     return;
   }
 
-  app_set_status(a, "'%.30s' is back - carrying on into %.40s", a->active_device,
+  app_set_status(a, "'%.30s' is back - carrying on into %.40s", a->picker.active,
                  aud_path_basename(path));
 }
 
@@ -799,10 +800,10 @@ void app_finish_take(app *a, const char *path)
    * afterwards has to point at the take rather than at the name it was
    * recorded under.
    */
-  if (a->last_take_track >= 0 && (size_t)a->last_take_track < a->doc.count &&
+  if (a->rec.last_track >= 0 && (size_t)a->rec.last_track < a->doc.count &&
       take[0] != '\0')
   {
-    const aud_track *t = &a->doc.tracks[a->last_take_track];
+    const aud_track *t = &a->doc.tracks[a->rec.last_track];
 
     for (size_t c = 0; c < t->count; c++)
     {
@@ -810,14 +811,14 @@ void app_finish_take(app *a, const char *path)
     }
   }
 
-  if (!a->want_video || take[0] == '\0' || a->render != NULL)
+  if (!a->video.want || take[0] == '\0' || a->video.render != NULL)
   {
     return;
   }
 
   if (aud_take_with_extension(video, sizeof(video), take, ".mp4") != 0)
   {
-    snprintf(a->render_note, sizeof(a->render_note),
+    snprintf(a->video.note, sizeof(a->video.note),
              "cannot work out a video name for that take");
     return;
   }
@@ -826,15 +827,15 @@ void app_finish_take(app *a, const char *path)
   opts.wav_path = take;
   opts.video_path = video;
   opts.mode = (aud_viz_mode)a->style_selected;
-  opts.width = a->video_width;
-  opts.height = a->video_height;
-  opts.fps = a->video_fps;
-  opts.silent = !a->want_video_audio;
+  opts.width = a->video.width;
+  opts.height = a->video.height;
+  opts.fps = a->video.fps;
+  opts.silent = !a->video.want_audio;
 
-  a->render = aud_render_start(&opts);
-  if (a->render == NULL)
+  a->video.render = aud_render_start(&opts);
+  if (a->video.render == NULL)
   {
-    snprintf(a->render_note, sizeof(a->render_note),
+    snprintf(a->video.note, sizeof(a->video.note),
              "could not start the video render - is ffmpeg installed?");
   }
 }
@@ -843,12 +844,12 @@ void app_pump_render(app *a)
 {
   int state;
 
-  if (a->render == NULL)
+  if (a->video.render == NULL)
   {
     return;
   }
 
-  state = aud_render_step(a->render, APP_RENDER_BUDGET);
+  state = aud_render_step(a->video.render, APP_RENDER_BUDGET);
   if (state == 0)
   {
     return;
@@ -856,37 +857,37 @@ void app_pump_render(app *a)
 
   if (state < 0)
   {
-    aud_render_finish(a->render, 1);
-    snprintf(a->render_note, sizeof(a->render_note), "the video render failed");
+    aud_render_finish(a->video.render, 1);
+    snprintf(a->video.note, sizeof(a->video.note), "the video render failed");
   }
   else
   {
     char name[AUD_RENDER_PATH_MAX];
 
-    snprintf(name, sizeof(name), "%s", aud_render_output(a->render));
-    if (aud_render_finish(a->render, 0) == 0)
+    snprintf(name, sizeof(name), "%s", aud_render_output(a->video.render));
+    if (aud_render_finish(a->video.render, 0) == 0)
     {
-      snprintf(a->render_note, sizeof(a->render_note), "wrote %.200s", name);
+      snprintf(a->video.note, sizeof(a->video.note), "wrote %.200s", name);
     }
     else
     {
-      snprintf(a->render_note, sizeof(a->render_note), "the video render failed");
+      snprintf(a->video.note, sizeof(a->video.note), "the video render failed");
     }
   }
 
-  a->render = NULL;
+  a->video.render = NULL;
 }
 
 void app_cancel_render(app *a)
 {
-  if (a->render == NULL)
+  if (a->video.render == NULL)
   {
     return;
   }
 
-  aud_render_finish(a->render, 1);
-  a->render = NULL;
-  snprintf(a->render_note, sizeof(a->render_note), "video render cancelled");
+  aud_render_finish(a->video.render, 1);
+  a->video.render = NULL;
+  snprintf(a->video.note, sizeof(a->video.note), "video render cancelled");
 }
 
 void app_toggle_record(app *a, const aud_engine_status *st)
@@ -894,7 +895,7 @@ void app_toggle_record(app *a, const aud_engine_status *st)
   switch (st->state)
   {
   case AUD_ENGINE_IDLE:
-    if (a->render == NULL) /* the renderer has the drawing thread */
+    if (a->video.render == NULL) /* the renderer has the drawing thread */
     {
       app_begin_take(a);
     }

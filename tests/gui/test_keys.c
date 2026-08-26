@@ -42,8 +42,8 @@ static app *window(double seconds)
    * waveform in behind it.
    */
   a->timeline.zoom = AUD_TIMELINE_ZOOM_DEFAULT;
-  a->record_track = -1;
-  a->last_take_track = -1;
+  a->rec.track = -1;
+  a->rec.last_track = -1;
 
   if (seconds > 0.0)
   {
@@ -205,7 +205,7 @@ TEST(the_device_menu_answers_escape_and_nothing_else)
     return;
   }
 
-  a->device_menu_open = 1;
+  a->picker.menu_open = 1;
 
   {
     app_input in = press(APP_KEY_ESCAPE, 0, 0, 0);

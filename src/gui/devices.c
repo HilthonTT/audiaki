@@ -84,19 +84,19 @@ static void app_build_devices(app_devices *d, const char *keep)
  */
 static void app_adopt_devices(app *a, const app_devices *next)
 {
-  a->devices = *next;
-  a->device_selected = 0;
+  a->picker.list = *next;
+  a->picker.selected = 0;
 
-  for (int i = 0; i < a->devices.count; i++)
+  for (int i = 0; i < a->picker.list.count; i++)
   {
-    a->device_labels[i] = a->devices.label[i];
-    if (strcmp(a->active_device, a->devices.name[i]) == 0)
+    a->picker.labels[i] = a->picker.list.label[i];
+    if (strcmp(a->picker.active, a->picker.list.name[i]) == 0)
     {
-      a->device_selected = i;
+      a->picker.selected = i;
     }
   }
 
-  if (a->devices.count == APP_MAX_DEVICES)
+  if (a->picker.list.count == APP_MAX_DEVICES)
   {
     aud_warn("more than %d capture devices; the rest are not offered in the window",
              APP_MAX_DEVICES - 1);
@@ -107,7 +107,7 @@ void app_load_devices(app *a)
 {
   app_devices next;
 
-  app_build_devices(&next, a->active_device);
+  app_build_devices(&next, a->picker.active);
   app_adopt_devices(a, &next);
 }
 
@@ -120,16 +120,16 @@ int app_refresh_devices(app *a)
 {
   app_devices next;
 
-  app_build_devices(&next, a->active_device);
+  app_build_devices(&next, a->picker.active);
 
-  if (next.count == a->devices.count)
+  if (next.count == a->picker.list.count)
   {
     int same = 1;
 
     for (int i = 0; i < next.count && same; i++)
     {
-      same = strcmp(next.name[i], a->devices.name[i]) == 0 &&
-             strcmp(next.label[i], a->devices.label[i]) == 0;
+      same = strcmp(next.name[i], a->picker.list.name[i]) == 0 &&
+             strcmp(next.label[i], a->picker.list.label[i]) == 0;
     }
     if (same)
     {

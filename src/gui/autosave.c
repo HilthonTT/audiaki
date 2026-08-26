@@ -57,9 +57,9 @@ int app_recovery_path(const app *a, char *dst, size_t size)
     return -1;
   }
 
-  if (a->project_path[0] != '\0')
+  if (a->session.path[0] != '\0')
   {
-    int n = snprintf(dst, size, "%s%s", a->project_path, APP_RECOVER_EXT);
+    int n = snprintf(dst, size, "%s%s", a->session.path, APP_RECOVER_EXT);
 
     return (n < 0 || (size_t)n >= size) ? -1 : 0;
   }
@@ -68,7 +68,7 @@ int app_recovery_path(const app *a, char *dst, size_t size)
    * Nothing to sit beside, so it goes where the takes go - the same folder the
    * window writes the edits to when it closes without a name for them.
    */
-  return aud_path_place(dst, size, a->take_dir, APP_RECOVER_UNNAMED);
+  return aud_path_place(dst, size, a->rec.dir, APP_RECOVER_UNNAMED);
 }
 
 /* When `path` was last written. Returns 0, or -1 when there is no such file. */
@@ -99,10 +99,10 @@ static void say_when(char *dst, size_t size, time_t when)
 /* Take the recovery file away, if this window is keeping one. */
 static void drop(app *a)
 {
-  if (a->recovery_path[0] != '\0')
+  if (a->session.recovery_path[0] != '\0')
   {
-    remove(a->recovery_path);
-    a->recovery_path[0] = '\0';
+    remove(a->session.recovery_path);
+    a->session.recovery_path[0] = '\0';
   }
 
   /*
@@ -111,7 +111,7 @@ static void drop(app *a)
    * is the only unsaved work there is, and it should not be the least
    * protected.
    */
-  a->recovery_at = 0.0;
+  a->session.recovery_at = 0.0;
 }
 
 void app_autosave_step(app *a, double now)
@@ -132,26 +132,26 @@ void app_autosave_step(app *a, double now)
    * where this session's recovery belongs, and the file at the old place
    * describes a session nothing will look for there.
    */
-  if (a->recovery_path[0] != '\0' &&
-      (!a->project_dirty || !somewhere || strcmp(a->recovery_path, want) != 0))
+  if (a->session.recovery_path[0] != '\0' &&
+      (!a->session.dirty || !somewhere || strcmp(a->session.recovery_path, want) != 0))
   {
     drop(a);
   }
 
-  if (!a->project_dirty || a->doc.count == 0 || !somewhere)
+  if (!a->session.dirty || a->doc.count == 0 || !somewhere)
   {
     return;
   }
 
   /* a take still arriving has no file for a project to refer to yet */
-  if (a->record_track >= 0)
+  if (a->rec.track >= 0)
   {
     return;
   }
 
   /* `recovery_at` of zero is "nothing written since the last clean state",
    * which is the one case worth writing immediately rather than waiting */
-  if (a->recovery_at > 0.0 && now - a->recovery_at < APP_AUTOSAVE_SECONDS)
+  if (a->session.recovery_at > 0.0 && now - a->session.recovery_at < APP_AUTOSAVE_SECONDS)
   {
     return;
   }
@@ -164,10 +164,10 @@ void app_autosave_step(app *a, double now)
      * will not start being writable between two frames, and a status line
      * repeating itself twice a minute is one nobody reads.
      */
-    a->recovery_at = now;
-    if (!a->recovery_failed)
+    a->session.recovery_at = now;
+    if (!a->session.recovery_failed)
     {
-      a->recovery_failed = 1;
+      a->session.recovery_failed = 1;
       aud_warn("cannot keep a recovery file: %s", why != NULL ? why : "unknown");
       app_set_status(a, "cannot keep a recovery file: %.120s",
                      why != NULL ? why : "unknown");
@@ -175,9 +175,9 @@ void app_autosave_step(app *a, double now)
     return;
   }
 
-  snprintf(a->recovery_path, sizeof(a->recovery_path), "%s", want);
-  a->recovery_at = now;
-  a->recovery_failed = 0;
+  snprintf(a->session.recovery_path, sizeof(a->session.recovery_path), "%s", want);
+  a->session.recovery_at = now;
+  a->session.recovery_failed = 0;
 }
 
 void app_recover(app *a)
@@ -204,7 +204,7 @@ void app_recover(app *a)
    * here is a state that has already been superseded - offering it back would
    * be offering to undo a save.
    */
-  if (a->project_path[0] != '\0' && file_time(a->project_path, &saved) == 0 &&
+  if (a->session.path[0] != '\0' && file_time(a->session.path, &saved) == 0 &&
       left <= saved)
   {
     remove(path);
@@ -217,7 +217,7 @@ void app_recover(app *a)
    * rather than this window's. Left where it is, to be picked up by a window
    * that comes up empty.
    */
-  if (a->project_path[0] == '\0' && a->doc.count > 0)
+  if (a->session.path[0] == '\0' && a->doc.count > 0)
   {
     return;
   }
@@ -238,14 +238,14 @@ void app_recover(app *a)
    * finding it out too late.
    */
   say_when(when, sizeof(when), left);
-  snprintf(a->recovery_path, sizeof(a->recovery_path), "%s", path);
-  a->project_dirty = 1;
+  snprintf(a->session.recovery_path, sizeof(a->session.recovery_path), "%s", path);
+  a->session.dirty = 1;
 
-  if (a->project_path[0] != '\0')
+  if (a->session.path[0] != '\0')
   {
-    aud_info("recovered unsaved edits to %s from %s", a->project_path, when);
+    aud_info("recovered unsaved edits to %s from %s", a->session.path, when);
     app_set_status(a, "recovered edits to %.60s from %s - save to keep them",
-                   aud_path_basename(a->project_path), when);
+                   aud_path_basename(a->session.path), when);
   }
   else
   {
@@ -267,7 +267,7 @@ void app_autosave_done(app *a, int saved)
    * because the window is closing would be throwing the work away at exactly
    * the moment it was promised not to be.
    */
-  if (saved || !a->project_dirty || a->doc.count == 0)
+  if (saved || !a->session.dirty || a->doc.count == 0)
   {
     drop(a);
   }

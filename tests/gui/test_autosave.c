@@ -77,9 +77,9 @@ static app *window(void)
 
   in_dir(take, sizeof(take), "take-001.wav");
   aud_doc_init(&a->doc, TEST_RATE);
-  snprintf(a->take_dir, sizeof(a->take_dir), "%s", TEST_DIR);
-  a->record_track = -1;
-  a->last_take_track = -1;
+  snprintf(a->rec.dir, sizeof(a->rec.dir), "%s", TEST_DIR);
+  a->rec.track = -1;
+  a->rec.last_track = -1;
 
   s = aud_samples_create(1, 200);
   t = aud_doc_add_track(&a->doc, "lane", 1);
@@ -130,12 +130,12 @@ TEST(a_named_session_keeps_its_recovery_beside_itself)
     return;
   }
 
-  snprintf(a->project_path, sizeof(a->project_path), "%s/song" AUD_PROJECT_EXT, TEST_DIR);
+  snprintf(a->session.path, sizeof(a->session.path), "%s/song" AUD_PROJECT_EXT, TEST_DIR);
   CHECK_EQ_INT(app_recovery_path(a, path, sizeof(path)), 0);
   CHECK_EQ_STR(path, TEST_DIR "/song" AUD_PROJECT_EXT APP_RECOVER_EXT);
 
   /* and one that has never been saved keeps it where the takes are */
-  a->project_path[0] = '\0';
+  a->session.path[0] = '\0';
   CHECK_EQ_INT(app_recovery_path(a, path, sizeof(path)), 0);
   CHECK_EQ_STR(path, TEST_DIR "/" APP_RECOVER_UNNAMED);
 
@@ -161,10 +161,10 @@ TEST(the_first_edit_is_written_out_rather_than_waited_on)
   CHECK(!there(path));
 
   /* the first edit is the least protected work there is, and does not wait */
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
-  CHECK_EQ_STR(a->recovery_path, path);
+  CHECK_EQ_STR(a->session.recovery_path, path);
 
   remove(path);
   discard(a);
@@ -184,7 +184,7 @@ TEST(it_is_written_at_the_interval_and_not_every_frame)
   app_recovery_path(a, path, sizeof(path));
   remove(path);
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 100.0);
   CHECK(there(path));
   remove(path);
@@ -213,18 +213,18 @@ TEST(saving_the_session_takes_the_recovery_file_away)
   }
 
   app_recovery_path(a, path, sizeof(path));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
 
   /* what a save leaves behind: nothing to recover, so nothing kept */
-  a->project_dirty = 0;
+  a->session.dirty = 0;
   app_autosave_step(a, 2.0);
   CHECK(!there(path));
-  CHECK_EQ_STR(a->recovery_path, "");
+  CHECK_EQ_STR(a->session.recovery_path, "");
 
   /* and the next edit after it is written straight away, not in half a minute */
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 3.0);
   CHECK(there(path));
 
@@ -245,12 +245,12 @@ TEST(a_save_as_moves_the_recovery_file_rather_than_leaving_one_behind)
   }
 
   app_recovery_path(a, unnamed, sizeof(unnamed));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(unnamed));
 
   /* saved as something, and then edited again */
-  snprintf(a->project_path, sizeof(a->project_path), "%s/song" AUD_PROJECT_EXT, TEST_DIR);
+  snprintf(a->session.path, sizeof(a->session.path), "%s/song" AUD_PROJECT_EXT, TEST_DIR);
   app_recovery_path(a, named, sizeof(named));
   remove(named);
 
@@ -276,14 +276,14 @@ TEST(nothing_is_written_while_a_take_is_still_arriving)
   app_recovery_path(a, path, sizeof(path));
   remove(path);
 
-  a->project_dirty = 1;
-  a->record_track = 0;
+  a->session.dirty = 1;
+  a->rec.track = 0;
   app_autosave_step(a, 1.0);
   app_autosave_step(a, 1000.0);
   CHECK(!there(path));
 
   /* and the moment it stops, the wait is already over */
-  a->record_track = -1;
+  a->rec.track = -1;
   app_autosave_step(a, 1000.02);
   CHECK(there(path));
 
@@ -315,11 +315,11 @@ TEST(a_write_that_cannot_happen_is_said_once_and_not_retried_every_frame)
   app_recovery_path(a, path, sizeof(path));
   remove(path);
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(!there(path));
-  CHECK_EQ_INT(a->recovery_failed, 1);
-  CHECK_EQ_DBL(a->recovery_at, 1.0, 1e-9); /* held off, rather than retried */
+  CHECK_EQ_INT(a->session.recovery_failed, 1);
+  CHECK_EQ_DBL(a->session.recovery_at, 1.0, 1e-9); /* held off, rather than retried */
 
   discard(a);
 }
@@ -339,7 +339,7 @@ TEST(a_recovery_file_left_behind_is_opened_at_startup)
   /* a window that died with unsaved edits */
   aud_doc_add_track(&a->doc, "second lane", 1);
   app_recovery_path(a, path, sizeof(path));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
   discard(a);
@@ -352,14 +352,14 @@ TEST(a_recovery_file_left_behind_is_opened_at_startup)
     return;
   }
   aud_doc_init(&back->doc, TEST_RATE);
-  snprintf(back->take_dir, sizeof(back->take_dir), "%s", TEST_DIR);
-  back->record_track = -1;
+  snprintf(back->rec.dir, sizeof(back->rec.dir), "%s", TEST_DIR);
+  back->rec.track = -1;
 
   app_recover(back);
   CHECK_EQ_INT(back->doc.count, 2);
-  CHECK_EQ_STR(back->recovery_path, path);
+  CHECK_EQ_STR(back->session.recovery_path, path);
   /* what is on screen is not what any file holds, and the title says so */
-  CHECK_EQ_INT(back->project_dirty, 1);
+  CHECK_EQ_INT(back->session.dirty, 1);
 
   remove(path);
   discard(back);
@@ -378,7 +378,7 @@ TEST(a_window_that_came_up_with_something_in_it_leaves_the_unnamed_one_alone)
   }
 
   app_recovery_path(a, path, sizeof(path));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
   discard(a);
@@ -393,7 +393,7 @@ TEST(a_window_that_came_up_with_something_in_it_leaves_the_unnamed_one_alone)
 
   app_recover(back);
   CHECK_EQ_INT(back->doc.count, 1);
-  CHECK_EQ_INT(back->project_dirty, 0);
+  CHECK_EQ_INT(back->session.dirty, 0);
   CHECK(there(path)); /* still there for a window that comes up empty */
 
   remove(path);
@@ -413,11 +413,11 @@ TEST(a_recovery_older_than_the_session_it_shadows_is_thrown_away)
   }
 
   in_dir(project, sizeof(project), "shadowed" AUD_PROJECT_EXT);
-  snprintf(a->project_path, sizeof(a->project_path), "%s", project);
+  snprintf(a->session.path, sizeof(a->session.path), "%s", project);
   CHECK_EQ_INT(aud_project_save(&a->doc, project, NULL), 0);
 
   app_recovery_path(a, path, sizeof(path));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
 
@@ -426,10 +426,10 @@ TEST(a_recovery_older_than_the_session_it_shadows_is_thrown_away)
    * has already been superseded: recovering it would be offering to undo a save.
    */
   aged(path, 120);
-  a->recovery_path[0] = '\0';
+  a->session.recovery_path[0] = '\0';
   app_recover(a);
   CHECK(!there(path));
-  CHECK_EQ_INT(a->project_dirty, 1); /* untouched, rather than reloaded */
+  CHECK_EQ_INT(a->session.dirty, 1); /* untouched, rather than reloaded */
 
   remove(project);
   discard(a);
@@ -447,7 +447,7 @@ TEST(a_shutdown_that_could_not_write_the_edits_keeps_the_recovery)
   }
 
   app_recovery_path(a, path, sizeof(path));
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_autosave_step(a, 1.0);
   CHECK(there(path));
 

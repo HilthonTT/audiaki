@@ -150,7 +150,7 @@ static Rectangle header_help(Rectangle r)
 /* Non-zero when something is over the window and nothing beneath may be used. */
 static int covered(const app *a)
 {
-  return a->device_menu_open || a->help_open || a->save.open || a->confirm.open;
+  return a->picker.menu_open || a->help_open || a->save.open || a->confirm.open;
 }
 
 /*
@@ -179,7 +179,7 @@ static void draw_header(app *a, Rectangle r)
    * something to click that says what they are.
    */
   if (aud_ui_toggle(help, "?", a->help_open, AUD_UI_ACCENT,
-                    !a->device_menu_open && !a->save.open))
+                    !a->picker.menu_open && !a->save.open))
   {
     a->help_open = !a->help_open;
   }
@@ -366,7 +366,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
 {
   int recording = st->state == AUD_ENGINE_RECORDING;
   int paused = st->state == AUD_ENGINE_PAUSED;
-  int rendering = a->render != NULL;
+  int rendering = a->video.render != NULL;
   int live = (recording || paused) && !covered(a);
   int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
   int playing = aud_player_playing(&a->player);
@@ -402,12 +402,12 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   /* the metronome is something to play even with an empty timeline, and
    * counting a bar in before the first take is exactly what it is for */
   if (aud_ui_button(play, playing ? "Playing" : "Play", AUD_UI_OK,
-                    !covered(a) && !live && (a->doc.count > 0 || a->click_on)))
+                    !covered(a) && !live && (a->doc.count > 0 || a->transport.click_on)))
   {
     app_toggle_play(a);
   }
   tip(a, play,
-      (a->doc.count == 0 && !a->click_on)
+      (a->doc.count == 0 && !a->transport.click_on)
           ? "nothing on the timeline to play - turn Click on to count instead"
           : (live ? "stop the take first"
                   : (playing ? "stop playing   space"
@@ -419,9 +419,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    * out. Settable while it is running, so a passage can be put on repeat
    * without stopping it first.
    */
-  if (aud_ui_toggle(loop, "Loop", a->loop, AUD_UI_OK, !covered(a) && !live))
+  if (aud_ui_toggle(loop, "Loop", a->transport.loop, AUD_UI_OK, !covered(a) && !live))
   {
-    a->loop = !a->loop;
+    a->transport.loop = !a->transport.loop;
     app_apply_transport(a);
   }
   tip(a, loop,
@@ -532,7 +532,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   }
   tip(a, open_project, live ? "stop the take first" : "open a saved session   ctrl+O");
 
-  if (aud_ui_button(save_project, a->project_dirty ? "Save *" : "Save", AUD_UI_ACCENT,
+  if (aud_ui_button(save_project, a->session.dirty ? "Save *" : "Save", AUD_UI_ACCENT,
                     !covered(a) && a->doc.count > 0))
   {
     app_save_project(a);
@@ -581,9 +581,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
      * Record is pressed, and changing it mid-take would answer a question that
      * has already been answered.
      */
-    if (aud_ui_toggle(overdub, "Overdub", a->overdub, AUD_UI_OK, settable))
+    if (aud_ui_toggle(overdub, "Overdub", a->transport.overdub, AUD_UI_OK, settable))
     {
-      a->overdub = !a->overdub;
+      a->transport.overdub = !a->transport.overdub;
     }
     tip(a, overdub,
         a->doc.count == 0
@@ -591,21 +591,21 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
             : (settable ? "play the project while recording over it - use headphones"
                         : "only settable between takes"));
 
-    if (aud_ui_toggle(video, "Video", a->want_video, AUD_UI_ACCENT, settable))
+    if (aud_ui_toggle(video, "Video", a->video.want, AUD_UI_ACCENT, settable))
     {
-      a->want_video = !a->want_video;
+      a->video.want = !a->video.want;
     }
     tip(a, video,
         settable ? "also render an MP4 of the visualiser when the take stops"
                  : "only settable between takes");
 
-    if (aud_ui_toggle(audio, a->want_video_audio ? "Audio" : "No audio",
-                      a->want_video_audio, AUD_UI_ACCENT, settable && a->want_video))
+    if (aud_ui_toggle(audio, a->video.want_audio ? "Audio" : "No audio",
+                      a->video.want_audio, AUD_UI_ACCENT, settable && a->video.want))
     {
-      a->want_video_audio = !a->want_video_audio;
+      a->video.want_audio = !a->video.want_audio;
     }
     tip(a, audio,
-        !a->want_video ? "turn Video on first"
+        !a->video.want ? "turn Video on first"
                        : (settable ? "whether that video carries the take's own audio"
                                    : "only settable between takes"));
 
@@ -616,9 +616,9 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
     }
     tip(a, monitor, "hear the input through the default output   M");
 
-    if (aud_ui_slider(slider, &a->monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
+    if (aud_ui_slider(slider, &a->levels.monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
     {
-      aud_engine_set_monitor_gain(a->engine, a->monitor_gain);
+      aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
     }
     tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
   }
@@ -641,14 +641,14 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
   double step = shift ? 10.0 : 1.0;
   char text[32];
 
-  if (aud_ui_toggle(click, "Click", a->click_on, AUD_UI_WARN, usable))
+  if (aud_ui_toggle(click, "Click", a->transport.click_on, AUD_UI_WARN, usable))
   {
-    a->click_on = !a->click_on;
+    a->transport.click_on = !a->transport.click_on;
     app_apply_transport(a);
   }
   tip(a, click,
-      a->click_on ? "the metronome is playing - it is heard, never recorded   C"
-                  : "play a metronome over whatever is being heard   C");
+      a->transport.click_on ? "the metronome is playing - it is heard, never recorded   C"
+                            : "play a metronome over whatever is being heard   C");
 
   if (aud_ui_button(slower, "-", AUD_UI_ACCENT, usable))
   {
@@ -658,7 +658,8 @@ static void draw_tempo_cluster(app *a, Rectangle click, Rectangle slower,
 
   DrawRectangleRec(reading, AUD_UI_PANEL);
   snprintf(text, sizeof(text), "%.0f BPM", a->doc.tempo);
-  aud_ui_text_centred(reading, font, a->click_on ? AUD_UI_TEXT : AUD_UI_MUTED, text);
+  aud_ui_text_centred(reading, font, a->transport.click_on ? AUD_UI_TEXT : AUD_UI_MUTED,
+                      text);
   tip(a, reading, "the tempo this session is counted on; it is saved with it");
 
   if (aud_ui_button(faster, "+", AUD_UI_ACCENT, usable))
@@ -974,7 +975,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   meter.height = 14.0f;
   if (meter.x + meter.width < r.x + r.width - 260.0f)
   {
-    aud_ui_meter(meter, (float)st->peak, a->peak_hold);
+    aud_ui_meter(meter, (float)st->peak, a->levels.peak_hold);
     x += meter_w + 10.0f;
 
     snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
@@ -997,20 +998,20 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
       int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
       char level[32];
 
-      if (aud_ui_slider(gain, &a->input_gain, (float)AUD_GAIN_MIN, (float)AUD_GAIN_MAX,
-                        AUD_UI_WARN, usable))
+      if (aud_ui_slider(gain, &a->levels.input_gain, (float)AUD_GAIN_MIN,
+                        (float)AUD_GAIN_MAX, AUD_UI_WARN, usable))
       {
-        aud_engine_set_input_gain(a->engine, a->input_gain);
+        aud_engine_set_input_gain(a->engine, a->levels.input_gain);
       }
       tip(a, gain,
           "gain added to the recording itself, silent to +24 dB - watch the meter, "
           "this one can clip the take");
 
       x += SCREEN_GAIN_W + 8.0f;
-      format_input_gain(level, sizeof(level), a->input_gain);
+      format_input_gain(level, sizeof(level), a->levels.input_gain);
       snprintf(text, sizeof(text), "in %s", level);
-      aud_ui_text(x, top + 4.0f, 15, a->input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED,
-                  text);
+      aud_ui_text(x, top + 4.0f, 15,
+                  a->levels.input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED, text);
       x += 84.0f;
     }
   }
@@ -1044,10 +1045,10 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
     const char *say = a->status;
     Color colour = AUD_UI_MUTED;
 
-    if (a->render != NULL)
+    if (a->video.render != NULL)
     {
       snprintf(text, sizeof(text), "rendering %.0f%%",
-               aud_render_progress(a->render) * 100.0);
+               aud_render_progress(a->video.render) * 100.0);
       say = text;
       colour = AUD_UI_ACCENT;
     }
@@ -1056,10 +1057,10 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
       say = st->error;
       colour = AUD_UI_RECORD;
     }
-    else if (a->render_note[0] != '\0')
+    else if (a->video.note[0] != '\0')
     {
-      say = a->render_note;
-      colour = strncmp(a->render_note, "wrote", 5) == 0 ? AUD_UI_OK : AUD_UI_WARN;
+      say = a->video.note;
+      colour = strncmp(a->video.note, "wrote", 5) == 0 ? AUD_UI_OK : AUD_UI_WARN;
     }
     else if (a->timeline.hint[0] != '\0' && a->status[0] == '\0')
     {
@@ -1083,7 +1084,7 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   {
     char level[32];
 
-    format_monitor_gain(level, sizeof(level), a->monitor_gain);
+    format_monitor_gain(level, sizeof(level), a->levels.monitor_gain);
     snprintf(text, sizeof(text), "monitor %s", level);
     if (x + 130.0f < r.x + r.width - 260.0f)
     {
@@ -1250,7 +1251,7 @@ int app_draw_fatal(app *a)
   Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
   Rectangle header = {APP_PAD, APP_PAD, screen.width - 2.0f * APP_PAD, APP_HEADER_H};
   Rectangle line = screen;
-  int previous = a->device_selected;
+  int previous = a->picker.selected;
 
   ClearBackground(AUD_UI_BG);
 
@@ -1270,8 +1271,8 @@ int app_draw_fatal(app *a)
                       "the device may also be held by another program");
 
   /* last, so an open menu covers the message rather than the other way round */
-  if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
-                      &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
+  if (aud_ui_dropdown(header_picker(header), a->picker.labels, a->picker.list.count,
+                      &a->picker.selected, &a->picker.menu_open, &a->picker.menu_scroll,
                       !a->save.open))
   {
     app_switch_device(a, previous);
@@ -1304,7 +1305,7 @@ int app_draw_frame(app *a, const aud_engine_status *st)
   Rectangle tracks;
   Rectangle status;
   int live = st->state == AUD_ENGINE_RECORDING || st->state == AUD_ENGINE_PAUSED;
-  int previous = a->device_selected;
+  int previous = a->picker.selected;
   float y;
 
   ClearBackground(AUD_UI_BG);
@@ -1397,9 +1398,9 @@ int app_draw_frame(app *a, const aud_engine_status *st)
     uint64_t head = a->doc.cursor;
     int running = 0;
 
-    if (a->record_track >= 0)
+    if (a->rec.track >= 0)
     {
-      head = a->record_at + (uint64_t)(st->elapsed * a->doc.rate);
+      head = a->rec.at + (uint64_t)(st->elapsed * a->doc.rate);
       running = 1;
     }
     else if (aud_player_playing(&a->player))
@@ -1436,8 +1437,8 @@ int app_draw_frame(app *a, const aud_engine_status *st)
    * while a take is open: swapping the device means closing the capture stream,
    * and doing that mid-take would truncate the recording.
    */
-  if (aud_ui_dropdown(header_picker(header), a->device_labels, a->devices.count,
-                      &a->device_selected, &a->device_menu_open, &a->device_menu_scroll,
+  if (aud_ui_dropdown(header_picker(header), a->picker.labels, a->picker.list.count,
+                      &a->picker.selected, &a->picker.menu_open, &a->picker.menu_scroll,
                       !live && !a->help_open && !a->save.open))
   {
     app_switch_device(a, previous);
@@ -1445,9 +1446,9 @@ int app_draw_frame(app *a, const aud_engine_status *st)
   tip(a, header_picker(header),
       live ? "stop the take before switching device" : "capture device");
 
-  if (live && a->device_menu_open)
+  if (live && a->picker.menu_open)
   {
-    a->device_menu_open = 0;
+    a->picker.menu_open = 0;
   }
 
   if (a->help_open)

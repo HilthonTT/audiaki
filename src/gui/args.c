@@ -80,9 +80,9 @@ void app_usage(FILE *out, const app *a)
           "      L loop, C metronome, G grid, -/+ tempo,\n"
           "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
           "      ctrl+wheel zoom, ? the list of them in the window\n",
-          a->cfg.device, aud_backend_list(), a->cfg.rate, a->cfg.channels, a->prefix,
-          aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video_width,
-          a->video_height, a->video_fps, AUD_DOC_DEFAULT_TEMPO, AUD_CLICK_DEFAULT_BEATS,
+          a->cfg.device, aud_backend_list(), a->cfg.rate, a->cfg.channels, a->rec.prefix,
+          aud_viz_mode_name((aud_viz_mode)a->style_selected), a->video.width,
+          a->video.height, a->video.fps, AUD_DOC_DEFAULT_TEMPO, AUD_CLICK_DEFAULT_BEATS,
           AUD_CLICK_DEFAULT_GAIN);
 }
 
@@ -111,22 +111,22 @@ int app_parse_args(app *a, int argc, char **argv)
     }
     if (strcmp(arg, "-V") == 0 || strcmp(arg, "--video") == 0)
     {
-      a->want_video = 1;
+      a->video.want = 1;
       continue;
     }
     if (strcmp(arg, "--video-silent") == 0)
     {
-      a->want_video_audio = 0;
+      a->video.want_audio = 0;
       continue;
     }
     if (strcmp(arg, "--no-dialog") == 0)
     {
-      a->want_dialog = 0;
+      a->rec.want_dialog = 0;
       continue;
     }
     if (strcmp(arg, "--no-overdub") == 0)
     {
-      a->overdub = 0;
+      a->transport.overdub = 0;
       continue;
     }
     if (strcmp(arg, "--grid") == 0)
@@ -136,7 +136,7 @@ int app_parse_args(app *a, int argc, char **argv)
     }
     if (strcmp(arg, "--loop") == 0)
     {
-      a->loop = 1;
+      a->transport.loop = 1;
       continue;
     }
 
@@ -190,13 +190,13 @@ int app_parse_args(app *a, int argc, char **argv)
     }
     else if (strcmp(arg, "-o") == 0 || strcmp(arg, "--take") == 0)
     {
-      snprintf(a->prefix, sizeof(a->prefix), "%s", value);
+      snprintf(a->rec.prefix, sizeof(a->rec.prefix), "%s", value);
     }
     /* expanded here for the same reason the CLI expands it: a quoted '~' never
      * reached the shell, and one out of a config file never went near it */
     else if (strcmp(arg, "--dir") == 0)
     {
-      if (aud_path_expand(a->take_dir, sizeof(a->take_dir), value) != 0)
+      if (aud_path_expand(a->rec.dir, sizeof(a->rec.dir), value) != 0)
       {
         aud_error("cannot work out where '%s' is", value);
         return 2;
@@ -216,8 +216,8 @@ int app_parse_args(app *a, int argc, char **argv)
     }
     else if (strcmp(arg, "--video-size") == 0)
     {
-      if (parse_size(value, AUD_RENDER_MIN_SIZE, AUD_RENDER_MAX_SIZE, &a->video_width,
-                     &a->video_height) != 0)
+      if (parse_size(value, AUD_RENDER_MIN_SIZE, AUD_RENDER_MAX_SIZE, &a->video.width,
+                     &a->video.height) != 0)
       {
         aud_error("bad video size '%s'", value);
         aud_info("give it as WxH, or as 720p, 1080p, 1440p or 2160p");
@@ -241,7 +241,7 @@ int app_parse_args(app *a, int argc, char **argv)
      */
     else if (strcmp(arg, "--latency") == 0)
     {
-      if (parse_double(value, 0.0, AUD_LATENCY_MAX_MS, &a->latency_ms) != 0)
+      if (parse_double(value, 0.0, AUD_LATENCY_MAX_MS, &a->transport.latency_ms) != 0)
       {
         aud_error("bad latency '%s' (milliseconds, 0 to %.0f)", value,
                   AUD_LATENCY_MAX_MS);
@@ -262,7 +262,7 @@ int app_parse_args(app *a, int argc, char **argv)
                   value, AUD_GAIN_MIN, AUD_GAIN_MAX);
         return 2;
       }
-      a->input_gain = (float)gain;
+      a->levels.input_gain = (float)gain;
     }
     /*
      * --tempo sets the grid, --click sets it and turns the metronome on. Two
@@ -280,7 +280,7 @@ int app_parse_args(app *a, int argc, char **argv)
       }
       if (strcmp(arg, "--tempo") != 0)
       {
-        a->click_on = 1;
+        a->transport.click_on = 1;
       }
       /* a tempo is only any use if it can be seen, and the ruler is where it
        * is seen; --tempo with no grid would be a setting with no effect */
@@ -304,11 +304,11 @@ int app_parse_args(app *a, int argc, char **argv)
                   AUD_CLICK_GAIN_MAX);
         return 2;
       }
-      a->click_gain = (float)gain;
+      a->transport.click_gain = (float)gain;
     }
     else if (strcmp(arg, "--video-fps") == 0)
     {
-      if (parse_uint(value, 1u, 240u, &a->video_fps) != 0)
+      if (parse_uint(value, 1u, 240u, &a->video.fps) != 0)
       {
         aud_error("bad video frame rate '%s' (1 to 240)", value);
         return 2;

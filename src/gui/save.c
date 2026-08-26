@@ -297,12 +297,12 @@ void app_open_dialog(app *a)
   s->focus = APP_SAVE_FIELD_NAME;
   s->open = 1;
 
-  if (a->take_dir[0] != '\0')
+  if (a->rec.dir[0] != '\0')
   {
-    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+    snprintf(s->folder, sizeof(s->folder), "%s", a->rec.dir);
   }
-  else if (a->prefix[0] != '\0' &&
-           aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) == 0)
+  else if (a->rec.prefix[0] != '\0' &&
+           aud_path_dirname(s->folder, sizeof(s->folder), a->rec.prefix) == 0)
   {
     /* wherever the takes are being written, which with no take_dir is here */
   }
@@ -340,7 +340,7 @@ void app_export_dialog(app *a, int stems)
                                      a->doc.rate
                                : 0.0;
 
-  base = aud_path_basename(a->prefix);
+  base = aud_path_basename(a->rec.prefix);
 
   /*
    * A set is named for what it is a set of rather than for a mix it is not:
@@ -350,11 +350,11 @@ void app_export_dialog(app *a, int stems)
   snprintf(s->name, sizeof(s->name), "%s-%s.wav", base[0] != '\0' ? base : "project",
            stems ? "stems" : "mix");
 
-  if (a->take_dir[0] != '\0')
+  if (a->rec.dir[0] != '\0')
   {
-    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+    snprintf(s->folder, sizeof(s->folder), "%s", a->rec.dir);
   }
-  else if (aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) != 0)
+  else if (aud_path_dirname(s->folder, sizeof(s->folder), a->rec.prefix) != 0)
   {
     snprintf(s->folder, sizeof(s->folder), ".");
   }
@@ -368,17 +368,17 @@ void app_export_dialog(app *a, int stems)
  */
 static void start_in_project_folder(app *a, app_save *s)
 {
-  if (a->project_path[0] != '\0' &&
-      aud_path_dirname(s->folder, sizeof(s->folder), a->project_path) == 0)
+  if (a->session.path[0] != '\0' &&
+      aud_path_dirname(s->folder, sizeof(s->folder), a->session.path) == 0)
   {
     return;
   }
-  if (a->take_dir[0] != '\0')
+  if (a->rec.dir[0] != '\0')
   {
-    snprintf(s->folder, sizeof(s->folder), "%s", a->take_dir);
+    snprintf(s->folder, sizeof(s->folder), "%s", a->rec.dir);
     return;
   }
-  if (aud_path_dirname(s->folder, sizeof(s->folder), a->prefix) != 0)
+  if (aud_path_dirname(s->folder, sizeof(s->folder), a->rec.prefix) != 0)
   {
     snprintf(s->folder, sizeof(s->folder), ".");
   }
@@ -395,13 +395,13 @@ void app_save_project_as(app *a)
   s->open = 1;
 
   /* the name it already has, or one derived from the take prefix */
-  if (a->project_path[0] != '\0')
+  if (a->session.path[0] != '\0')
   {
-    snprintf(s->name, sizeof(s->name), "%s", aud_path_basename(a->project_path));
+    snprintf(s->name, sizeof(s->name), "%s", aud_path_basename(a->session.path));
   }
   else
   {
-    base = aud_path_basename(a->prefix);
+    base = aud_path_basename(a->rec.prefix);
     snprintf(s->name, sizeof(s->name), "%s%s", base[0] != '\0' ? base : "session",
              AUD_PROJECT_EXT);
   }
@@ -415,20 +415,20 @@ void app_save_project(app *a)
   const char *why = NULL;
 
   /* never saved: there is nothing to write back to, so ask */
-  if (a->project_path[0] == '\0')
+  if (a->session.path[0] == '\0')
   {
     app_save_project_as(a);
     return;
   }
 
-  if (aud_project_save(&a->doc, a->project_path, &why) != 0)
+  if (aud_project_save(&a->doc, a->session.path, &why) != 0)
   {
     app_set_status(a, "cannot save: %s", why != NULL ? why : "unknown");
     return;
   }
 
-  a->project_dirty = 0;
-  app_set_status(a, "saved %.80s", aud_path_basename(a->project_path));
+  a->session.dirty = 0;
+  app_set_status(a, "saved %.80s", aud_path_basename(a->session.path));
 }
 
 void app_open_project_dialog(app *a)
@@ -731,10 +731,10 @@ static int save_confirm(app *a)
       return -1;
     }
 
-    snprintf(a->project_path, sizeof(a->project_path), "%s", target);
-    a->project_dirty = 0;
-    a->record_track = -1;
-    a->last_take_track = -1;
+    snprintf(a->session.path, sizeof(a->session.path), "%s", target);
+    a->session.dirty = 0;
+    a->rec.track = -1;
+    a->rec.last_track = -1;
     aud_player_stop(&a->player);
     /* a different session's audio, at possibly a different rate */
     aud_repair_panel_reset(&a->repair);
@@ -749,7 +749,7 @@ static int save_confirm(app *a)
     const char *why = NULL;
 
     /* replacing a session is asked about once, like an export */
-    if (access(target, F_OK) == 0 && strcmp(target, a->project_path) != 0 &&
+    if (access(target, F_OK) == 0 && strcmp(target, a->session.path) != 0 &&
         !s->confirmed)
     {
       snprintf(s->note, sizeof(s->note),
@@ -772,8 +772,8 @@ static int save_confirm(app *a)
       return -1;
     }
 
-    snprintf(a->project_path, sizeof(a->project_path), "%s", target);
-    a->project_dirty = 0;
+    snprintf(a->session.path, sizeof(a->session.path), "%s", target);
+    a->session.dirty = 0;
     s->open = 0;
     app_set_status(a, "saved %.80s", aud_path_basename(target));
     return 0;

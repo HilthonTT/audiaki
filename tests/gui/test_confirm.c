@@ -347,11 +347,11 @@ TEST(quitting_asks_only_when_something_would_be_lost)
     return;
   }
 
-  a->record_track = -1;
-  a->project_dirty = 0;
+  a->rec.track = -1;
+  a->session.dirty = 0;
   CHECK_EQ_INT(app_confirm_quit(a), 0);
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   CHECK_EQ_INT(app_confirm_quit(a), 1);
   CHECK_EQ_INT(a->confirm.kind, APP_CONFIRM_QUIT);
 

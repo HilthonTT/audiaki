@@ -93,7 +93,7 @@ src/
     ringbuf.c/.h  lock-free SPSC ring, of floats or of bytes
     signals.c/.h  the shared Ctrl+C flag
   gui/          the desktop window; the only code that knows raylib exists
-    app.h         the state its parts share
+    app.h         the state its parts share, grouped by what owns it
     main.c        the shell: the window, the run loop, the hot reload key
     plug.c        the app's own lifecycle: start, frame, and the way out
     take.c        the capture device, and the take being written to it

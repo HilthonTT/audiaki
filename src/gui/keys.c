@@ -616,7 +616,7 @@ int app_cmd_map(const app *a, const app_input *in, const aud_engine_status *st,
   }
 
   /* the menu owns the keyboard while it is open, same as it owns the mouse */
-  if (a->device_menu_open)
+  if (a->picker.menu_open)
   {
     if (hit(in, APP_KEY_ESCAPE))
     {

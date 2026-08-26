@@ -58,7 +58,7 @@ void app_load_track(app *a, const char *path)
    * a take applies to the take rather than to nothing */
   aud_doc_select_tracks(&a->doc, 0);
   a->doc.tracks[index].selected = 1;
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   aud_repair_panel_reset(&a->repair);
 
   app_set_status(a, "%.80s: %.1f s on track %d", aud_path_basename(path),
@@ -124,12 +124,12 @@ void app_edit_now(app *a, app_edit_action action)
   {
   case APP_EDIT_UNDO:
     ok = aud_doc_undo(d);
-    a->project_dirty = a->project_dirty || ok == 0;
+    a->session.dirty = a->session.dirty || ok == 0;
     app_set_status(a, ok == 0 ? "undone" : "nothing to undo");
     return;
   case APP_EDIT_REDO:
     ok = aud_doc_redo(d);
-    a->project_dirty = a->project_dirty || ok == 0;
+    a->session.dirty = a->session.dirty || ok == 0;
     app_set_status(a, ok == 0 ? "redone" : "nothing to redo");
     return;
   case APP_EDIT_SELECT_ALL:
@@ -151,7 +151,7 @@ void app_edit_now(app *a, app_edit_action action)
 
     if (ok == 0)
     {
-      a->project_dirty = 1;
+      a->session.dirty = 1;
       app_set_status(a, "moved %+.3f s", d->rate > 0 ? (double)went / d->rate : 0.0);
       return;
     }
@@ -201,7 +201,7 @@ void app_edit_now(app *a, app_edit_action action)
     {
       /* the step, not the total: a clip's gain is per clip and a selection
        * across several of them has no single number to report */
-      a->project_dirty = 1;
+      a->session.dirty = 1;
       app_set_status(a, "%+.1f dB", db);
       return;
     }
@@ -217,7 +217,7 @@ void app_edit_now(app *a, app_edit_action action)
                             level);
     if (ok == 0)
     {
-      a->project_dirty = 1;
+      a->session.dirty = 1;
       app_set_status(a, "normalized to %.1f %s", level, loudness ? "LUFS" : "dBTP");
       return;
     }
@@ -240,11 +240,11 @@ void app_edit_now(app *a, app_edit_action action)
     double reduction = 0.0;
     const char *why = NULL;
 
-    ok = aud_limit_selection(d, AUD_LIMITER_CEILING_DEFAULT, a->take_dir, &reduction,
-                             &why);
+    ok =
+        aud_limit_selection(d, AUD_LIMITER_CEILING_DEFAULT, a->rec.dir, &reduction, &why);
     if (ok == 0)
     {
-      a->project_dirty = 1;
+      a->session.dirty = 1;
       aud_repair_panel_reset(&a->repair); /* the audio under it is new audio */
       app_set_status(a, "limited by %.1f dB, to %.0f dBTP", reduction,
                      AUD_LIMITER_CEILING_DEFAULT);
@@ -280,7 +280,7 @@ void app_edit_now(app *a, app_edit_action action)
     ok = aud_edit_mute(d, !muted);
     if (ok == 0)
     {
-      a->project_dirty = 1;
+      a->session.dirty = 1;
       app_set_status(a, muted ? "heard again" : "muted - alt+K brings it back");
       return;
     }
@@ -297,7 +297,7 @@ void app_edit_now(app *a, app_edit_action action)
         "silenced", "trimmed", "split", "duplicated", "faded in over", "faded out over"};
 
     /* the session has moved away from whatever is on disk, if anything is */
-    a->project_dirty = 1;
+    a->session.dirty = 1;
     app_set_status(a, "%s %.2f s", done[action],
                    d->rate > 0 ? (double)(d->sel_end - d->sel_start) / d->rate : 0.0);
     return;
@@ -333,23 +333,24 @@ void app_apply_transport(app *a)
    * bars it stays on the beat, because a metronome that only struck once a bar
    * is not one anybody could play to.
    */
-  aud_player_set_click(&a->player, a->click_on ? a->doc.tempo : 0.0, a->doc.beats_per_bar,
-                       a->doc.grid_div < AUD_DOC_GRID_BEAT ? AUD_DOC_GRID_BEAT
-                                                           : a->doc.grid_div,
-                       a->click_gain);
+  aud_player_set_click(
+      &a->player, a->transport.click_on ? a->doc.tempo : 0.0, a->doc.beats_per_bar,
+      a->doc.grid_div < AUD_DOC_GRID_BEAT ? AUD_DOC_GRID_BEAT : a->doc.grid_div,
+      a->transport.click_gain);
   /*
    * While a take is open, only for the take that was started against a loop.
    * That one is meant to go round - each lap becomes a pass of its own when it
    * stops, see aud_edit_take_passes() - where a straight take laid over music
    * that repeated underneath it would be nobody's intention.
    */
-  aud_player_set_loop(&a->player, a->loop && (a->record_track < 0 || a->lap_frames > 0));
+  aud_player_set_loop(&a->player,
+                      a->transport.loop && (a->rec.track < 0 || a->rec.lap_frames > 0));
 }
 
 void app_nudge_tempo(app *a, double beats)
 {
   aud_doc_set_tempo(&a->doc, a->doc.tempo + beats, a->doc.beats_per_bar);
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_apply_transport(a);
   app_set_status(a, "%.0f BPM, %u to the bar", a->doc.tempo, a->doc.beats_per_bar);
 }
@@ -372,7 +373,7 @@ void app_toggle_play(app *a)
    * count-in is, and refusing it because no audio exists yet would be
    * refusing the one thing it is for.
    */
-  if (a->doc.count == 0 && !a->click_on)
+  if (a->doc.count == 0 && !a->transport.click_on)
   {
     app_set_status(a, "nothing to play yet");
     return;
@@ -412,7 +413,7 @@ void app_toggle_play(app *a)
     return;
   }
 
-  if (a->loop)
+  if (a->transport.loop)
   {
     app_set_status(a, "looping %.2f s", (double)(to - from) / a->doc.rate);
     return;
@@ -569,7 +570,7 @@ void app_mark(app *a)
   if (found >= 0)
   {
     aud_doc_unmark(&a->doc, (size_t)found);
-    a->project_dirty = 1;
+    a->session.dirty = 1;
     app_set_status(a, "marker removed");
     return;
   }
@@ -580,7 +581,7 @@ void app_mark(app *a)
     return;
   }
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_set_status(a, "marked at %.2f s - ctrl+arrow steps to it",
                  a->doc.rate > 0 ? (double)at / a->doc.rate : 0.0);
 }
@@ -639,7 +640,7 @@ void app_comp(app *a, int forward)
     return;
   }
 
-  a->project_dirty = 1;
+  a->session.dirty = 1;
   app_set_status(a, "%.40s (%zu of %zu)", d->tracks[lanes[at]].name, at + 1u, count);
 }
 
@@ -668,7 +669,7 @@ void app_cmd_run(app *a, const app_cmd *cmd, const aud_engine_status *st)
     return;
 
   case APP_CMD_MENU_CLOSE:
-    a->device_menu_open = 0;
+    a->picker.menu_open = 0;
     return;
 
   case APP_CMD_EDIT:
@@ -720,7 +721,7 @@ void app_cmd_run(app *a, const app_cmd *cmd, const aud_engine_status *st)
    * playback costs nothing to stop and start again.
    */
   case APP_CMD_STOP:
-    if (a->render != NULL)
+    if (a->video.render != NULL)
     {
       app_cancel_render(a);
     }
@@ -739,15 +740,15 @@ void app_cmd_run(app *a, const app_cmd *cmd, const aud_engine_status *st)
     return;
 
   case APP_CMD_TOGGLE_LOOP:
-    a->loop = !a->loop;
+    a->transport.loop = !a->transport.loop;
     app_apply_transport(a);
-    app_set_status(a, "%s", a->loop ? "looping" : "playing straight through");
+    app_set_status(a, "%s", a->transport.loop ? "looping" : "playing straight through");
     return;
 
   case APP_CMD_TOGGLE_CLICK:
-    a->click_on = !a->click_on;
+    a->transport.click_on = !a->transport.click_on;
     app_apply_transport(a);
-    if (a->click_on)
+    if (a->transport.click_on)
     {
       app_set_status(a, "metronome on at %.0f BPM", a->doc.tempo);
     }

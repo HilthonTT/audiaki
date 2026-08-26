@@ -77,27 +77,27 @@ static void app_pump_audio(app *a)
  */
 static void app_track_peak(app *a, float peak, float dt)
 {
-  if (peak >= a->peak_hold)
+  if (peak >= a->levels.peak_hold)
   {
-    a->peak_hold = peak;
-    a->peak_hold_left = APP_PEAK_HOLD;
+    a->levels.peak_hold = peak;
+    a->levels.peak_hold_left = APP_PEAK_HOLD;
     return;
   }
 
-  if (a->peak_hold_left > 0.0f)
+  if (a->levels.peak_hold_left > 0.0f)
   {
-    a->peak_hold_left -= dt;
+    a->levels.peak_hold_left -= dt;
     return;
   }
 
-  a->peak_hold -= APP_PEAK_FALL * dt;
-  if (a->peak_hold < peak)
+  a->levels.peak_hold -= APP_PEAK_FALL * dt;
+  if (a->levels.peak_hold < peak)
   {
-    a->peak_hold = peak;
+    a->levels.peak_hold = peak;
   }
-  if (a->peak_hold < 0.0f)
+  if (a->levels.peak_hold < 0.0f)
   {
-    a->peak_hold = 0.0f;
+    a->levels.peak_hold = 0.0f;
   }
 }
 
@@ -109,10 +109,10 @@ static void app_update_title(app *a, const aud_engine_status *st)
 {
   char want[160];
 
-  if (a->render != NULL)
+  if (a->video.render != NULL)
   {
     snprintf(want, sizeof(want), AUDIAKI_NAME " - rendering %.0f%%",
-             aud_render_progress(a->render) * 100.0);
+             aud_render_progress(a->video.render) * 100.0);
   }
   else if (st == NULL || st->state == AUD_ENGINE_FAILED)
   {
@@ -130,16 +130,16 @@ static void app_update_title(app *a, const aud_engine_status *st)
              st->state == AUD_ENGINE_PAUSED ? "paused" : "recording", secs / 60u,
              secs % 60u, name);
   }
-  else if (a->project_path[0] != '\0')
+  else if (a->session.path[0] != '\0')
   {
     /* the session, and whether it has moved on from what is on disk */
     snprintf(want, sizeof(want), AUDIAKI_NAME " - %.100s%s",
-             aud_path_basename(a->project_path), a->project_dirty ? " *" : "");
+             aud_path_basename(a->session.path), a->session.dirty ? " *" : "");
   }
   else
   {
     snprintf(want, sizeof(want), AUDIAKI_NAME "%s",
-             a->project_dirty ? " - unsaved session" : "");
+             a->session.dirty ? " - unsaved session" : "");
   }
 
   if (strcmp(want, a->title) != 0)
@@ -182,24 +182,25 @@ static void app_place_prefix(app *a)
 {
   char placed[AUD_PATH_MAX];
 
-  if (a->take_dir[0] == '\0' || strchr(a->prefix, '/') != NULL)
+  if (a->rec.dir[0] == '\0' || strchr(a->rec.prefix, '/') != NULL)
   {
     return;
   }
 
-  if (aud_path_mkdirs(a->take_dir) != 0)
+  if (aud_path_mkdirs(a->rec.dir) != 0)
   {
-    aud_perror("cannot use %s, keeping takes here instead", a->take_dir);
-    a->take_dir[0] = '\0';
+    aud_perror("cannot use %s, keeping takes here instead", a->rec.dir);
+    a->rec.dir[0] = '\0';
     return;
   }
 
-  if (aud_path_place(placed, sizeof(placed), a->take_dir, a->prefix) != 0 ||
-      (size_t)snprintf(a->prefix, sizeof(a->prefix), "%s", placed) >= sizeof(a->prefix))
+  if (aud_path_place(placed, sizeof(placed), a->rec.dir, a->rec.prefix) != 0 ||
+      (size_t)snprintf(a->rec.prefix, sizeof(a->rec.prefix), "%s", placed) >=
+          sizeof(a->rec.prefix))
   {
-    aud_warn("'%s' in '%s' is too long a name, keeping takes here instead", a->prefix,
-             a->take_dir);
-    snprintf(a->prefix, sizeof(a->prefix), "%s", APP_DEFAULT_PREFIX);
+    aud_warn("'%s' in '%s' is too long a name, keeping takes here instead", a->rec.prefix,
+             a->rec.dir);
+    snprintf(a->rec.prefix, sizeof(a->rec.prefix), "%s", APP_DEFAULT_PREFIX);
   }
 }
 
@@ -219,7 +220,7 @@ static app *plug;
 static void app_free(app *a)
 {
   aud_repair_panel_free(&a->repair);
-  free(a->take_buf);
+  free(a->rec.buf);
   free(a);
 }
 
@@ -255,28 +256,28 @@ int aud_plug_init(int argc, char **argv)
   a->self_size = sizeof(*a);
 
   aud_engine_config_defaults(&a->cfg);
-  snprintf(a->prefix, sizeof(a->prefix), "%s", APP_DEFAULT_PREFIX);
-  a->monitor_gain = 1.0f;
-  a->input_gain = 1.0f;       /* the samples the interface delivered, untouched */
-  a->drawer = APP_DRAWER_VIZ; /* what the window has always come up showing */
+  snprintf(a->rec.prefix, sizeof(a->rec.prefix), "%s", APP_DEFAULT_PREFIX);
+  a->levels.monitor_gain = 1.0f;
+  a->levels.input_gain = 1.0f; /* the samples the interface delivered, untouched */
+  a->drawer = APP_DRAWER_VIZ;  /* what the window has always come up showing */
   a->viz_height = APP_VIZ_OPEN_H;
   aud_repair_panel_init(&a->repair);
   aud_timeline_init(&a->timeline);
   aud_clipboard_init(&a->clipboard);
   aud_player_init(&a->player);
   aud_preview_init(&a->preview);
-  a->record_track = -1;
-  a->last_take_track = -1;
+  a->rec.track = -1;
+  a->rec.last_track = -1;
   /*
    * On by default: playing along to what is already there is what a second take
    * is for, and a window that needed the feature turning on before it would do
    * the obvious thing would be hiding it. With an empty project it costs
    * nothing, there being nothing to play.
    */
-  a->overdub = 1;
-  a->click_gain = (float)AUD_CLICK_DEFAULT_GAIN;
+  a->transport.overdub = 1;
+  a->transport.click_gain = (float)AUD_CLICK_DEFAULT_GAIN;
   /* the sentinel, until the config file or --latency says otherwise below */
-  a->latency_ms = -1.0;
+  a->transport.latency_ms = -1.0;
 
   /*
    * A quarter of a second of drain per pass at the usual channel counts. The
@@ -284,8 +285,8 @@ int aud_plug_init(int argc, char **argv)
    * fills even on a frame that took far longer than a frame should. How many
    * frames that is depends on the device, and is worked out in app_open_engine.
    */
-  a->take_buf = malloc(APP_TAKE_BUF_SAMPLES * sizeof(float));
-  if (a->take_buf == NULL)
+  a->rec.buf = malloc(APP_TAKE_BUF_SAMPLES * sizeof(float));
+  if (a->rec.buf == NULL)
   {
     aud_error("cannot allocate the take buffer");
     app_free(a);
@@ -299,11 +300,11 @@ int aud_plug_init(int argc, char **argv)
    * what lets --dir and --no-dialog say otherwise.
    */
   aud_config_load(&cfg);
-  snprintf(a->take_dir, sizeof(a->take_dir), "%s", cfg.take_dir);
-  a->latency_ms = cfg.latency_ms; /* --latency on the command line still wins */
+  snprintf(a->rec.dir, sizeof(a->rec.dir), "%s", cfg.take_dir);
+  a->transport.latency_ms = cfg.latency_ms; /* --latency on the command line still wins */
   if (cfg.input_gain >= 0.0)
   {
-    a->input_gain = (float)cfg.input_gain; /* and --gain still wins over this */
+    a->levels.input_gain = (float)cfg.input_gain; /* and --gain still wins over this */
   }
   /*
    * Off unless the config says otherwise, and deliberately the other way round
@@ -313,11 +314,11 @@ int aud_plug_init(int argc, char **argv)
    * would be a dialog in the way. Where the WAV itself goes is take_dir's job,
    * and Export is how a finished mix leaves.
    */
-  a->want_dialog = cfg.prompt == AUD_PROMPT_ALWAYS;
-  a->want_video_audio = 1; /* before parse_args, which only ever clears it */
-  a->video_width = AUD_RENDER_DEFAULT_WIDTH;
-  a->video_height = AUD_RENDER_DEFAULT_HEIGHT;
-  a->video_fps = AUD_RENDER_DEFAULT_FPS;
+  a->rec.want_dialog = cfg.prompt == AUD_PROMPT_ALWAYS;
+  a->video.want_audio = 1; /* before parse_args, which only ever clears it */
+  a->video.width = AUD_RENDER_DEFAULT_WIDTH;
+  a->video.height = AUD_RENDER_DEFAULT_HEIGHT;
+  a->video.fps = AUD_RENDER_DEFAULT_FPS;
 
   app_name_styles(a);
 
@@ -369,10 +370,10 @@ int aud_plug_init(int argc, char **argv)
   aud_doc_init(&a->doc, a->cfg.rate);
 
   /* the device -D named, or "default", so the list comes up on the right row */
-  snprintf(a->active_device, sizeof(a->active_device), "%s",
+  snprintf(a->picker.active, sizeof(a->picker.active), "%s",
            a->cfg.device != NULL ? a->cfg.device : AUD_DEFAULT_DEVICE);
 
-  a->watch = aud_device_watch_create();
+  a->picker.watch = aud_device_watch_create();
   app_load_devices(a);
 
   /*
@@ -401,7 +402,7 @@ int aud_plug_init(int argc, char **argv)
     {
       const char *why = NULL;
 
-      if (a->project_path[0] != '\0')
+      if (a->session.path[0] != '\0')
       {
         aud_warn("only one project can be open; ignoring %s", a->open_paths[i]);
       }
@@ -413,8 +414,8 @@ int aud_plug_init(int argc, char **argv)
       }
       else
       {
-        snprintf(a->project_path, sizeof(a->project_path), "%s", a->open_paths[i]);
-        a->project_dirty = 0;
+        snprintf(a->session.path, sizeof(a->session.path), "%s", a->open_paths[i]);
+        a->session.dirty = 0;
       }
       continue;
     }
@@ -482,7 +483,7 @@ bool aud_plug_frame(bool close_requested)
    */
   app_check_capture_loss(a);
 
-  if (aud_device_watch_changed(a->watch) && app_refresh_devices(a))
+  if (aud_device_watch_changed(a->picker.watch) && app_refresh_devices(a))
   {
     app_recover_engine(a);
   }
@@ -495,7 +496,7 @@ bool aud_plug_frame(bool close_requested)
     SetMouseCursor(MOUSE_CURSOR_DEFAULT);
     if (IsKeyPressed(KEY_ESCAPE))
     {
-      a->device_menu_open = 0;
+      a->picker.menu_open = 0;
     }
 
     /* the shortcut list is not drawn over this screen, so it cannot be left
@@ -544,10 +545,10 @@ bool aud_plug_frame(bool close_requested)
                         a->timeline.wave_w);
   }
   /* a take being recorded scrolls into view the same way */
-  else if (a->record_track >= 0)
+  else if (a->rec.track >= 0)
   {
     aud_timeline_reveal(&a->timeline, &a->doc,
-                        a->record_at + (uint64_t)(st.elapsed * a->doc.rate),
+                        a->rec.at + (uint64_t)(st.elapsed * a->doc.rate),
                         a->timeline.wave_w);
   }
   app_track_peak(a, (float)st.peak, GetFrameTime());
@@ -585,16 +586,16 @@ void aud_plug_shutdown(void)
    * is written back to it; one that never had a name gets a recovery file
    * beside the takes, and is said so on the terminal.
    */
-  if (a->project_dirty && a->doc.count > 0)
+  if (a->session.dirty && a->doc.count > 0)
   {
     char recovery[AUD_PATH_MAX];
-    const char *where = a->project_path;
+    const char *where = a->session.path;
     const char *why = NULL;
     int saved = 0;
 
     if (where[0] == '\0')
     {
-      if (aud_path_place(recovery, sizeof(recovery), a->take_dir,
+      if (aud_path_place(recovery, sizeof(recovery), a->rec.dir,
                          "recovered" AUD_PROJECT_EXT) == 0)
       {
         where = recovery;
@@ -636,7 +637,7 @@ void aud_plug_shutdown(void)
   app_close_engine(a);
   aud_clipboard_clear(&a->clipboard);
   aud_doc_free(&a->doc);
-  aud_device_watch_destroy(a->watch);
+  aud_device_watch_destroy(a->picker.watch);
   CloseWindow();
   app_free(a);
   plug = NULL;

@@ -101,7 +101,7 @@ typedef enum
  * The take drain buffer, as a flat sample count: a quarter of a second at
  * sixteen channels. It is allocated once, before there is a device to ask, so
  * it is sized in samples and divided by the channel count the engine actually
- * negotiated - see app.take_buf_frames, which is what the drain is asked for.
+ * negotiated - see app_recording::buf_frames, which the drain is asked for.
  *
  * Sixteen is a shape, not a limit: -c accepts up to AUD_CHANNELS_MAX, and an
  * interface that wide simply drains fewer frames per pass rather than writing
@@ -388,6 +388,185 @@ typedef struct
   int irreversible;
 } app_confirm;
 
+/*
+ * The device picker: the hardware as it was last enumerated, the chrome over
+ * it, and the one the engine is actually holding.
+ */
+typedef struct
+{
+  /*
+   * The list, and the watch that keeps it honest: plugging an interface in
+   * should put it in the menu without the window being restarted around it.
+   */
+  app_devices list;
+  aud_device_watch *watch;
+  const char *labels[APP_MAX_DEVICES]; /* what the dropdown reads */
+
+  /*
+   * The device the engine holds, kept here rather than as an index into the
+   * list: the list is rebuilt underneath it, and the engine keeps the string
+   * it was opened with for its whole lifetime.
+   */
+  char active[64];
+
+  int selected;
+  int menu_open;
+  int menu_scroll; /* top visible row, for a list longer than the menu */
+} app_device_picker;
+
+/*
+ * Recording: where takes are kept, and the one being made now.
+ *
+ * The take lands on the timeline as it is captured. The engine is still writing
+ * the WAV; these are the same frames arriving on the track at the same time, so
+ * the waveform grows while it is being played rather than appearing when it is
+ * over.
+ */
+typedef struct
+{
+  /*
+   * The lane the take is going onto and the frame it started at, both fixed
+   * when Record was pressed - the cursor may well have moved since, and the
+   * take belongs where it began.
+   */
+  long track;
+  uint64_t at;
+  /*
+   * The lane the last take landed on, kept after `track` has been let go. A
+   * take that is moved by the dialog has to have its block told where it ended
+   * up, or a project saved afterwards would point at a file that is no longer
+   * there - see edit/project.h.
+   */
+  long last_track;
+  /*
+   * Frames to a lap, when the take being recorded is going round a loop, and 0
+   * when it is not. Fixed when Record was pressed, like `at` beside it: the
+   * loop may be dragged somewhere else while the take runs, and the passes
+   * belong to the loop that was set when it started.
+   *
+   * A loop take is one continuous recording into one file - the laps are cut
+   * out of it afterwards, by aud_edit_take_passes(). Stopping and starting the
+   * device at each lap would put a gap in every one of them.
+   */
+  uint64_t lap_frames;
+  /*
+   * Frames of the take still to be thrown away before it starts landing on the
+   * timeline. Only ever non-zero when a take begins so near the start of the
+   * project that the latency correction cannot be a shift alone; see
+   * take/latency.h.
+   */
+  uint64_t skip;
+
+  /* the take the device was lost in the middle of, if there was one */
+  app_interrupted interrupted;
+
+  float *buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
+  /* frames of those the current engine's channel count fits; 0 without one */
+  size_t buf_frames;
+
+  /* whether stopping a take opens the dialog that asks where it should go */
+  int want_dialog;
+
+  char prefix[512];
+  /*
+   * Where takes are kept, from --dir or the config file. Empty means the
+   * working directory. The prefix above is placed in it once, at startup, so
+   * everything after that is holding a path rather than half of one.
+   */
+  char dir[AUD_PATH_MAX];
+} app_recording;
+
+/*
+ * What the transport will do when it is next pressed. Intents rather than
+ * state: the player is told them when a pass starts, and holds none of them
+ * between passes.
+ *
+ * The tempo they are counted on is not here - it belongs to the project, is
+ * saved with it, and is what the ruler draws. See edit/doc.h.
+ */
+typedef struct
+{
+  /*
+   * Play the project while recording over it, and by how much to correct for
+   * having heard it late. `latency_ms` below zero means "work it out from the
+   * buffers", which is what it is until someone measures theirs.
+   */
+  int overdub;
+  double latency_ms;
+
+  int loop;     /* Play goes round the selection instead of stopping at it */
+  int click_on; /* the metronome plays over whatever else is being heard */
+  float click_gain;
+} app_transport;
+
+/*
+ * The session on disk: the file this work is kept in, and the copy of it that
+ * survives the window dying.
+ */
+typedef struct
+{
+  /*
+   * The project file this session is being kept in, or "" when it has never
+   * been saved. `dirty` is whether anything has changed since it was, which is
+   * what the title bar's asterisk and the save prompt read.
+   *
+   * Distinct from aud_doc.dirty, which means "the view has not drawn this yet"
+   * and is set and cleared many times a second.
+   */
+  char path[AUD_PATH_MAX];
+  int dirty;
+
+  /*
+   * The recovery file this window is keeping, or "" when there is none on
+   * disk. See autosave.c: it holds what the session would be if it were saved
+   * now, it is removed the moment the work is safe somewhere else, and finding
+   * one at startup means a window did not get to say goodbye.
+   *
+   * The path is kept rather than recomputed because the answer moves: a Save As
+   * changes where this session's recovery belongs, and the file left at the old
+   * place has to be taken away rather than abandoned.
+   */
+  char recovery_path[AUD_PATH_MAX];
+  double recovery_at;  /* when it was last written, on the window's clock */
+  int recovery_failed; /* whether the last attempt said so, so it says it once */
+} app_session;
+
+/*
+ * Video capture. The take is always written as a WAV; `want` decides whether
+ * stopping also renders an MP4 of the visualiser from it.
+ */
+typedef struct
+{
+  int want;
+  /*
+   * Whether that MP4 carries the take's own audio. On by default - a take and
+   * its visualiser belong together - but a video headed for an edit that has
+   * the audio already, or for somewhere it should not play, is better off
+   * without a track to strip back out.
+   */
+  int want_audio;
+  unsigned width;
+  unsigned height;
+  unsigned fps;
+  aud_render *render;              /* non-NULL while a video is being written */
+  char note[AUD_ENGINE_ERROR_MAX]; /* what happened to the last one */
+} app_video;
+
+/* The levels: what the meter is showing, and where the two knobs are set. */
+typedef struct
+{
+  float peak_hold;
+  float peak_hold_left; /* seconds the marker still has before it decays */
+  float monitor_gain;
+  /*
+   * The capture gain, which unlike the one above reaches the take. Held here
+   * rather than only in the engine because it outlives one: a device swapped
+   * mid-session is the same interface into the same bass, and having to set
+   * the level again because the dropdown was touched would be a bug.
+   */
+  float input_gain;
+} app_levels;
+
 typedef struct
 {
   /*
@@ -428,66 +607,11 @@ typedef struct
    */
   aud_preview preview;
 
-  /*
-   * The take being recorded, as it lands on the timeline. The engine is still
-   * writing the WAV; this is the same frames arriving on the track at the same
-   * time, so the waveform grows while it is being played rather than appearing
-   * when it is over.
-   *
-   * `record_track` is the lane it is going onto and `record_at` where it
-   * started, both fixed when Record was pressed - the cursor may well have
-   * moved since, and the take belongs where it began.
-   */
-  long record_track;
-  /*
-   * The lane the last take landed on, kept after record_track has been let go.
-   * A take that is moved by the dialog has to have its block told where it
-   * ended up, or a project saved afterwards would point at a file that is no
-   * longer there - see edit/project.h.
-   */
-  long last_take_track;
-  uint64_t record_at;
-  /*
-   * Frames to a lap, when the take being recorded is going round a loop, and 0
-   * when it is not. Fixed when Record was pressed, like `record_at` beside it:
-   * the loop may be dragged somewhere else while the take runs, and the passes
-   * belong to the loop that was set when it started.
-   *
-   * A loop take is one continuous recording into one file - the laps are cut
-   * out of it afterwards, by aud_edit_take_passes(). Stopping and starting the
-   * device at each lap would put a gap in every one of them.
-   */
-  uint64_t lap_frames;
-  /*
-   * Frames of the take still to be thrown away before it starts landing on the
-   * timeline. Only ever non-zero when a take begins so near the start of the
-   * project that the latency correction cannot be a shift alone; see
-   * take/latency.h.
-   */
-  uint64_t record_skip;
+  /* the take being made, and where takes are kept - see app_recording */
+  app_recording rec;
 
-  /* the take the device was lost in the middle of, if there was one */
-  app_interrupted interrupted;
-
-  /*
-   * Play the project while recording over it, and by how much to correct for
-   * having heard it late. `latency_ms` below zero means "work it out from the
-   * buffers", which is what it is until someone measures theirs.
-   */
-  int overdub;
-  double latency_ms;
-
-  /*
-   * The rest of what the transport will do when it is next pressed. Intents
-   * rather than state, like `overdub` above: the player is told them when a
-   * pass starts, and holds none of them between passes.
-   *
-   * The tempo they are counted on is not here - it belongs to the project, is
-   * saved with it, and is what the ruler draws. See edit/doc.h.
-   */
-  int loop;     /* Play goes round the selection instead of stopping at it */
-  int click_on; /* the metronome plays over whatever else is being heard */
-  float click_gain;
+  /* what Play and Record will do when next pressed - see app_transport */
+  app_transport transport;
 
   /*
    * A tempo named on the command line, held until there is a document to put
@@ -498,9 +622,6 @@ typedef struct
    */
   double start_tempo;
   unsigned start_beats;
-  float *take_buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
-  /* frames of those the current engine's channel count fits; 0 without one */
-  size_t take_buf_frames;
 
   /*
    * The drawer: the visualiser, which was the whole window and is now a panel
@@ -526,39 +647,9 @@ typedef struct
   const char *open_paths[APP_MAX_OPEN];
   int open_count;
 
-  char prefix[512];
-  /*
-   * Where takes are kept, from --dir or the config file. Empty means the
-   * working directory. The prefix above is placed in it once, at startup, so
-   * everything after that is holding a path rather than half of one.
-   */
-  char take_dir[AUD_PATH_MAX];
-  /*
-   * The project file this session is being kept in, or "" when it has never
-   * been saved. `project_dirty` is whether anything has changed since it was,
-   * which is what the title bar's asterisk and the save prompt read.
-   *
-   * Distinct from aud_doc.dirty, which means "the view has not drawn this yet"
-   * and is set and cleared many times a second.
-   */
-  char project_path[AUD_PATH_MAX];
-  int project_dirty;
+  /* the file this work is kept in, and its recovery copy - see app_session */
+  app_session session;
 
-  /*
-   * The recovery file this window is keeping, or "" when there is none on
-   * disk. See autosave.c: it holds what the session would be if it were saved
-   * now, it is removed the moment the work is safe somewhere else, and finding
-   * one at startup means a window did not get to say goodbye.
-   *
-   * The path is kept rather than recomputed because the answer moves: a Save As
-   * changes where this session's recovery belongs, and the file left at the old
-   * place has to be taken away rather than abandoned.
-   */
-  char recovery_path[AUD_PATH_MAX];
-  double recovery_at;  /* when it was last written, on the window's clock */
-  int recovery_failed; /* whether the last attempt said so, so it says it once */
-  /* whether stopping a take opens the dialog that asks where it should go */
-  int want_dialog;
   app_save save;
   /*
    * What monitoring the next engine to open should come up with: -M at
@@ -566,24 +657,8 @@ typedef struct
    */
   int start_monitor;
 
-  /*
-   * The device list, and the watch that keeps it honest: plugging an interface
-   * in should put it in the menu without the window being restarted around it.
-   */
-  app_devices devices;
-  aud_device_watch *watch;
-  const char *device_labels[APP_MAX_DEVICES]; /* what the dropdown reads */
-
-  /*
-   * The device the engine holds, kept here rather than as a pointer into the
-   * list: the list is rebuilt underneath it, and the engine keeps the string
-   * it was opened with for its whole lifetime.
-   */
-  char active_device[64];
-
-  int device_selected;
-  int device_menu_open;
-  int device_menu_scroll; /* top visible row, for a list longer than the menu */
+  /* the interfaces on offer and the menu over them - see app_device_picker */
+  app_device_picker picker;
 
   /* the shortcut list, over the top of everything while it is up */
   int help_open;
@@ -604,34 +679,11 @@ typedef struct
   const char *style_labels[AUD_VIZ_MODE_COUNT];
   int style_selected;
 
-  /*
-   * Video capture. The take is always written as a WAV; `want_video` decides
-   * whether stopping also renders an MP4 of the visualiser from it.
-   */
-  int want_video;
-  /*
-   * Whether that MP4 carries the take's own audio. On by default - a take and
-   * its visualiser belong together - but a video headed for an edit that has
-   * the audio already, or for somewhere it should not play, is better off
-   * without a track to strip back out.
-   */
-  int want_video_audio;
-  unsigned video_width;
-  unsigned video_height;
-  unsigned video_fps;
-  aud_render *render;                     /* non-NULL while a video is being written */
-  char render_note[AUD_ENGINE_ERROR_MAX]; /* what happened to the last one */
+  /* whether stopping a take also renders an MP4 - see app_video */
+  app_video video;
 
-  float peak_hold;
-  float peak_hold_left; /* seconds the marker still has before it decays */
-  float monitor_gain;
-  /*
-   * The capture gain, which unlike the one above reaches the take. Held here
-   * rather than only in the engine because it outlives one: a device swapped
-   * mid-session is the same interface into the same bass, and having to set
-   * the level again because the dropdown was touched would be a bug.
-   */
-  float input_gain;
+  /* the meter's hold, and the two gain knobs - see app_levels */
+  app_levels levels;
 
   /* the reason the engine could not be created, if it could not be */
   char fatal[AUD_ENGINE_ERROR_MAX];

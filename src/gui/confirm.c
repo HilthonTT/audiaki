@@ -445,8 +445,8 @@ int app_confirm_apply(app *a, double seconds, const char *track)
 
 int app_confirm_quit(app *a)
 {
-  int recording = a->record_track >= 0;
-  int unsaved = a->project_dirty && a->doc.count > 0;
+  int recording = a->rec.track >= 0;
+  int unsaved = a->session.dirty && a->doc.count > 0;
 
   if (a->confirm.open)
   {
@@ -472,10 +472,10 @@ int app_confirm_quit(app *a)
      * that only frightens. What it cannot promise is that anybody will find
      * the file, which is why it names it.
      */
-    if (a->project_path[0] != '\0')
+    if (a->session.path[0] != '\0')
     {
       because(a, 0, "Your edits are written back to %.60s on the way out.",
-              aud_path_basename(a->project_path));
+              aud_path_basename(a->session.path));
     }
     else
     {
@@ -584,7 +584,7 @@ int app_confirm_draw(app *a)
         snprintf(name, sizeof(name), "%s", a->doc.tracks[track].name);
         if (aud_edit_remove_track(&a->doc, (size_t)track) == 0)
         {
-          a->project_dirty = 1;
+          a->session.dirty = 1;
           app_set_status(a, "closed %.40s", name);
         }
       }
@@ -593,8 +593,8 @@ int app_confirm_draw(app *a)
       app_edit_now(a, APP_EDIT_UNDO);
       break;
     case APP_CONFIRM_APPLY:
-      aud_repair_panel_apply(&a->repair, &a->doc, a->take_dir);
-      a->project_dirty = 1;
+      aud_repair_panel_apply(&a->repair, &a->doc, a->rec.dir);
+      a->session.dirty = 1;
       app_set_status(a, "%s", a->repair.note);
       break;
     case APP_CONFIRM_QUIT:
