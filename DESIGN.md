@@ -90,7 +90,7 @@ src/
     path.c/.h     joining, creating and moving, without ever clobbering
     config.c/.h   the preferences that outlive an invocation
     jsonout.c/.h  the little JSON --json needs
-    ringbuf.c/.h  lock-free SPSC ring, capture thread -> drawing thread
+    ringbuf.c/.h  lock-free SPSC ring, of floats or of bytes
     signals.c/.h  the shared Ctrl+C flag
   gui/          the desktop window; the only code that knows raylib exists
     app.h         the state its parts share
@@ -107,7 +107,7 @@ src/
     player.c/.h   hearing the timeline, fed from the drawing loop
     preview.c/.h  hearing a file from the browser, fed the same way
     screen.c      every pixel of the chrome
-    engine.c/.h   the capture thread and its idle/recording/paused transport
+    engine.c/.h   the capture and writer threads, and the transport over them
     viz.c/.h      the glowing spectrum, drawn with raylib
     repair.c/.h   the spectrum of what was recorded, and drawing on it
     confirm.c     the question that stops an action until it is answered
@@ -896,13 +896,47 @@ One output at a time: starting a preview stops the player. The project and the
 file being asked about are two things to be listening to, and hearing them over
 each other tells you nothing about either.
 
+### Getting the take to the disk
+
+Recording writes to a file, and writing to a file can block. `fwrite()` normally
+lands in the page cache and returns in microseconds, but when the kernel decides
+that cache is full enough it does the writeback there and then, and the call
+takes as long as the disk does. A capture thread inside one of those is a
+capture thread that is not draining the device, which is an xrun — and the take
+that xrun lands in is the one being written.
+
+So the take reaches the file from a thread of its own. The capture thread
+repacks its period, pushes the bytes onto a ring and goes back to the device;
+`writer_thread()` takes them off and is the only thing in the engine that calls
+`wav_write()`. What was a blocking write on the path the audio arrives on is now
+a memcpy and a `pthread_cond_signal()`.
+
+The ring is bytes rather than floats, and that is not incidental. The payload is
+already in the device's format by the time it is queued, and floats are 24 bits
+of mantissa — a take from an S32 interface that went through one on its way to
+the file would arrive rounded. `aud_ringbuf_init_bytes()` exists for this.
+
+It holds `ENGINE_WRITE_SECONDS` plus the whole pre-roll, because the pre-roll
+goes in as one push at the start of a take rather than a period at a time, and a
+queue that could not take it would fail the take at the moment it began. Eight
+seconds of slack is what a disk is allowed to stall for. Past that the queue is
+full, and a full queue is not a dropped frame on screen — it is a hole in the
+middle of a recording — so it stops the take and says so rather than writing a
+file whose second half is a minute out of place.
+
+Ending a take is where the two threads meet. `close_take()` calls
+`writer_flush()` first and waits: the header cannot be patched over payload that
+is still in flight. That wait is the one the capture thread used to take on every
+single period, now taken once, at the end, by whichever thread is ending it.
+
 ### When the cable comes out
 
 A capture stream that dies cannot be revived, so the question is not how to keep
 it but what to do with what is already there. The engine answers the first half
-on the capture thread the moment the read fails: close the WAV, patch its
-header, and say `AUD_ENGINE_FAILED`. The file is a complete take from that
-instant on, whatever happens next.
+on the capture thread the moment the read fails: let the writer finish what is
+still queued, close the WAV, patch its header, and say `AUD_ENGINE_FAILED`. The
+file is a complete take from that instant on, whatever happens next — including
+the periods that had been captured but had not yet reached the disk.
 
 The window answers the second half. `app_check_capture_loss()` runs at the top
 of every frame, ahead of the device watch — deliberately, because the watch is
@@ -1136,12 +1170,12 @@ The split is not by subject matter but by what cannot be unmapped:
 | In the shell | In the library |
 | --- | --- |
 | `main.c` — the window and the run loop | everything else in `src/gui` |
-| `engine.c` — the capture thread | |
+| `engine.c` — the capture and writer threads | |
 | all of `backend`, `edit`, `take`, `media`, `util` | |
 | raylib | |
 
 A thread executing code from a library that is about to be `dlclose`d is not a
-bug that reports itself politely, so the capture thread stays in the shell. So
+bug that reports itself politely, so the engine's threads stay in the shell. So
 does raylib, and for a sharper reason: raylib's window handle, its GL context
 and its input state are file-scope variables inside it, and a second copy of
 them would be a second window. The library is therefore linked against nothing

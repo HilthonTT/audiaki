@@ -25,11 +25,11 @@ static size_t round_up_pow2(size_t n)
   return p;
 }
 
-int aud_ringbuf_init(aud_ringbuf *rb, size_t min_slots)
+int aud_ringbuf_init_elem(aud_ringbuf *rb, size_t min_slots, size_t elem)
 {
   size_t capacity;
 
-  if (rb == NULL || min_slots == 0)
+  if (rb == NULL || min_slots == 0 || elem == 0)
   {
     errno = EINVAL;
     return -1;
@@ -42,24 +42,35 @@ int aud_ringbuf_init(aud_ringbuf *rb, size_t min_slots)
   }
 
   capacity = round_up_pow2(min_slots + 1);
-  if (capacity == 0 || capacity > SIZE_MAX / sizeof(float))
+  if (capacity == 0 || capacity > SIZE_MAX / elem)
   {
     errno = EINVAL;
     return -1;
   }
 
-  rb->data = malloc(capacity * sizeof(*rb->data));
+  rb->data = malloc(capacity * elem);
   if (rb->data == NULL)
   {
     errno = ENOMEM;
     return -1;
   }
 
+  rb->elem = elem;
   rb->capacity = capacity;
   rb->mask = capacity - 1;
   atomic_init(&rb->write, 0);
   atomic_init(&rb->read, 0);
   return 0;
+}
+
+int aud_ringbuf_init(aud_ringbuf *rb, size_t min_slots)
+{
+  return aud_ringbuf_init_elem(rb, min_slots, sizeof(float));
+}
+
+int aud_ringbuf_init_bytes(aud_ringbuf *rb, size_t min_bytes)
+{
+  return aud_ringbuf_init_elem(rb, min_bytes, 1);
 }
 
 void aud_ringbuf_free(aud_ringbuf *rb)
@@ -71,6 +82,7 @@ void aud_ringbuf_free(aud_ringbuf *rb)
 
   free(rb->data);
   rb->data = NULL;
+  rb->elem = 0;
   rb->capacity = 0;
   rb->mask = 0;
   atomic_init(&rb->write, 0);
@@ -117,42 +129,44 @@ size_t aud_ringbuf_space(const aud_ringbuf *rb)
 }
 
 /* Copy into the ring at `w`, splitting at the wrap. Does not publish the index. */
-static void store(aud_ringbuf *rb, size_t w, const float *src, size_t count)
+static void store(aud_ringbuf *rb, size_t w, const void *src, size_t count)
 {
   size_t offset = w & rb->mask;
   size_t first = rb->capacity - offset;
+  const unsigned char *in = src;
 
   if (first > count)
   {
     first = count;
   }
 
-  memcpy(rb->data + offset, src, first * sizeof(*rb->data));
+  memcpy(rb->data + offset * rb->elem, in, first * rb->elem);
   if (count > first)
   {
-    memcpy(rb->data, src + first, (count - first) * sizeof(*rb->data));
+    memcpy(rb->data, in + first * rb->elem, (count - first) * rb->elem);
   }
 }
 
 /* Copy out of the ring at `r`, splitting at the wrap. Does not publish. */
-static void load(const aud_ringbuf *rb, size_t r, float *dst, size_t count)
+static void load(const aud_ringbuf *rb, size_t r, void *dst, size_t count)
 {
   size_t offset = r & rb->mask;
   size_t first = rb->capacity - offset;
+  unsigned char *out = dst;
 
   if (first > count)
   {
     first = count;
   }
 
-  memcpy(dst, rb->data + offset, first * sizeof(*rb->data));
+  memcpy(out, rb->data + offset * rb->elem, first * rb->elem);
   if (count > first)
   {
-    memcpy(dst + first, rb->data, (count - first) * sizeof(*rb->data));
+    memcpy(out + first * rb->elem, rb->data, (count - first) * rb->elem);
   }
 }
 
-size_t aud_ringbuf_write(aud_ringbuf *rb, const float *src, size_t count)
+size_t aud_ringbuf_write(aud_ringbuf *rb, const void *src, size_t count)
 {
   size_t w;
   size_t space;
@@ -180,40 +194,7 @@ size_t aud_ringbuf_write(aud_ringbuf *rb, const float *src, size_t count)
   return count;
 }
 
-size_t aud_ringbuf_write_overwrite(aud_ringbuf *rb, const float *src, size_t count)
-{
-  size_t capacity;
-  size_t dropped = 0;
-  size_t space;
-
-  if (rb == NULL || rb->data == NULL || src == NULL || count == 0)
-  {
-    return 0;
-  }
-
-  capacity = aud_ringbuf_capacity(rb);
-
-  /*
-   * A push longer than the whole ring can only leave its tail behind, so skip
-   * straight to that and count the rest as dropped.
-   */
-  if (count > capacity)
-  {
-    dropped = count - capacity;
-    src += dropped;
-    count = capacity;
-  }
-
-  space = aud_ringbuf_space(rb);
-  if (count > space)
-  {
-    dropped += aud_ringbuf_skip(rb, count - space);
-  }
-
-  return dropped + (count - aud_ringbuf_write(rb, src, count));
-}
-
-size_t aud_ringbuf_read(aud_ringbuf *rb, float *dst, size_t count)
+size_t aud_ringbuf_read(aud_ringbuf *rb, void *dst, size_t count)
 {
   size_t r;
   size_t have;

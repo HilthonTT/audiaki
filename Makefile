@@ -423,7 +423,7 @@ $(GUI_OBJS): $(OBJ_DIR)/gui/%.o: src/gui/%.c
 # without the CLI in them and failed at the undefined symbol.
 $(TEST_DIR)/%: tests/%.c $(PORTABLE_OBJS)
 	@mkdir -p $(@D)
-	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
+	$(CC) $(CPPFLAGS) -Itests $(CFLAGS) -pthread $(LDFLAGS) -o $@ $< $(PORTABLE_OBJS) -lm
 
 # The option parser's tests, which exist only where a backend was compiled in.
 #

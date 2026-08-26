@@ -13,10 +13,16 @@
  * lets the visualiser and the level meter run before you press record, which is
  * how you set your input gain in the first place.
  *
- * Threading contract: every function here except aud_engine_read_visual() is
- * safe to call from the UI thread while capture runs. aud_engine_read_visual()
- * is the single consumer of the visualiser ring and must only ever be called
- * from one thread - in practice, the one that draws.
+ * Three threads, and the division between them is the point. The capture thread
+ * reads the device and does nothing that can block for long: it repacks a
+ * period and pushes it onto rings. A writer thread takes the take from there to
+ * the file, so that a disk stalling costs queue rather than an xrun. The UI
+ * thread calls everything here.
+ *
+ * Threading contract: every function here except aud_engine_read_visual() and
+ * aud_engine_read_take() is safe to call from the UI thread while capture runs.
+ * Those two are the single consumers of their rings and must only ever be
+ * called from one thread - in practice, the one that draws.
  */
 #ifndef AUDIAKI_GUI_ENGINE_H
 #define AUDIAKI_GUI_ENGINE_H
@@ -197,6 +203,11 @@ int aud_engine_monitor_wanted(const aud_engine *e);
  * Drain up to `max` mono samples of recently captured audio for the display.
  * Returns how many were copied, which is zero when the capture thread has not
  * produced anything since the last call. Single consumer only.
+ *
+ * Call it until it comes back short. The ring holds a second and the capture
+ * thread does not empty it to make room for itself - it may not, being the
+ * producer - so a caller that stops draining loses audio rather than sliding
+ * the window along, and one that drains to the end each frame never does.
  */
 size_t aud_engine_read_visual(aud_engine *e, float *mono, size_t max);
 

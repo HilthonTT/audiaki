@@ -16,8 +16,28 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* Seconds of audio the visualiser ring holds before the oldest is dropped. */
+/*
+ * Seconds of audio the visualiser ring holds. Only a stalled drawing thread
+ * ever fills it, and what it does not fit is dropped: the visualiser is a view
+ * of what is arriving now, and nobody is looking at it while the window is not
+ * drawing anyway.
+ */
 #define ENGINE_VISUAL_SECONDS 1.0
+
+/*
+ * Seconds of the take the write queue holds beyond the pre-roll, which is what
+ * a disk is allowed to stall for without the recording being lost. Generous:
+ * the queue costs a few megabytes, and running out of it is not a dropped frame
+ * on screen but a hole in the file, so it is stopped rather than papered over.
+ */
+#define ENGINE_WRITE_SECONDS 8.0
+
+/*
+ * What the writer moves out of the queue in one go. Bigger than a period, so a
+ * take is handed to stdio in useful lumps rather than a few hundred bytes at a
+ * time, and small enough to stay out of the way.
+ */
+#define ENGINE_WRITE_CHUNK (64u * 1024u)
 
 /*
  * Seconds of the take held for the timeline. Generous: it only has to cover a
@@ -55,10 +75,49 @@ struct aud_engine
    */
   atomic_int input_gain;
 
+  /*
+   * The take reaches the file from a thread of its own. Capture must never wait
+   * on a disk: an fwrite() that goes to writeback can block for as long as the
+   * disk feels like, and a capture loop that was inside one is a capture loop
+   * that is not draining the device - which is an xrun, and a hole in the take
+   * that caused it. So the capture thread only ever repacks a period and pushes
+   * it into `wq`, and this thread does everything that can block.
+   *
+   * It owns `wav` outright from the moment a take starts. The only other thread
+   * that may touch the file is one that has taken the take through
+   * writer_flush() first, which is what close_take() does.
+   */
+  pthread_t writer;
+  int writer_started;
+  pthread_mutex_t wlock;
+  pthread_cond_t wwake; /* bytes were queued, or the writer is to stop */
+  pthread_cond_t widle; /* the writer has drained the queue and parked */
+  int writer_quit;      /* under wlock */
+  int writer_busy;      /* under wlock: bytes are queued, or are being written */
+  aud_ringbuf wq;       /* payload bytes on their way to the file */
+  unsigned char *wq_buf;
+  size_t wq_buf_bytes;
+  /*
+   * Set by the writer when it can no longer keep the file, having first filled
+   * in write_error. The capture thread reads it at the top of the next period
+   * and ends the take, so failing a write and abandoning a take are still the
+   * same piece of code in the same place they always were.
+   */
+  atomic_int write_failed;
+  char write_error[AUD_ENGINE_ERROR_MAX];
+
   /* -- protected by lock -------------------------------------------------- */
   aud_engine_state state;
   wav_writer wav;
   int take_open; /* a WAV file is open and needs closing */
+  /*
+   * The payload this take will have once the queue has drained, and what the
+   * file can describe. Counted here rather than read back off the writer,
+   * because the bytes that decide whether the next period fits are the ones
+   * already queued and not only the ones already written.
+   */
+  uint64_t take_bytes;
+  uint64_t take_limit;
   char path[AUD_ENGINE_PATH_MAX];
   char error[AUD_ENGINE_ERROR_MAX];
   uint64_t frames;
@@ -91,9 +150,9 @@ struct aud_engine
   aud_ringbuf visual;
   /*
    * The take, as floats, for the timeline to grow a track from while it is
-   * being recorded. Separate from `visual` because that one is mono and
-   * overwrites; this has to be every channel and must not lose anything
-   * quietly. See aud_engine_read_take().
+   * being recorded. Separate from `visual` because that one is mono and a
+   * second long; this has to be every channel, and what it loses is counted
+   * rather than shrugged at. See aud_engine_read_take().
    */
   aud_ringbuf take;
   float *take_buf; /* one period, interleaved */
@@ -132,6 +191,174 @@ static void set_error(aud_engine *e, const char *fmt, ...)
   va_end(ap);
 }
 
+/*
+ * The writer's own set_error(). It cannot use the one above: `error` is under
+ * the engine lock, and this thread does not take it. The capture thread copies
+ * this across on the next period, which is where the message meets the lock
+ * that publishes it.
+ */
+static void set_write_error(aud_engine *e, const char *fmt, ...) AUD_PRINTF(2, 3);
+
+static void set_write_error(aud_engine *e, const char *fmt, ...)
+{
+  va_list ap;
+
+  va_start(ap, fmt);
+  vsnprintf(e->write_error, sizeof(e->write_error), fmt, ap);
+  va_end(ap);
+}
+
+/*
+ * The take writer. Waits for bytes, moves them to the file, and is the only
+ * thread that calls wav_write().
+ *
+ * The queue is drained outside wlock on purpose. wlock is taken by the capture
+ * thread once a period to say that more has arrived, so it has to be a lock
+ * that is never held for long; the write that may block for a hundred
+ * milliseconds happens with it let go, and the ring needs no lock of its own.
+ */
+static void *writer_thread(void *arg)
+{
+  aud_engine *e = (aud_engine *)arg;
+
+  pthread_mutex_lock(&e->wlock);
+  for (;;)
+  {
+    size_t got;
+
+    while (!e->writer_quit && aud_ringbuf_available(&e->wq) == 0)
+    {
+      /* the queue is empty and nothing is in flight: whoever is closing the
+       * take can have the file now */
+      e->writer_busy = 0;
+      pthread_cond_broadcast(&e->widle);
+      pthread_cond_wait(&e->wwake, &e->wlock);
+    }
+    if (e->writer_quit)
+    {
+      break;
+    }
+    pthread_mutex_unlock(&e->wlock);
+
+    got = aud_ringbuf_read(&e->wq, e->wq_buf, e->wq_buf_bytes);
+    if (got > 0 && wav_write(&e->wav, e->wq_buf, got) != 0)
+    {
+      set_write_error(e, "cannot write to %s: %s", e->path, strerror(errno));
+      /*
+       * Throw the rest of the queue away rather than retrying it. The take is
+       * over the moment a write fails - the capture thread ends it on the next
+       * period - and a queue nobody will drain is one close_take() would wait
+       * on forever.
+       */
+      aud_ringbuf_skip(&e->wq, aud_ringbuf_available(&e->wq));
+      atomic_store_explicit(&e->write_failed, 1, memory_order_release);
+    }
+
+    pthread_mutex_lock(&e->wlock);
+  }
+  e->writer_busy = 0;
+  pthread_cond_broadcast(&e->widle);
+  pthread_mutex_unlock(&e->wlock);
+  return NULL;
+}
+
+/*
+ * Wait until everything queued is in the file and the writer is parked, so the
+ * caller may touch `wav` itself. Returns with the writer holding nothing.
+ *
+ * The wait is bounded by what the queue holds, which is a period in the
+ * ordinary case and the whole of it only when a disk has stalled - the same
+ * wait the capture thread used to take on every period, now taken once, at the
+ * end of a take, by whoever is ending it.
+ */
+static void writer_flush(aud_engine *e)
+{
+  if (!e->writer_started)
+  {
+    return;
+  }
+
+  pthread_mutex_lock(&e->wlock);
+  while (!e->writer_quit && (aud_ringbuf_available(&e->wq) > 0 || e->writer_busy))
+  {
+    pthread_cond_signal(&e->wwake);
+    pthread_cond_wait(&e->widle, &e->wlock);
+  }
+  pthread_mutex_unlock(&e->wlock);
+}
+
+/*
+ * Ask the writer to finish and wait for it. Whatever is still queued is not
+ * written: the only caller that has not flushed first is the failure path in
+ * aud_engine_create(), where no take was ever opened.
+ */
+static void stop_writer(aud_engine *e)
+{
+  if (!e->writer_started)
+  {
+    return;
+  }
+
+  pthread_mutex_lock(&e->wlock);
+  e->writer_quit = 1;
+  pthread_cond_broadcast(&e->wwake);
+  pthread_mutex_unlock(&e->wlock);
+
+  pthread_join(e->writer, NULL);
+  e->writer_started = 0;
+}
+
+/*
+ * Hand one lump of payload to the writer. Returns -1 when the queue has no room
+ * for all of it, which means the disk has been stalled for ENGINE_WRITE_SECONDS
+ * and the take cannot be completed.
+ *
+ * All of it or none: a partial push would put a hole in the middle of the file
+ * and leave everything after it a lump of audio out of place, which is worse
+ * than stopping and saying so.
+ */
+static int queue_payload(aud_engine *e, const unsigned char *payload, size_t bytes)
+{
+  if (bytes == 0)
+  {
+    return 0;
+  }
+
+  /* one producer, so the space seen here can only have grown by the write */
+  if (aud_ringbuf_space(&e->wq) < bytes)
+  {
+    return -1;
+  }
+  if (aud_ringbuf_write(&e->wq, payload, bytes) != bytes)
+  {
+    return -1;
+  }
+
+  pthread_mutex_lock(&e->wlock);
+  e->writer_busy = 1;
+  pthread_cond_signal(&e->wwake);
+  pthread_mutex_unlock(&e->wlock);
+  return 0;
+}
+
+/*
+ * Ready the write queue for a take the caller has just opened. Call with the
+ * lock held, and with the writer parked - which it is, because a take being
+ * opened means the one before it was closed, and close_take() waits.
+ *
+ * `take_bytes` starts at whatever the file already holds rather than at zero,
+ * so a take carried on after the cable came out is measured against the limit
+ * as one file and not as two.
+ */
+static void take_queue_reset(aud_engine *e)
+{
+  aud_ringbuf_reset(&e->wq);
+  atomic_store_explicit(&e->write_failed, 0, memory_order_relaxed);
+  e->write_error[0] = '\0';
+  e->take_bytes = e->wav.data_bytes;
+  e->take_limit = e->wav.large ? WAV_MAX_LARGE_DATA_BYTES : (uint64_t)WAV_MAX_DATA_BYTES;
+}
+
 /* Call with the lock held; a no-op when no take is open. */
 static int close_take(aud_engine *e)
 {
@@ -141,6 +368,9 @@ static int close_take(aud_engine *e)
   {
     return 0;
   }
+
+  /* everything queued belongs in the file before its header is patched */
+  writer_flush(e);
 
   e->take_open = 0;
   rc = wav_close(&e->wav);
@@ -292,7 +522,7 @@ static int write_preroll(aud_engine *e)
       }
       nbytes = frames * e->dev.channels * e->wav_bytes;
 
-      if (wav_would_overflow(&e->wav, nbytes))
+      if (e->take_bytes + nbytes > e->take_limit)
       {
         break;
       }
@@ -303,14 +533,15 @@ static int write_preroll(aud_engine *e)
         src = e->out_buf;
       }
 
-      if (wav_write(&e->wav, src, nbytes) != 0)
+      if (queue_payload(e, src, nbytes) != 0)
       {
-        set_error(e, "cannot write to %s: %s", e->path, strerror(errno));
+        set_error(e, "%s: the disk cannot keep up, recording stopped", e->path);
         close_take(e);
         e->state = AUD_ENGINE_IDLE;
         return -1;
       }
 
+      e->take_bytes += nbytes;
       e->frames += frames;
       publish_take(e, seg[s].data + done * frame_bytes, frames);
       done += frames;
@@ -330,7 +561,7 @@ static int write_period(aud_engine *e, size_t frames)
   size_t samples = frames * e->dev.channels;
   size_t nbytes = samples * e->wav_bytes;
 
-  if (wav_would_overflow(&e->wav, nbytes))
+  if (e->take_bytes + nbytes > e->take_limit)
   {
     set_error(e, "%s reached the 4 GB WAV limit, recording stopped", e->path);
     close_take(e);
@@ -343,14 +574,21 @@ static int write_period(aud_engine *e, size_t frames)
     aud_format_repack(e->out_buf, e->hw_buf, samples, e->dev.format);
   }
 
-  if (wav_write(&e->wav, e->out_buf, nbytes) != 0)
+  /*
+   * The period leaves here for the writer rather than for the file. What can
+   * fail at this point is the queue being full, which is a disk that has been
+   * stalled for ENGINE_WRITE_SECONDS; a write that fails on the far side of it
+   * comes back through write_failed instead.
+   */
+  if (queue_payload(e, e->out_buf, nbytes) != 0)
   {
-    set_error(e, "cannot write to %s: %s", e->path, strerror(errno));
+    set_error(e, "%s: the disk cannot keep up, recording stopped", e->path);
     close_take(e);
     e->state = AUD_ENGINE_IDLE;
     return -1;
   }
 
+  e->take_bytes += nbytes;
   e->frames += frames;
   publish_take(e, e->hw_buf, frames);
   return 0;
@@ -404,7 +642,14 @@ static void *capture_thread(void *arg)
      * hw_buf is what the device delivered, and out_buf may alias it anyway.
      */
     aud_format_to_mono(e->mono, e->hw_buf, (size_t)got, e->dev.channels, e->dev.format);
-    aud_ringbuf_write_overwrite(&e->visual, e->mono, (size_t)got);
+    /*
+     * What does not fit is dropped, and the ring is not emptied from here to
+     * make room for it: the read index belongs to the thread that draws, and a
+     * producer reaching for it would be racing that thread for it. See
+     * util/ringbuf.h. A full ring means nobody has drawn for a second, and the
+     * drain that follows the stall empties it in one go.
+     */
+    aud_ringbuf_write(&e->visual, e->mono, (size_t)got);
 
     sync_monitor(e);
     feed_monitor(e, (size_t)got);
@@ -413,6 +658,23 @@ static void *capture_thread(void *arg)
 
     e->peak = peak;
     e->xruns = xruns;
+    /*
+     * A write the writer thread could not make. Ending the take is done here
+     * rather than there so that every way one ends - the device going, the disk
+     * filling, the 4 GB limit - still ends it in the one place, under the one
+     * lock, with the file closed and its header patched over whatever did get
+     * written.
+     */
+    if (atomic_load_explicit(&e->write_failed, memory_order_acquire))
+    {
+      atomic_store_explicit(&e->write_failed, 0, memory_order_relaxed);
+      if (e->state == AUD_ENGINE_RECORDING || e->state == AUD_ENGINE_PAUSED)
+      {
+        set_error(e, "%s", e->write_error);
+        close_take(e);
+        e->state = AUD_ENGINE_IDLE;
+      }
+    }
     if (e->state == AUD_ENGINE_RECORDING)
     {
       if (peak >= AUD_CLIP_THRESHOLD)
@@ -457,6 +719,9 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   size_t hw_bytes;
   size_t period;
   size_t visual_slots;
+  size_t frame_bytes;
+  double queue_seconds;
+  size_t queue_bytes;
 
   if (cfg == NULL)
   {
@@ -474,6 +739,15 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   if (pthread_mutex_init(&e->lock, NULL) != 0)
   {
     aud_perror("cannot create the engine lock");
+    free(e);
+    return NULL;
+  }
+
+  if (pthread_mutex_init(&e->wlock, NULL) != 0 ||
+      pthread_cond_init(&e->wwake, NULL) != 0 || pthread_cond_init(&e->widle, NULL) != 0)
+  {
+    aud_perror("cannot create the take writer's lock");
+    pthread_mutex_destroy(&e->lock);
     free(e);
     return NULL;
   }
@@ -539,6 +813,38 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
     goto fail_rings;
   }
 
+  /*
+   * The write queue holds the pre-roll as well as the seconds of slack, because
+   * the pre-roll goes in whole at the start of a take: it is the one push that
+   * is not a period, and a queue that could not take it would fail the take at
+   * the moment it began.
+   */
+  frame_bytes = (size_t)e->dev.channels * e->wav_bytes;
+  queue_seconds = ENGINE_WRITE_SECONDS + (cfg->preroll > 0.0 ? cfg->preroll : 0.0);
+  queue_bytes = (size_t)(queue_seconds * (double)e->dev.rate) * frame_bytes;
+  if (queue_bytes < period * frame_bytes * 4)
+  {
+    queue_bytes = period * frame_bytes * 4;
+  }
+
+  if (aud_ringbuf_init_bytes(&e->wq, queue_bytes) != 0)
+  {
+    aud_error("cannot allocate the take's write queue");
+    goto fail_rings;
+  }
+
+  e->wq_buf_bytes = ENGINE_WRITE_CHUNK;
+  if (e->wq_buf_bytes < period * frame_bytes)
+  {
+    e->wq_buf_bytes = period * frame_bytes;
+  }
+  e->wq_buf = malloc(e->wq_buf_bytes);
+  if (e->wq_buf == NULL)
+  {
+    aud_error("cannot allocate the take's write buffer");
+    goto fail_rings;
+  }
+
   if (cfg->preroll > 0.0)
   {
     size_t frames = aud_preroll_frames_for(cfg->preroll, e->dev.rate);
@@ -561,19 +867,33 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   atomic_init(&e->monitor_want, 0);
   atomic_init(&e->monitor_gain, ENGINE_GAIN_SCALE);
   atomic_init(&e->input_gain, ENGINE_GAIN_SCALE); /* the device's own level */
+  atomic_init(&e->write_failed, 0);
+
+  /* before the capture thread, so there is somewhere for a period to go the
+   * moment one can arrive */
+  if (pthread_create(&e->writer, NULL, writer_thread, e) != 0)
+  {
+    aud_perror("cannot start the take writer");
+    goto fail_rings;
+  }
+  e->writer_started = 1;
 
   if (pthread_create(&e->thread, NULL, capture_thread, e) != 0)
   {
     aud_perror("cannot start the capture thread");
-    goto fail_rings;
+    goto fail_writer;
   }
   e->thread_started = 1;
 
   return e;
 
+fail_writer:
+  stop_writer(e);
 fail_rings:
   aud_ringbuf_free(&e->visual);
   aud_ringbuf_free(&e->take);
+  aud_ringbuf_free(&e->wq);
+  free(e->wq_buf);
   free(e->take_buf);
   aud_preroll_free(&e->preroll);
 fail_buffers:
@@ -587,6 +907,9 @@ fail_buffers:
 fail_device:
   aud_device_close(&e->dev);
 fail_lock:
+  pthread_cond_destroy(&e->widle);
+  pthread_cond_destroy(&e->wwake);
+  pthread_mutex_destroy(&e->wlock);
   pthread_mutex_destroy(&e->lock);
   free(e);
   return NULL;
@@ -605,14 +928,23 @@ void aud_engine_destroy(aud_engine *e)
     pthread_join(e->thread, NULL);
   }
 
-  /* the thread is gone, so the lock is uncontended, but keep the discipline */
+  /*
+   * The capture thread is gone, so the lock is uncontended, but keep the
+   * discipline. The writer is still running at this point on purpose: closing
+   * the take drains the queue through it, so a window shut mid-take keeps every
+   * period that had been captured rather than the ones that had reached stdio.
+   */
   pthread_mutex_lock(&e->lock);
   close_take(e);
   pthread_mutex_unlock(&e->lock);
 
+  stop_writer(e);
+
   aud_monitor_close(e->monitor);
   aud_ringbuf_free(&e->visual);
   aud_ringbuf_free(&e->take);
+  aud_ringbuf_free(&e->wq);
+  free(e->wq_buf);
   free(e->take_buf);
   aud_preroll_free(&e->preroll);
   aud_device_close(&e->dev);
@@ -625,6 +957,9 @@ void aud_engine_destroy(aud_engine *e)
   free(e->mono);
   free(e->inter);
 
+  pthread_cond_destroy(&e->widle);
+  pthread_cond_destroy(&e->wwake);
+  pthread_mutex_destroy(&e->wlock);
   pthread_mutex_destroy(&e->lock);
   free(e);
 }
@@ -706,6 +1041,7 @@ int aud_engine_start(aud_engine *e, const char *path, int overwrite)
   e->take_open = 1;
   aud_ringbuf_reset(&e->take);
   atomic_store_explicit(&e->take_dropped, 0, memory_order_relaxed);
+  take_queue_reset(e);
   e->frames = 0;
   e->clipped = 0;
   e->xruns = 0;
@@ -767,6 +1103,7 @@ int aud_engine_continue(aud_engine *e, const char *path)
   e->take_open = 1;
   aud_ringbuf_reset(&e->take);
   atomic_store_explicit(&e->take_dropped, 0, memory_order_relaxed);
+  take_queue_reset(e);
   /*
    * `frames` counts this pass rather than the file, because it is what the
    * status line and the growing clip are drawn from and both are about the
