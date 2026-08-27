@@ -132,6 +132,57 @@ jobs:
                SANITIZE="-fsanitize=address,undefined -fno-sanitize-recover=all" \
                all test
 
+  # ThreadSanitizer, which is a separate job because it cannot be combined with
+  # the two above - one shadow memory implementation to a process.
+  #
+  # It is here because the desktop app captures on one thread, writes the take
+  # to disk on a second and draws on a third, and hands work between them
+  # through lock-free rings rather than mutexes. That handoff is correct only
+  # if every index carries the right acquire/release ordering, and neither ASan
+  # nor UBSan can see an ordering mistake: a race is not an invalid access, so
+  # both come back clean on code that tears a take under load. This is the only
+  # job that would fail.
+  #
+  # What it has to run against today is the ring's own stress test, which
+  # drives a producer and a consumer at one ring for three hundred thousand
+  # slots - written for this and until now never run under it. The engine's own
+  # threads cannot be reached from a test yet, because it opens a device
+  # itself; when there is a synthetic backend to give it, this job covers them
+  # with no change here.
+  threads:
+    name: TSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install ALSA headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev
+
+      # TSan maps its shadow memory at fixed addresses, and a kernel handing
+      # out 32 bits of mmap entropy - which is what recent ones and this runner
+      # do - puts a library where that shadow has to go. Every binary then dies
+      # on "unexpected memory mapping" before reaching main(), which reads like
+      # a broken build rather than a kernel that moved. setarch -R turns
+      # randomisation off for make and everything below it, which is inherited
+      # through to the test binaries. `sudo sysctl -w vm.mmap_rnd_bits=28` is
+      # the other way; this one needs no root, so it is also what a contributor
+      # can run locally.
+      #
+      # halt_on_error stops at the first race rather than listing them all. The
+      # runtime already exits 66 when it reports one, and `make test` fails on
+      # any non-zero exit, so a race fails this job either way - being explicit
+      # only means the log ends at the report worth reading.
+      - name: Build and test with ThreadSanitizer
+        env:
+          TSAN_OPTIONS: halt_on_error=1
+        run: |
+          setarch -R make STRICT=1 \
+               OPTFLAGS="-O1 -g" \
+               SANITIZE="-fsanitize=thread" \
+               all test
+
   # The other jobs never see src/gui: they do not check out the raylib
   # submodule, so `make` quietly builds the CLI alone. This is what stops the
   # desktop app rotting unnoticed - and it exercises the submodule and the

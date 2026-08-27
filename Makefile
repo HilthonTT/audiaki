@@ -4,6 +4,7 @@
 # Common targets:
 #   make            build build/audiaki
 #   make debug      build with -O0, debug info and ASan/UBSan
+#   make tsan       build and run the unit tests under ThreadSanitizer
 #   make test       build and run the unit tests (no audio system required)
 #   make check      tests, a clang-format style check and the completions
 #   make install    install into $(PREFIX) (default /usr/local)
@@ -298,7 +299,7 @@ DEPS      := $(OBJS:.o=.d) $(GUI_OBJS:.o=.d) $(GUI_SHELL_OBJS:.o=.d) \
              $(GUI_PLUG_OBJS:.o=.d) $(TEST_BINS:=.d) $(CLI_TEST_BINS:=.d) \
              $(GUI_TEST_BINS:=.d)
 
-.PHONY: all gui gui-skipped release debug test check check-completions format \
+.PHONY: all gui gui-skipped release debug tsan test check check-completions format \
         format-check fuzz fuzz-replay fuzz-run install uninstall clean \
         clean-raylib help
 
@@ -319,6 +320,33 @@ release: clean
 debug:
 	$(MAKE) OPTFLAGS="-O0 -g3 -fno-omit-frame-pointer" \
 	        SANITIZE="-fsanitize=address,undefined -fno-sanitize-recover=all" all
+
+# ThreadSanitizer over the test suite. Apart from `make debug` because TSan and
+# ASan cannot share a process - one shadow memory implementation between them -
+# and a target of its own because two things about running it are not
+# guessable, and without either the failure looks like a broken build.
+#
+# The launcher is the first. TSan wants its shadow memory at fixed addresses,
+# and a kernel handing out 32 bits of mmap entropy - which recent Linux does -
+# puts a library where that shadow has to go, so every binary dies with
+# "unexpected memory mapping" before reaching main(). setarch -R turns
+# randomisation off for the run and the test binaries inherit it.
+# `sudo sysctl -w vm.mmap_rnd_bits=28` is the other way and needs root, so this
+# is the one to reach for. macOS has neither the problem nor setarch, hence the
+# empty launcher there.
+#
+# halt_on_error is the second: it stops at the first race rather than printing
+# every one queued behind it. The runtime exits 66 having reported one either
+# way, which is what fails the run.
+ifeq ($(UNAME_S),Darwin)
+TSAN_LAUNCH :=
+else
+TSAN_LAUNCH := setarch -R
+endif
+
+tsan:
+	TSAN_OPTIONS=halt_on_error=1 $(TSAN_LAUNCH) \
+	  $(MAKE) OPTFLAGS="-O1 -g" SANITIZE="-fsanitize=thread" test
 
 $(BIN): $(OBJS) | $(BUILD_DIR)
 	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LDLIBS)
@@ -636,8 +664,8 @@ clean-raylib:
 
 help:
 	@echo "$(PROJECT) $(VERSION)"
-	@echo "targets: all gui debug release test check check-completions format"
-	@echo "         format-check install uninstall clean clean-raylib"
+	@echo "targets: all gui debug tsan release test check check-completions"
+	@echo "         format format-check install uninstall clean clean-raylib"
 	@echo "vars:    PREFIX=$(PREFIX) CC=$(CC) STRICT=0|1 BUILD_DIR=$(BUILD_DIR)"
 	@echo "         HOTRELOAD=1 builds $(GUI_BIN) with F5 reloading its own code"
 	@echo "gui:      $(GUI_STATUS)"

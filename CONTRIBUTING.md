@@ -31,6 +31,7 @@ Useful targets:
 | `make gui` | Build only the desktop app, failing loudly if it cannot |
 | `make test` | Run the unit tests (needs no ALSA device, or even ALSA headers) |
 | `make debug` | Build with `-O0`, AddressSanitizer and UBSan |
+| `make tsan` | Run the unit tests under ThreadSanitizer, for the lock-free rings |
 | `make fuzz-replay` | Every fuzz corpus entry through its parser, sanitized |
 | `make fuzz-run` | Go looking for new ones; needs clang. See `fuzz/README.md` |
 | `make check` | `test` and `fuzz-replay`, plus a `clang-format` check |
