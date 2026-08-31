@@ -639,6 +639,240 @@ static char *read_file(const char *path, const char **why)
   return text;
 }
 
+/*
+ * The next line of `*at`, terminated in place, with `*at` moved past it.
+ * A CRLF file opens the same as a LF one, which someone will produce.
+ */
+static char *next_line(char **at)
+{
+  char *line = *at;
+  char *end = strchr(line, '\n');
+
+  if (end == NULL)
+  {
+    end = line + strlen(line);
+    *at = end;
+  }
+  else
+  {
+    *end = '\0';
+    *at = end + 1;
+  }
+
+  if (end > line && end[-1] == '\r')
+  {
+    end[-1] = '\0';
+  }
+
+  return line;
+}
+
+/* What one keyword came to. */
+typedef enum
+{
+  LINE_TAKEN = 0, /* the keyword belonged to this set */
+  LINE_OTHER,     /* it did not; the caller tries the next set */
+  LINE_BAD,       /* the project is refused, and `why` has said so */
+} line_result;
+
+/* The lines that describe the session rather than a track on it. */
+static line_result read_doc_line(aud_doc *d, const char *word, char *args,
+                                 loaded_sources *ls, unsigned *rate, const char **why)
+{
+  if (strcmp(word, "rate") == 0)
+  {
+    int value = 0;
+
+    if (take_int(args, &value, 1, 768000) != 0)
+    {
+      say(why, "that project has no usable sample rate");
+      return LINE_BAD;
+    }
+    *rate = (unsigned)value;
+    d->rate = *rate;
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "tempo") == 0)
+  {
+    double bpm = 0.0;
+    uint64_t beats = AUD_CLICK_DEFAULT_BEATS;
+    char *rest = args;
+
+    /*
+     * "tempo BPM BEATS", with the beats optional: a line typed by hand is
+     * likely to say only the number anybody means by a tempo, and four to the
+     * bar is what that means. Out-of-range values are clamped by
+     * aud_doc_set_tempo() rather than refused - a project should still open
+     * when someone has put 5000 in it.
+     */
+    if (take_double(args, &bpm) == 0)
+    {
+      while (*rest != '\0' && *rest != ' ' && *rest != '\t')
+      {
+        rest++;
+      }
+      (void)take_u64(&rest, &beats);
+      aud_doc_set_tempo(d, bpm, (unsigned)beats);
+    }
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "grid") == 0)
+  {
+    uint64_t div = AUD_DOC_GRID_BEAT;
+    char *rest = args;
+
+    /*
+     * Absent in a project written before there was anything but beats to snap
+     * to, and aud_doc_init() has already put beats there - so an old project
+     * opens on the grid it was drawn with.
+     */
+    if (take_u64(&rest, &div) == 0)
+    {
+      aud_doc_set_grid(d, (unsigned)div);
+    }
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "source") == 0)
+  {
+    if (ls->count == AUD_PROJECT_MAX_SOURCES ||
+        (size_t)snprintf(ls->path[ls->count], AUD_PATH_MAX, "%s", args) >= AUD_PATH_MAX)
+    {
+      say(why, "that project refers to more files than one can hold");
+      return LINE_BAD;
+    }
+    ls->count++;
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "marker") == 0)
+  {
+    uint64_t frame = 0;
+
+    /*
+     * "marker FRAME NAME", the name being the rest of the line and allowed to
+     * be empty - a marker that is only a place is a marker. A line whose frame
+     * will not parse is stepped over rather than refused: a marker is a label,
+     * and losing one is not losing audio. A file asking for more than can be
+     * held stops taking them at that point, which aud_doc_mark() says by
+     * refusing.
+     */
+    if (take_u64(&args, &frame) == 0)
+    {
+      while (*args == ' ' || *args == '\t')
+      {
+        args++;
+      }
+      (void)aud_doc_mark(d, frame, args);
+    }
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "cursor") == 0)
+  {
+    uint64_t value = 0;
+
+    if (take_u64(&args, &value) == 0)
+    {
+      d->cursor = value;
+    }
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "selection") == 0)
+  {
+    uint64_t from = 0;
+    uint64_t to = 0;
+
+    if (take_u64(&args, &from) == 0 && take_u64(&args, &to) == 0 && to >= from)
+    {
+      d->sel_start = from;
+      d->sel_end = to;
+    }
+    return LINE_TAKEN;
+  }
+
+  return LINE_OTHER;
+}
+
+/*
+ * The lines that describe the track most recently opened. An unknown keyword
+ * comes back LINE_OTHER for the caller to step over: a file written by a later
+ * version may well carry one.
+ */
+static line_result read_track_line(aud_track *track, const char *word, char *args,
+                                   loaded_sources *ls, const char *dir, unsigned rate,
+                                   const char **why)
+{
+  if (strcmp(word, "name") == 0)
+  {
+    snprintf(track->name, sizeof(track->name), "%s", args);
+  }
+  else if (strcmp(word, "channels") == 0)
+  {
+    int value = 0;
+
+    if (take_int(args, &value, 1, 64) != 0)
+    {
+      say(why, "a track in that project has an impossible channel count");
+      return LINE_BAD;
+    }
+    track->channels = (unsigned)value;
+  }
+  else if (strcmp(word, "gain") == 0)
+  {
+    /* held to the range the fader offers, so a hand-edited file cannot ask
+     * for a level no control in the window could take back */
+    if (take_float(args, &track->gain) == 0)
+    {
+      track->gain = clampf(track->gain, 0.0f, 2.0f);
+    }
+  }
+  else if (strcmp(word, "pan") == 0)
+  {
+    if (take_float(args, &track->pan) == 0)
+    {
+      track->pan = clampf(track->pan, -1.0f, 1.0f);
+    }
+  }
+  else if (strcmp(word, "muted") == 0)
+  {
+    take_int(args, &track->muted, 0, 1);
+  }
+  else if (strcmp(word, "soloed") == 0)
+  {
+    take_int(args, &track->soloed, 0, 1);
+  }
+  else if (strcmp(word, "collapsed") == 0)
+  {
+    take_int(args, &track->collapsed, 0, 1);
+  }
+  else if (strcmp(word, "height") == 0)
+  {
+    take_int(args, &track->height, AUD_TRACK_HEIGHT_MIN, AUD_TRACK_HEIGHT_MAX);
+  }
+  else if (strcmp(word, "clip") == 0)
+  {
+    if (rate == 0)
+    {
+      say(why, "that project places audio before saying what rate it is at");
+      return LINE_BAD;
+    }
+    if (read_clip(track, args, ls, dir, rate, why) != 0)
+    {
+      return LINE_BAD;
+    }
+  }
+  else
+  {
+    return LINE_OTHER;
+  }
+
+  return LINE_TAKEN;
+}
+
 int aud_project_load(aud_doc *d, const char *path, const char **why)
 {
   aud_doc built;
@@ -677,29 +911,10 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
 
   while (*at != '\0')
   {
-    char *line = at;
-    char *end = strchr(line, '\n');
-    char *word;
+    char *line = next_line(&at);
     char *args;
+    char *word = split_word(line, &args);
 
-    if (end == NULL)
-    {
-      end = line + strlen(line);
-      at = end;
-    }
-    else
-    {
-      *end = '\0';
-      at = end + 1;
-    }
-
-    /* a CRLF file opens the same as a LF one, which someone will produce */
-    if (end > line && end[-1] == '\r')
-    {
-      end[-1] = '\0';
-    }
-
-    word = split_word(line, &args);
     if (*word == '\0' || *word == '#')
     {
       continue;
@@ -719,121 +934,6 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
       continue;
     }
 
-    if (strcmp(word, "rate") == 0)
-    {
-      int value = 0;
-
-      if (take_int(args, &value, 1, 768000) != 0)
-      {
-        say(why, "that project has no usable sample rate");
-        goto out;
-      }
-      rate = (unsigned)value;
-      built.rate = rate;
-      continue;
-    }
-
-    if (strcmp(word, "tempo") == 0)
-    {
-      double bpm = 0.0;
-      uint64_t beats = AUD_CLICK_DEFAULT_BEATS;
-      char *rest = args;
-
-      /*
-       * "tempo BPM BEATS", with the beats optional: a line typed by hand is
-       * likely to say only the number anybody means by a tempo, and four to
-       * the bar is what that means. Out-of-range values are clamped by
-       * aud_doc_set_tempo() rather than refused - a project should still open
-       * when someone has put 5000 in it.
-       */
-      if (take_double(args, &bpm) == 0)
-      {
-        while (*rest != '\0' && *rest != ' ' && *rest != '\t')
-        {
-          rest++;
-        }
-        (void)take_u64(&rest, &beats);
-        aud_doc_set_tempo(&built, bpm, (unsigned)beats);
-      }
-      continue;
-    }
-
-    if (strcmp(word, "grid") == 0)
-    {
-      uint64_t div = AUD_DOC_GRID_BEAT;
-      char *rest = args;
-
-      /*
-       * Absent in a project written before there was anything but beats to
-       * snap to, and aud_doc_init() has already put beats there - so an old
-       * project opens on the grid it was drawn with.
-       */
-      if (take_u64(&rest, &div) == 0)
-      {
-        aud_doc_set_grid(&built, (unsigned)div);
-      }
-      continue;
-    }
-
-    if (strcmp(word, "source") == 0)
-    {
-      if (ls.count == AUD_PROJECT_MAX_SOURCES ||
-          (size_t)snprintf(ls.path[ls.count], AUD_PATH_MAX, "%s", args) >= AUD_PATH_MAX)
-      {
-        say(why, "that project refers to more files than one can hold");
-        goto out;
-      }
-      ls.count++;
-      continue;
-    }
-
-    if (strcmp(word, "marker") == 0)
-    {
-      uint64_t frame = 0;
-
-      /*
-       * "marker FRAME NAME", the name being the rest of the line and allowed
-       * to be empty - a marker that is only a place is a marker. A line whose
-       * frame will not parse is stepped over rather than refused: a marker is
-       * a label, and losing one is not losing audio. A file asking for more
-       * than can be held stops taking them at that point, which
-       * aud_doc_mark() says by refusing.
-       */
-      if (take_u64(&args, &frame) == 0)
-      {
-        while (*args == ' ' || *args == '\t')
-        {
-          args++;
-        }
-        (void)aud_doc_mark(&built, frame, args);
-      }
-      continue;
-    }
-
-    if (strcmp(word, "cursor") == 0)
-    {
-      uint64_t value = 0;
-
-      if (take_u64(&args, &value) == 0)
-      {
-        built.cursor = value;
-      }
-      continue;
-    }
-
-    if (strcmp(word, "selection") == 0)
-    {
-      uint64_t from = 0;
-      uint64_t to = 0;
-
-      if (take_u64(&args, &from) == 0 && take_u64(&args, &to) == 0 && to >= from)
-      {
-        built.sel_start = from;
-        built.sel_end = to;
-      }
-      continue;
-    }
-
     if (strcmp(word, "track") == 0)
     {
       track = aud_doc_add_track(&built, "Track", 1);
@@ -843,6 +943,16 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
         goto out;
       }
       continue;
+    }
+
+    switch (read_doc_line(&built, word, args, &ls, &rate, why))
+    {
+    case LINE_BAD:
+      goto out;
+    case LINE_TAKEN:
+      continue;
+    case LINE_OTHER:
+      break;
     }
 
     /*
@@ -866,66 +976,10 @@ int aud_project_load(aud_doc *d, const char *path, const char **why)
       continue;
     }
 
-    if (strcmp(word, "name") == 0)
+    if (read_track_line(track, word, args, &ls, dir, rate, why) == LINE_BAD)
     {
-      snprintf(track->name, sizeof(track->name), "%s", args);
+      goto out;
     }
-    else if (strcmp(word, "channels") == 0)
-    {
-      int value = 0;
-
-      if (take_int(args, &value, 1, 64) != 0)
-      {
-        say(why, "a track in that project has an impossible channel count");
-        goto out;
-      }
-      track->channels = (unsigned)value;
-    }
-    else if (strcmp(word, "gain") == 0)
-    {
-      /* held to the range the fader offers, so a hand-edited file cannot ask
-       * for a level no control in the window could take back */
-      if (take_float(args, &track->gain) == 0)
-      {
-        track->gain = clampf(track->gain, 0.0f, 2.0f);
-      }
-    }
-    else if (strcmp(word, "pan") == 0)
-    {
-      if (take_float(args, &track->pan) == 0)
-      {
-        track->pan = clampf(track->pan, -1.0f, 1.0f);
-      }
-    }
-    else if (strcmp(word, "muted") == 0)
-    {
-      take_int(args, &track->muted, 0, 1);
-    }
-    else if (strcmp(word, "soloed") == 0)
-    {
-      take_int(args, &track->soloed, 0, 1);
-    }
-    else if (strcmp(word, "collapsed") == 0)
-    {
-      take_int(args, &track->collapsed, 0, 1);
-    }
-    else if (strcmp(word, "height") == 0)
-    {
-      take_int(args, &track->height, AUD_TRACK_HEIGHT_MIN, AUD_TRACK_HEIGHT_MAX);
-    }
-    else if (strcmp(word, "clip") == 0)
-    {
-      if (rate == 0)
-      {
-        say(why, "that project places audio before saying what rate it is at");
-        goto out;
-      }
-      if (read_clip(track, args, &ls, dir, rate, why) != 0)
-      {
-        goto out;
-      }
-    }
-    /* anything else is from a later version of the format; step over it */
   }
 
   if (!seen_header)

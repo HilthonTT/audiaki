@@ -239,21 +239,37 @@ static void bad_value(const char *option, const char *value, const char *expecte
   aud_error("invalid value '%s' for %s (expected %s)", value, option, expected);
 }
 
-int cli_parse(int argc, char **argv, aud_options *opts)
+/*
+ * Which options were actually typed, as opposed to defaulted or read out of the
+ * config file. The checks after the scan need the difference: the config
+ * applies to every invocation, so it cannot be what makes one rejected for
+ * asking about takes on a command that does not make any.
+ */
+typedef struct
+{
+  int click_shape;    /* --click-beats, --click-subdiv, --click-gain or --latency */
+  int monitor_device; /* --monitor-device */
+  int latency;        /* --latency */
+  int dir;            /* --dir */
+  int prompt;         /* --prompt or --no-prompt */
+} cli_given;
+
+/* What reading argv leaves for cli_parse to do about it. */
+typedef enum
+{
+  SCAN_MORE = 0, /* argv is read; the checks after it still apply */
+  SCAN_SETTLED,  /* --help or --version: the command stands on its own */
+  SCAN_BAD,      /* refused, having already said why */
+} scan_result;
+
+/*
+ * Read argv into `opts`, recording in `given` which of the options that the
+ * checks afterwards ask about were typed.
+ */
+static scan_result scan_options(int argc, char **argv, aud_options *opts,
+                                cli_given *given)
 {
   int opt;
-  int click_shape = 0;          /* --click-beats or --click-gain was typed */
-  int monitor_device_given = 0; /* --monitor-device was typed */
-  int latency_given = 0;        /* --latency was typed */
-  /*
-   * Typed, as opposed to read out of the config file. The config applies to
-   * every invocation, so it cannot be what makes one rejected for asking about
-   * takes on a command that does not make any.
-   */
-  int dir_given = 0;
-  int prompt_given = 0;
-
-  cli_defaults(opts);
 
   /*
    * Restart getopt's scan. It keeps where it got to in a global, and this is a
@@ -281,14 +297,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_uint(optarg, AUD_RATE_MIN, AUD_RATE_MAX, &opts->rate) != 0)
       {
         bad_value("--rate", optarg, "a sample rate in Hz");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 'c':
       if (parse_uint(optarg, AUD_CHANNELS_MIN, AUD_CHANNELS_MAX, &opts->channels) != 0)
       {
         bad_value("--channels", optarg, "1..64");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_CHANNEL:
@@ -306,7 +322,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       else if (parse_uint(optarg, 1u, AUD_CHANNELS_MAX, &opts->channel) != 0)
       {
         bad_value("--channel", optarg, "a channel number counting from 1, or \"mix\"");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 'f':
@@ -314,7 +330,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (opts->format == AUD_FORMAT_UNKNOWN)
       {
         bad_value("--format", optarg, "s16_le, s24_3le, s24_le or s32_le");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 't':
@@ -322,21 +338,21 @@ int cli_parse(int argc, char **argv, aud_options *opts)
           opts->duration > DURATION_MAX)
       {
         bad_value("--duration", optarg, "SS, MM:SS or HH:MM:SS");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 'p':
       if (parse_uint(optarg, PERIOD_MIN, PERIOD_MAX, &opts->period_frames) != 0)
       {
         bad_value("--period", optarg, "32..1048576 frames");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 'n':
       if (parse_uint(optarg, PERIODS_MIN, PERIODS_MAX, &opts->periods) != 0)
       {
         bad_value("--periods", optarg, "2..64");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case 'o':
@@ -351,17 +367,17 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (aud_path_expand(opts->take_dir, sizeof(opts->take_dir), optarg) != 0)
       {
         bad_value("--dir", optarg, "a folder to keep takes in");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
-      dir_given = 1;
+      given->dir = 1;
       break;
     case OPT_PROMPT:
       opts->prompt = AUD_PROMPT_ALWAYS;
-      prompt_given = 1;
+      given->prompt = 1;
       break;
     case OPT_NO_PROMPT:
       opts->prompt = AUD_PROMPT_NEVER;
-      prompt_given = 1;
+      given->prompt = 1;
       break;
     case 'y':
       opts->overwrite = 1;
@@ -370,7 +386,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (strlen(optarg) > AUD_META_NOTE_MAX)
       {
         aud_error("--note is limited to %u characters", AUD_META_NOTE_MAX);
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       opts->note = optarg;
       break;
@@ -393,14 +409,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
      */
     case OPT_MONITOR_DEVICE:
       opts->monitor_device = optarg;
-      monitor_device_given = 1;
+      given->monitor_device = 1;
       break;
     case OPT_MONITOR_GAIN:
       if (parse_double(optarg, MONITOR_GAIN_MIN, MONITOR_GAIN_MAX, &opts->monitor_gain) !=
           0)
       {
         bad_value("--monitor-gain", optarg, "0.0 to 2.0, where 1.0 is unchanged");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       opts->monitor = 1;
       break;
@@ -415,7 +431,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         bad_value("--gain", optarg,
                   "0.0 to 16.0, where 1.0 is unchanged and 16.0 "
                   "is +24 dB");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_CLICK:
@@ -423,7 +439,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
           0)
       {
         bad_value("--click", optarg, "a tempo in BPM, 20 to 300");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     /*
@@ -435,35 +451,35 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_uint(optarg, 0u, AUD_CLICK_BEATS_MAX, &opts->click_beats) != 0)
       {
         bad_value("--click-beats", optarg, "beats to a bar, 0..32");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
-      click_shape = 1;
+      given->click_shape = 1;
       break;
     case OPT_CLICK_SUBDIV:
       if (parse_uint(optarg, 1u, AUD_CLICK_SUBDIV_MAX, &opts->click_subdiv) != 0)
       {
         bad_value("--click-subdiv", optarg, "ticks to a beat, 1..8");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
-      click_shape = 1;
+      given->click_shape = 1;
       break;
     case OPT_CLICK_GAIN:
       if (parse_double(optarg, AUD_CLICK_GAIN_MIN, AUD_CLICK_GAIN_MAX,
                        &opts->click_gain) != 0)
       {
         bad_value("--click-gain", optarg, "0.0 to 2.0, where 1.0 is full scale");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
-      click_shape = 1;
+      given->click_shape = 1;
       break;
     case OPT_LATENCY:
       if (parse_double(optarg, 0.0, AUD_LATENCY_MAX_MS, &opts->latency_ms) != 0)
       {
         bad_value("--latency", optarg, "a round trip in milliseconds, 0 to 500");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
-      click_shape = 1;
-      latency_given = 1;
+      given->click_shape = 1;
+      given->latency = 1;
       break;
     case 'q':
       opts->log_level = AUD_LOG_QUIET;
@@ -487,14 +503,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
                      &opts->viz_height) != 0)
       {
         bad_value("--size", optarg, "WxH in 64..7680, or 720p/1080p/1440p/2160p");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_FPS:
       if (parse_uint(optarg, VIZ_FPS_MIN, VIZ_FPS_MAX, &opts->viz_fps) != 0)
       {
         bad_value("--fps", optarg, "1..240");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_BARS:
@@ -502,14 +518,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
                      &opts->viz_bars) != 0)
       {
         bad_value("--bars", optarg, "4..512");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_STYLE:
       if (aud_visualize_style_from_name(optarg, &opts->viz_style) != 0)
       {
         bad_value("--style", optarg, "bars, scope or waveform");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_INFO:
@@ -548,7 +564,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
            opts->export_bits != 32u))
       {
         bad_value("--bits", optarg, "16, 24 or 32");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_STEMS:
@@ -562,7 +578,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
           opts->preroll > AUD_PREROLL_MAX_SECONDS)
       {
         bad_value("--preroll", optarg, "seconds, up to 300");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_TUNE:
@@ -575,7 +591,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       if (parse_double(optarg, AUD_TUNER_A4_MIN, AUD_TUNER_A4_MAX, &opts->a4_hz) != 0)
       {
         bad_value("--a4", optarg, "a reference pitch in Hz, 390 to 500");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_TUNE_MIN:
@@ -583,7 +599,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
                        &opts->tune_min_hz) != 0)
       {
         bad_value("--tune-min", optarg, "the lowest pitch to look for, in Hz");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_TUNE_MAX:
@@ -591,14 +607,14 @@ int cli_parse(int argc, char **argv, aud_options *opts)
                        &opts->tune_max_hz) != 0)
       {
         bad_value("--tune-max", optarg, "the highest pitch to look for, in Hz");
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_BACKEND:
       if (aud_backend_parse(optarg, &opts->backend) != 0)
       {
         bad_value("--backend", optarg, aud_backend_list());
-        return CLI_EXIT_USAGE;
+        return SCAN_BAD;
       }
       break;
     case OPT_JSON:
@@ -612,13 +628,13 @@ int cli_parse(int argc, char **argv, aud_options *opts)
       break;
     case 'h':
       opts->command = AUD_CMD_HELP;
-      return 0;
+      return SCAN_SETTLED;
     case 'V':
       opts->command = AUD_CMD_VERSION;
-      return 0;
+      return SCAN_SETTLED;
     case ':':
       aud_error("option '%s' requires an argument", argv[optind - 1]);
-      return CLI_EXIT_USAGE;
+      return SCAN_BAD;
     case '?':
     default:
       if (optopt != 0)
@@ -630,26 +646,43 @@ int cli_parse(int argc, char **argv, aud_options *opts)
         aud_error("unknown option '%s'", argv[optind - 1]);
       }
       aud_info("run '" AUDIAKI_NAME " --help' for usage");
-      return CLI_EXIT_USAGE;
+      return SCAN_BAD;
     }
   }
 
-  /*
-   * See OPT_MONITOR_DEVICE: naming the output means "play the input through
-   * this one" until a metronome gives the output something else to carry, and
-   * then it means "play the click through this one" and leaves the input where
-   * it was. Either way the flag does something, which is the point.
-   *
-   * --calibrate is the third of those: the output is half of what is being
-   * measured, so naming it is the whole use of the flag there, and turning
-   * monitoring on as well would feed the input back into the measurement.
-   */
-  if (monitor_device_given && opts->click_bpm <= 0.0 &&
+  return SCAN_MORE;
+}
+
+/*
+ * See OPT_MONITOR_DEVICE: naming the output means "play the input through this
+ * one" until a metronome gives the output something else to carry, and then it
+ * means "play the click through this one" and leaves the input where it was.
+ * Either way the flag does something, which is the point.
+ *
+ * --calibrate is the third of those: the output is half of what is being
+ * measured, so naming it is the whole use of the flag there, and turning
+ * monitoring on as well would feed the input back into the measurement.
+ */
+static void imply_monitor(aud_options *opts, const cli_given *given)
+{
+  if (given->monitor_device && opts->click_bpm <= 0.0 &&
       opts->command != AUD_CMD_CALIBRATE)
   {
     opts->monitor = 1;
   }
+}
 
+/*
+ * What the options say about each other, in the order the answers are worth
+ * hearing: an invocation that trips two of these rules is told about the one
+ * that names what was typed.
+ *
+ * Every rule here exists because accepting the invocation would have done
+ * something quietly other than what was asked. Returns 0, or CLI_EXIT_USAGE
+ * having said why.
+ */
+static int check_options(const aud_options *opts, const cli_given *given)
+{
   /*
    * --json describes a report, not a recording. Silently ignoring it on a
    * command that has nothing to serialise would let a script believe it was
@@ -674,7 +707,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * writes a file and could plausibly be thought to honour --dir; it does not,
    * and -o is how that one is placed.
    */
-  if (dir_given && opts->command != AUD_CMD_RECORD)
+  if (given->dir && opts->command != AUD_CMD_RECORD)
   {
     aud_error("--dir only applies when recording");
     return CLI_EXIT_USAGE;
@@ -685,7 +718,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * apply wherever there is a question. Recording asks where to keep the take;
    * --calibrate asks whether to write what it measured to the config file.
    */
-  if (prompt_given && opts->command != AUD_CMD_RECORD &&
+  if (given->prompt && opts->command != AUD_CMD_RECORD &&
       opts->command != AUD_CMD_CALIBRATE)
   {
     aud_error("--prompt and --no-prompt only apply when recording or calibrating");
@@ -698,7 +731,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * number --calibrate exists to produce, so being given it is a contradiction
    * rather than a spare option.
    */
-  if (latency_given && opts->command == AUD_CMD_CALIBRATE)
+  if (given->latency && opts->command == AUD_CMD_CALIBRATE)
   {
     aud_error("--calibrate measures the round trip; --latency is what it measures");
     return CLI_EXIT_USAGE;
@@ -782,7 +815,7 @@ int cli_parse(int argc, char **argv, aud_options *opts)
    * is move the click off the beat, and it has to be named here or the message
    * lists three options none of which is the one that was typed.
    */
-  if (click_shape && opts->click_bpm <= 0.0)
+  if (given->click_shape && opts->click_bpm <= 0.0)
   {
     aud_error("--click-beats, --click-subdiv, --click-gain and --latency shape a "
               "metronome; --click sets its tempo and turns it on");
@@ -808,6 +841,16 @@ int cli_parse(int argc, char **argv, aud_options *opts)
     return CLI_EXIT_USAGE;
   }
 
+  return 0;
+}
+
+/*
+ * What is left on the command line once the options are read. Every command
+ * has its own answer, because they disagree about how many files they take and
+ * about which end of the line names them.
+ */
+static int check_arguments(int argc, char **argv, aud_options *opts)
+{
   /*
    * --tune writes nothing, so an output file passed with it is either a
    * mistyped recording or a file the user expects to be created. Neither is
@@ -955,4 +998,32 @@ int cli_parse(int argc, char **argv, aud_options *opts)
   }
 
   return 0;
+}
+
+int cli_parse(int argc, char **argv, aud_options *opts)
+{
+  cli_given given = {0, 0, 0, 0, 0};
+  int rc;
+
+  cli_defaults(opts);
+
+  switch (scan_options(argc, argv, opts, &given))
+  {
+  case SCAN_SETTLED:
+    return 0;
+  case SCAN_BAD:
+    return CLI_EXIT_USAGE;
+  case SCAN_MORE:
+    break;
+  }
+
+  imply_monitor(opts, &given);
+
+  rc = check_options(opts, &given);
+  if (rc != 0)
+  {
+    return rc;
+  }
+
+  return check_arguments(argc, argv, opts);
 }

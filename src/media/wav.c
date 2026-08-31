@@ -417,18 +417,268 @@ static int read_exact(FILE *f, void *buf, size_t n)
   return fread(buf, 1, n, f) == n ? 0 : -1;
 }
 
+/*
+ * What the chunk walk has found so far.
+ *
+ * Collected rather than settled where each chunk is read, because two of them
+ * describe each other: a data chunk of 0xFFFFFFFF means "my real length is in
+ * the ds64 above me", and a fmt chunk's tag decides how the bit depth is read.
+ */
+typedef struct
+{
+  uint16_t tag; /* the fmt chunk's format tag, once one has been read */
+  int have_fmt;
+  off_t data_offset; /* where the audio starts, or -1 for not yet found */
+  uint64_t data_bytes;
+  int is_rf64; /* the file's own magic said RF64 or BW64 */
+  int have_ds64;
+  uint64_t ds64_data_bytes;
+} wav_scan;
+
+/* What reading one chunk came to. */
+typedef enum
+{
+  CHUNK_NEXT = 0, /* read; carry on down the list */
+  CHUNK_END,      /* the list ends here, with whatever has been found */
+  CHUNK_BAD,      /* the file is malformed, and *msg says how */
+} chunk_result;
+
+/*
+ * The 64-bit sizes, which in an RF64 file are the real ones. Only the data size
+ * is taken: the RIFF size describes the file rather than the audio, and the
+ * sample count is a convenience that has to agree with the data size anyway.
+ */
+static chunk_result read_ds64_chunk(wav_reader *r, wav_scan *s, uint32_t size, off_t skip,
+                                    int first_chunk, const char **msg)
+{
+  /* riffSize and dataSize, which is as much of the body as matters here */
+  unsigned char body[16];
+
+  if (size < sizeof(body))
+  {
+    *msg = "malformed ds64 chunk";
+    return CHUNK_BAD;
+  }
+  if (read_exact(r->file, body, sizeof(body)) != 0)
+  {
+    *msg = "truncated ds64 chunk";
+    return CHUNK_BAD;
+  }
+  s->ds64_data_bytes = aud_rd_u64le(body + 8);
+  s->have_ds64 = 1;
+  if (first_chunk)
+  {
+    r->has_ds64_slot = 1;
+  }
+
+  if (fseeko(r->file, skip - (off_t)sizeof(body), SEEK_CUR) != 0)
+  {
+    *msg = "cannot seek past the ds64 chunk";
+    return CHUNK_BAD;
+  }
+
+  return CHUNK_NEXT;
+}
+
+static chunk_result read_fmt_chunk(wav_reader *r, wav_scan *s, uint32_t size, off_t skip,
+                                   const char **msg)
+{
+  unsigned char fmt[40];
+  size_t take = size < sizeof(fmt) ? size : sizeof(fmt);
+
+  if (size < 16u)
+  {
+    *msg = "malformed fmt chunk";
+    return CHUNK_BAD;
+  }
+  if (read_exact(r->file, fmt, take) != 0)
+  {
+    *msg = "truncated fmt chunk";
+    return CHUNK_BAD;
+  }
+  if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
+  {
+    *msg = "cannot seek past the fmt chunk";
+    return CHUNK_BAD;
+  }
+
+  s->tag = aud_rd_u16le(fmt);
+  r->channels = aud_rd_u16le(fmt + 2);
+  r->rate = aud_rd_u32le(fmt + 4);
+  r->bits = aud_rd_u16le(fmt + 14);
+  /* WAVE_FORMAT_EXTENSIBLE hides the real tag in the SubFormat GUID. */
+  if (s->tag == WAV_FORMAT_EXTENSIBLE && size >= 40u)
+  {
+    s->tag = aud_rd_u16le(fmt + 24);
+  }
+  s->have_fmt = 1;
+
+  return CHUNK_NEXT;
+}
+
+/*
+ * Metadata is taken from wherever it is. A take audiaki wrote has its own ahead
+ * of the audio, which is where bext is specified to go, but an editor is free
+ * to append its tags after the payload instead - so the walk only stops early
+ * once there is metadata in hand, and otherwise carries on past the data chunk
+ * to the end of the list looking for it.
+ *
+ * A truncated one ends the walk rather than failing: the audio may still be
+ * readable, and a missing tag is not a missing take.
+ */
+static chunk_result read_meta_chunk(wav_reader *r, const unsigned char *head,
+                                    uint32_t size, off_t skip)
+{
+  unsigned char body[AUD_META_MAX_BYTES];
+  size_t take = size < sizeof(body) ? size : sizeof(body);
+
+  if (read_exact(r->file, body, take) != 0)
+  {
+    return CHUNK_END;
+  }
+
+  if (memcmp(head, "LIST", 4) == 0)
+  {
+    aud_meta_read_list(&r->meta, body, take);
+  }
+  else
+  {
+    aud_meta_read_bext(&r->meta, body, take);
+  }
+
+  if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
+  {
+    return CHUNK_END;
+  }
+
+  return CHUNK_NEXT;
+}
+
+static chunk_result read_data_chunk(wav_reader *r, wav_scan *s, uint32_t size,
+                                    const char **msg)
+{
+  /*
+   * 0xFFFFFFFF is RF64's way of saying the real length is in ds64, which is
+   * required to sit ahead of this and so has already been read. Without one the
+   * number is taken at face value: a chunk of very nearly 4 GB is legal in
+   * plain RIFF, and it is not this reader's place to decide it meant something
+   * else.
+   */
+  uint64_t payload = size;
+
+  if (size == WAV_SIZE_IS_64_BIT && (s->have_ds64 || s->is_rf64))
+  {
+    if (!s->have_ds64)
+    {
+      *msg = "RF64 file with no ds64 chunk to size it";
+      return CHUNK_BAD;
+    }
+    payload = s->ds64_data_bytes;
+  }
+
+  /* the first one is the audio; a malformed second is not a second take */
+  if (s->data_offset < 0)
+  {
+    s->data_offset = ftello(r->file);
+    if (s->data_offset < 0)
+    {
+      *msg = "cannot locate the data chunk";
+      return CHUNK_BAD;
+    }
+    s->data_bytes = payload;
+  }
+
+  /*
+   * Stepping over the payload rather than reading it, so reaching the tail of a
+   * long take costs one seek. A data size larger than the file - a recording
+   * killed before its header was patched - lands past the end, where the next
+   * read fails and ends the walk with what has been found.
+   */
+  if (fseeko(r->file, (off_t)(payload + (payload & 1u)), SEEK_CUR) != 0)
+  {
+    return CHUNK_END;
+  }
+
+  return CHUNK_NEXT;
+}
+
+/*
+ * Anything else, stepped over - except the reserved slot: a JUNK chunk of
+ * exactly ds64's size, sitting where ds64 would go. That is this writer's own
+ * reservation rather than anybody's padding, and it means the file can still be
+ * promoted if it is carried on and grows past 4 GB.
+ *
+ * Only as the first chunk. A JUNK of the same length further in is somebody
+ * else's padding, and taking it for the slot would have the promotion write its
+ * ds64 over whatever really is at offset 12.
+ */
+static chunk_result skip_chunk(wav_reader *r, const unsigned char *head, uint32_t size,
+                               off_t skip, int first_chunk)
+{
+  if (first_chunk && memcmp(head, "JUNK", 4) == 0 && size == WAV_DS64_BODY_BYTES)
+  {
+    r->has_ds64_slot = 1;
+  }
+
+  if (fseeko(r->file, skip, SEEK_CUR) != 0)
+  {
+    return CHUNK_END;
+  }
+
+  return CHUNK_NEXT;
+}
+
+/*
+ * Whether the walk found a file this can decode, and what the numbers in it
+ * come to. Returns NULL when it did, or what is wrong with it when it did not.
+ */
+static const char *settle_reader(wav_reader *r, const wav_scan *s)
+{
+  if (!s->have_fmt)
+  {
+    return "no fmt chunk";
+  }
+  if (s->data_offset < 0)
+  {
+    return "no data chunk";
+  }
+  if (r->channels == 0 || r->channels > 64u || r->rate == 0)
+  {
+    return "implausible channel count or sample rate";
+  }
+
+  if (s->tag == WAV_FORMAT_FLOAT)
+  {
+    if (r->bits != 32u && r->bits != 64u)
+    {
+      return "only 32 and 64 bit float WAV is supported";
+    }
+    r->is_float = 1;
+  }
+  else if (s->tag == WAV_FORMAT_PCM)
+  {
+    if (r->bits != 8u && r->bits != 16u && r->bits != 24u && r->bits != 32u)
+    {
+      return "only 8, 16, 24 and 32 bit PCM WAV is supported";
+    }
+  }
+  else
+  {
+    return "compressed WAV is not supported";
+  }
+
+  r->block = (unsigned)r->channels * (r->bits / 8u);
+  r->frames = s->data_bytes / r->block;
+  r->position = 0;
+  r->data_offset = (uint64_t)s->data_offset;
+  return NULL;
+}
+
 int wav_read_open(wav_reader *r, const char *path)
 {
   unsigned char riff[12];
-  unsigned char fmt[40];
-  const char *msg;
-  off_t data_offset = -1;
-  uint64_t data_bytes = 0;
-  uint16_t tag = 0;
-  int have_fmt = 0;
-  int is_rf64 = 0;
-  uint64_t ds64_data_bytes = 0;
-  int have_ds64 = 0;
+  wav_scan scan;
+  const char *msg = NULL;
   int at_first_chunk = 1;
 
   if (r == NULL)
@@ -440,6 +690,9 @@ int wav_read_open(wav_reader *r, const char *path)
   memset(r, 0, sizeof(*r));
   /* cleared so the caller can tell a libc failure from a bad file layout */
   errno = 0;
+
+  memset(&scan, 0, sizeof(scan));
+  scan.data_offset = -1;
 
   if (path == NULL)
   {
@@ -461,13 +714,13 @@ int wav_read_open(wav_reader *r, const char *path)
     goto fail;
   }
   /*
-   * RF64 is the EBU's name and BW64 the ITU's for the same layout: a file
-   * whose 32-bit sizes have overflowed and whose real ones are in a ds64
-   * chunk. Both are accepted, and the only difference from here on is where
-   * the data chunk's length is read from.
+   * RF64 is the EBU's name and BW64 the ITU's for the same layout: a file whose
+   * 32-bit sizes have overflowed and whose real ones are in a ds64 chunk. Both
+   * are accepted, and the only difference from here on is where the data
+   * chunk's length is read from.
    */
-  is_rf64 = memcmp(riff, "RF64", 4) == 0 || memcmp(riff, "BW64", 4) == 0;
-  if ((memcmp(riff, "RIFF", 4) != 0 && !is_rf64) || memcmp(riff + 8, "WAVE", 4) != 0)
+  scan.is_rf64 = memcmp(riff, "RF64", 4) == 0 || memcmp(riff, "BW64", 4) == 0;
+  if ((memcmp(riff, "RIFF", 4) != 0 && !scan.is_rf64) || memcmp(riff + 8, "WAVE", 4) != 0)
   {
     msg = "not a RIFF/WAVE file";
     goto fail;
@@ -483,12 +736,13 @@ int wav_read_open(wav_reader *r, const char *path)
     unsigned char head[8];
     uint32_t size;
     off_t skip;
+    chunk_result got;
     /*
      * Whether this chunk is the first one, which is the only place a 64-bit
      * size block may sit: RF64 requires ds64 immediately after WAVE, and that
      * is where wav_open_ex() reserves its JUNK slot. write_header() writes the
      * promoted chunk at that offset and nowhere else, so a slot found anywhere
-     * further in is not one this writer can use - see has_ds64_slot below.
+     * further in is not one this writer can use.
      */
     int first_chunk = at_first_chunk;
 
@@ -502,218 +756,49 @@ int wav_read_open(wav_reader *r, const char *path)
     /* RIFF chunks are word aligned; an odd body is followed by a pad byte. */
     skip = (off_t)size + (size & 1u);
 
-    /*
-     * The 64-bit sizes, which in an RF64 file are the real ones. Only the data
-     * size is taken: the RIFF size describes the file rather than the audio,
-     * and the sample count is a convenience that has to agree with the data
-     * size anyway.
-     */
     if (memcmp(head, "ds64", 4) == 0)
     {
-      /* riffSize and dataSize, which is as much of the body as matters here */
-      unsigned char body[16];
-
-      if (size < sizeof(body))
-      {
-        msg = "malformed ds64 chunk";
-        goto fail;
-      }
-      if (read_exact(r->file, body, sizeof(body)) != 0)
-      {
-        msg = "truncated ds64 chunk";
-        goto fail;
-      }
-      ds64_data_bytes = aud_rd_u64le(body + 8);
-      have_ds64 = 1;
-      if (first_chunk)
-      {
-        r->has_ds64_slot = 1;
-      }
-
-      if (fseeko(r->file, skip - (off_t)sizeof(body), SEEK_CUR) != 0)
-      {
-        msg = "cannot seek past the ds64 chunk";
-        goto fail;
-      }
+      got = read_ds64_chunk(r, &scan, size, skip, first_chunk, &msg);
     }
     else if (memcmp(head, "fmt ", 4) == 0)
     {
-      size_t take = size < sizeof(fmt) ? size : sizeof(fmt);
-
-      if (size < 16u)
-      {
-        msg = "malformed fmt chunk";
-        goto fail;
-      }
-      if (read_exact(r->file, fmt, take) != 0)
-      {
-        msg = "truncated fmt chunk";
-        goto fail;
-      }
-      if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
-      {
-        msg = "cannot seek past the fmt chunk";
-        goto fail;
-      }
-
-      tag = aud_rd_u16le(fmt);
-      r->channels = aud_rd_u16le(fmt + 2);
-      r->rate = aud_rd_u32le(fmt + 4);
-      r->bits = aud_rd_u16le(fmt + 14);
-      /* WAVE_FORMAT_EXTENSIBLE hides the real tag in the SubFormat GUID. */
-      if (tag == WAV_FORMAT_EXTENSIBLE && size >= 40u)
-      {
-        tag = aud_rd_u16le(fmt + 24);
-      }
-      have_fmt = 1;
+      got = read_fmt_chunk(r, &scan, size, skip, &msg);
     }
-    /*
-     * Metadata is taken from wherever it is. A take audiaki wrote has its own
-     * ahead of the audio, which is where bext is specified to go, but an editor
-     * is free to append its tags after the payload instead - so the walk only
-     * stops early once there is metadata in hand, and otherwise carries on past
-     * the data chunk to the end of the list looking for it.
-     */
     else if (memcmp(head, "LIST", 4) == 0 || memcmp(head, "bext", 4) == 0)
     {
-      unsigned char body[AUD_META_MAX_BYTES];
-      size_t take = size < sizeof(body) ? size : sizeof(body);
-
-      if (read_exact(r->file, body, take) != 0)
-      {
-        break;
-      } /* truncated: the audio may still be readable */
-
-      if (memcmp(head, "LIST", 4) == 0)
-      {
-        aud_meta_read_list(&r->meta, body, take);
-      }
-      else
-      {
-        aud_meta_read_bext(&r->meta, body, take);
-      }
-
-      if (fseeko(r->file, skip - (off_t)take, SEEK_CUR) != 0)
-      {
-        break;
-      }
+      got = read_meta_chunk(r, head, size, skip);
     }
     else if (memcmp(head, "data", 4) == 0)
     {
-      /*
-       * 0xFFFFFFFF is RF64's way of saying the real length is in ds64, which
-       * is required to sit ahead of this and so has already been read. Without
-       * one the number is taken at face value: a chunk of very nearly 4 GB is
-       * legal in plain RIFF, and it is not this reader's place to decide it
-       * meant something else.
-       */
-      uint64_t payload = size;
-
-      if (size == WAV_SIZE_IS_64_BIT && (have_ds64 || is_rf64))
-      {
-        if (!have_ds64)
-        {
-          msg = "RF64 file with no ds64 chunk to size it";
-          goto fail;
-        }
-        payload = ds64_data_bytes;
-      }
-
-      /* the first one is the audio; a malformed second is not a second take */
-      if (data_offset < 0)
-      {
-        data_offset = ftello(r->file);
-        if (data_offset < 0)
-        {
-          msg = "cannot locate the data chunk";
-          goto fail;
-        }
-        data_bytes = payload;
-      }
-      /*
-       * Stepping over the payload rather than reading it, so reaching the tail
-       * of a long take costs one seek. A data size larger than the file - a
-       * recording killed before its header was patched - lands past the end,
-       * where the next read fails and ends the walk with what has been found.
-       */
-      if (fseeko(r->file, (off_t)(payload + (payload & 1u)), SEEK_CUR) != 0)
-      {
-        break;
-      }
+      got = read_data_chunk(r, &scan, size, &msg);
     }
     else
     {
-      /*
-       * The reserved slot, still unused: a JUNK chunk of exactly ds64's size,
-       * sitting where ds64 would go. That is this writer's own reservation
-       * rather than anybody's padding, and it means the file can still be
-       * promoted if it is carried on and grows past 4 GB.
-       *
-       * Only as the first chunk. A JUNK of the same length further in is
-       * somebody else's padding, and taking it for the slot would have the
-       * promotion write its ds64 over whatever really is at offset 12.
-       */
-      if (first_chunk && memcmp(head, "JUNK", 4) == 0 && size == WAV_DS64_BODY_BYTES)
-      {
-        r->has_ds64_slot = 1;
-      }
-      if (fseeko(r->file, skip, SEEK_CUR) != 0)
-      {
-        break;
-      }
+      got = skip_chunk(r, head, size, skip, first_chunk);
     }
 
-    if (have_fmt && data_offset >= 0 && r->meta.present)
+    if (got == CHUNK_BAD)
+    {
+      goto fail;
+    }
+    if (got == CHUNK_END)
+    {
+      break;
+    }
+
+    if (scan.have_fmt && scan.data_offset >= 0 && r->meta.present)
     {
       break;
     }
   }
 
-  if (!have_fmt)
+  msg = settle_reader(r, &scan);
+  if (msg != NULL)
   {
-    msg = "no fmt chunk";
-    goto fail;
-  }
-  if (data_offset < 0)
-  {
-    msg = "no data chunk";
-    goto fail;
-  }
-  if (r->channels == 0 || r->channels > 64u || r->rate == 0)
-  {
-    msg = "implausible channel count or sample rate";
     goto fail;
   }
 
-  if (tag == WAV_FORMAT_FLOAT)
-  {
-    if (r->bits != 32u && r->bits != 64u)
-    {
-      msg = "only 32 and 64 bit float WAV is supported";
-      goto fail;
-    }
-    r->is_float = 1;
-  }
-  else if (tag == WAV_FORMAT_PCM)
-  {
-    if (r->bits != 8u && r->bits != 16u && r->bits != 24u && r->bits != 32u)
-    {
-      msg = "only 8, 16, 24 and 32 bit PCM WAV is supported";
-      goto fail;
-    }
-  }
-  else
-  {
-    msg = "compressed WAV is not supported";
-    goto fail;
-  }
-
-  r->block = (unsigned)r->channels * (r->bits / 8u);
-  r->frames = data_bytes / r->block;
-  r->position = 0;
-  r->data_offset = (uint64_t)data_offset;
-
-  if (fseeko(r->file, data_offset, SEEK_SET) != 0)
+  if (fseeko(r->file, scan.data_offset, SEEK_SET) != 0)
   {
     msg = "cannot rewind to the audio data";
     goto fail;
