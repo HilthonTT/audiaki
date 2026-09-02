@@ -101,8 +101,6 @@ void aud_export_defaults(aud_export_options *opts);
  */
 int aud_export_wav(const aud_doc *d, const aud_export_options *opts, const char **why);
 
-/* -- stems ------------------------------------------------------------------ */
-
 /*
  * How much of a track's name a stem's filename carries. Long enough to tell
  * "Rhythm" from "Rhythm double", short enough that sixty-four of them in one

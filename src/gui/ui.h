@@ -97,8 +97,6 @@
     53, 211, 153, 255 \
   }
 
-/* -- lettering -------------------------------------------------------------- */
-
 /*
  * The three faces the window letters in. They are found on the machine at
  * startup and fall back to the one raylib carries, so this adds no file to
@@ -298,8 +296,6 @@ void aud_ui_write_centred(aud_ui_face face, Rectangle bounds, int size, Color co
 void aud_ui_text(float x, float y, int size, Color color, const char *text);
 void aud_ui_text_right(float right, float y, int size, Color color, const char *text);
 void aud_ui_text_centred(Rectangle bounds, int size, Color color, const char *text);
-
-/* -- the shapes everything else is built from ------------------------------- */
 
 /*
  * A rounded rectangle with a border, at a radius in pixels rather than the

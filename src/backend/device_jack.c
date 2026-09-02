@@ -77,8 +77,6 @@ int aud_jack_server_responds(void)
   return 1;
 }
 
-/* -- the ports the graph is offering --------------------------------------- */
-
 /*
  * The audio ports a capture stream could be fed from.
  *
@@ -184,8 +182,6 @@ static int jack_enumerate(aud_device_entry **out)
   return found;
 }
 
-/* -- probe ----------------------------------------------------------------- */
-
 /*
  * What a JACK device supports is not a property of the device. The rate and the
  * period belong to the server and are the same for every client on it, and the
@@ -268,8 +264,6 @@ static int jack_probe(const char *name, int json)
   jack_client_close(client);
   return 0;
 }
-
-/* -- the capture stream ---------------------------------------------------- */
 
 typedef struct
 {
@@ -771,8 +765,6 @@ static void jack_drop(aud_device *dev)
   c->stopped = 1;
   aud_ringbuf_skip(&c->fifo, aud_ringbuf_available(&c->fifo));
 }
-
-/* -- the hotplug watch ----------------------------------------------------- */
 
 /*
  * JACK says when a port or a client appears or goes, so like the PipeWire watch

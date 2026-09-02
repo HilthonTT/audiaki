@@ -385,8 +385,6 @@ void aud_info_print(FILE *out, const char *path, const aud_info_report *r)
   }
 }
 
-/* -- one line per take ----------------------------------------------------- */
-
 /* room for a name, without letting one long path push the numbers off screen */
 #define INFO_NAME_MIN 12u
 #define INFO_NAME_MAX 40u

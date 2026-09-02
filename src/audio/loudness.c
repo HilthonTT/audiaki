@@ -115,8 +115,6 @@ int aud_loudness_supported(unsigned rate, unsigned channels)
          channels <= AUD_LOUDNESS_MAX_CHANNELS;
 }
 
-/* -- the ear, as two filters ----------------------------------------------- */
-
 /*
  * The K-weighting, derived at `rate` rather than tabulated.
  *
@@ -159,8 +157,6 @@ static void design(aud_loudness *l)
   l->highpass.a1 = 2.0 * (k * k - 1.0) / a0;
   l->highpass.a2 = (1.0 - k / q + k * k) / a0;
 }
-
-/* -- the meter ------------------------------------------------------------- */
 
 aud_loudness *aud_loudness_create(unsigned rate, unsigned channels)
 {
@@ -433,8 +429,6 @@ int aud_loudness_feed(aud_loudness *l, const float *interleaved, size_t frames)
   }
   return 0;
 }
-
-/* -- what it all came to --------------------------------------------------- */
 
 static double to_lufs(double power)
 {

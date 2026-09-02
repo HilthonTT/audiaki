@@ -382,8 +382,6 @@ size_t aud_meta_build(const aud_meta *m, unsigned char *out, size_t size)
   return w.overflowed ? 0 : w.used;
 }
 
-/* -- reading back ---------------------------------------------------------- */
-
 static uint32_t get_u32(const unsigned char *p)
 {
   return (uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) |

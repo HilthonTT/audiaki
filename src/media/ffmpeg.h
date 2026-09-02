@@ -51,8 +51,6 @@ int ffmpeg_send_frame(FFMPEG *ffmpeg, const void *data, size_t width, size_t hei
 int ffmpeg_send_frame_flipped(FFMPEG *ffmpeg, const void *data, size_t width,
                               size_t height);
 
-/* -- audio ------------------------------------------------------------------ */
-
 /*
  * Start ffmpeg encoding interleaved little-endian PCM, arriving on stdin, into
  * `output_path` - overwriting it if it exists, so callers own the "refuse
@@ -74,8 +72,6 @@ FFMPEG *ffmpeg_start_encoding(const char *output_path, unsigned rate, unsigned c
  * only useful response is ffmpeg_finish(f, 1).
  */
 int ffmpeg_send_audio(FFMPEG *ffmpeg, const void *data, size_t bytes);
-
-/* -- finishing either of them ----------------------------------------------- */
 
 /*
  * Close the pipe and reap the child, freeing `ffmpeg` either way. With

@@ -712,35 +712,13 @@ static void *capture_thread(void *arg)
   return NULL;
 }
 
-aud_engine *aud_engine_create(const aud_engine_config *cfg)
+/* The engine's own lock, and the writer's. Destroys whatever it managed. */
+static int engine_init_locks(aud_engine *e)
 {
-  aud_device_config dev_cfg;
-  aud_engine *e;
-  size_t hw_bytes;
-  size_t period;
-  size_t visual_slots;
-  size_t frame_bytes;
-  double queue_seconds;
-  size_t queue_bytes;
-
-  if (cfg == NULL)
-  {
-    errno = EINVAL;
-    return NULL;
-  }
-
-  e = calloc(1, sizeof(*e));
-  if (e == NULL)
-  {
-    aud_error("out of memory");
-    return NULL;
-  }
-
   if (pthread_mutex_init(&e->lock, NULL) != 0)
   {
     aud_perror("cannot create the engine lock");
-    free(e);
-    return NULL;
+    return -1;
   }
 
   if (pthread_mutex_init(&e->wlock, NULL) != 0 ||
@@ -748,9 +726,14 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   {
     aud_perror("cannot create the take writer's lock");
     pthread_mutex_destroy(&e->lock);
-    free(e);
-    return NULL;
+    return -1;
   }
+  return 0;
+}
+
+static int engine_open_device(aud_engine *e, const aud_engine_config *cfg)
+{
+  aud_device_config dev_cfg;
 
   aud_device_config_defaults(&dev_cfg);
   dev_cfg.name = cfg->device;
@@ -760,23 +743,11 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   dev_cfg.period_frames = cfg->period_frames;
   dev_cfg.periods = cfg->periods;
 
-  if (aud_device_open_capture(&e->dev, &dev_cfg) != 0)
-  {
-    goto fail_lock;
-  }
+  return aud_device_open_capture(&e->dev, &dev_cfg);
+}
 
-  e->monitor_device = cfg->monitor_device;
-  e->repack = aud_format_needs_repack(e->dev.format);
-  e->wav_bytes = aud_format_wav_bytes(e->dev.format);
-  hw_bytes = aud_format_hw_bytes(e->dev.format);
-  period = (size_t)e->dev.period_frames;
-
-  if (hw_bytes == 0 || e->wav_bytes == 0 || period == 0)
-  {
-    aud_error("unsupported capture format");
-    goto fail_device;
-  }
-
+static int engine_alloc_buffers(aud_engine *e, size_t period, size_t hw_bytes)
+{
   e->hw_buf = malloc(period * e->dev.channels * hw_bytes);
   e->out_buf = e->repack ? malloc(period * e->dev.channels * e->wav_bytes) : e->hw_buf;
   e->mono = malloc(period * sizeof(*e->mono));
@@ -785,32 +756,43 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   if (e->hw_buf == NULL || e->out_buf == NULL || e->mono == NULL || e->inter == NULL)
   {
     aud_error("cannot allocate the capture buffers");
-    goto fail_buffers;
+    return -1;
   }
 
-  visual_slots = (size_t)(ENGINE_VISUAL_SECONDS * (double)e->dev.rate);
-  if (visual_slots < period * 4)
-  {
-    visual_slots = period * 4;
-  }
   e->take_buf = malloc(period * e->dev.channels * sizeof(float));
   if (e->take_buf == NULL)
   {
     aud_error("cannot allocate the take buffer");
-    goto fail_buffers;
+    return -1;
+  }
+  return 0;
+}
+
+/* Everything the capture thread hands a period to without waiting on it. */
+static int engine_init_rings(aud_engine *e, const aud_engine_config *cfg, size_t period,
+                             size_t hw_bytes)
+{
+  size_t visual_slots = (size_t)(ENGINE_VISUAL_SECONDS * (double)e->dev.rate);
+  size_t frame_bytes;
+  double queue_seconds;
+  size_t queue_bytes;
+
+  if (visual_slots < period * 4)
+  {
+    visual_slots = period * 4;
   }
 
   if (aud_ringbuf_init(&e->take, (size_t)(ENGINE_TAKE_SECONDS * e->dev.rate) *
                                      e->dev.channels) != 0)
   {
     aud_error("cannot allocate the take ring");
-    goto fail_rings;
+    return -1;
   }
 
   if (aud_ringbuf_init(&e->visual, visual_slots) != 0)
   {
     aud_error("cannot allocate the display buffer");
-    goto fail_rings;
+    return -1;
   }
 
   /*
@@ -830,7 +812,7 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   if (aud_ringbuf_init_bytes(&e->wq, queue_bytes) != 0)
   {
     aud_error("cannot allocate the take's write queue");
-    goto fail_rings;
+    return -1;
   }
 
   e->wq_buf_bytes = ENGINE_WRITE_CHUNK;
@@ -842,7 +824,7 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
   if (e->wq_buf == NULL)
   {
     aud_error("cannot allocate the take's write buffer");
-    goto fail_rings;
+    return -1;
   }
 
   if (cfg->preroll > 0.0)
@@ -858,37 +840,105 @@ aud_engine *aud_engine_create(const aud_engine_config *cfg)
     if (aud_preroll_init(&e->preroll, frames, (size_t)e->dev.channels * hw_bytes) != 0)
     {
       aud_error("cannot hold %.1f s of pre-roll", cfg->preroll);
-      goto fail_rings;
+      return -1;
     }
   }
+  return 0;
+}
 
+static void engine_init_state(aud_engine *e)
+{
   e->state = AUD_ENGINE_IDLE;
   atomic_init(&e->running, 1);
   atomic_init(&e->monitor_want, 0);
   atomic_init(&e->monitor_gain, ENGINE_GAIN_SCALE);
   atomic_init(&e->input_gain, ENGINE_GAIN_SCALE); /* the device's own level */
   atomic_init(&e->write_failed, 0);
+}
 
+/* Both threads, or neither: a started writer is stopped again on the way out. */
+static int engine_start_threads(aud_engine *e)
+{
   /* before the capture thread, so there is somewhere for a period to go the
    * moment one can arrive */
   if (pthread_create(&e->writer, NULL, writer_thread, e) != 0)
   {
     aud_perror("cannot start the take writer");
-    goto fail_rings;
+    return -1;
   }
   e->writer_started = 1;
 
   if (pthread_create(&e->thread, NULL, capture_thread, e) != 0)
   {
     aud_perror("cannot start the capture thread");
-    goto fail_writer;
+    stop_writer(e);
+    return -1;
   }
   e->thread_started = 1;
+  return 0;
+}
+
+aud_engine *aud_engine_create(const aud_engine_config *cfg)
+{
+  aud_engine *e;
+  size_t hw_bytes;
+  size_t period;
+
+  if (cfg == NULL)
+  {
+    errno = EINVAL;
+    return NULL;
+  }
+
+  e = calloc(1, sizeof(*e));
+  if (e == NULL)
+  {
+    aud_error("out of memory");
+    return NULL;
+  }
+
+  if (engine_init_locks(e) != 0)
+  {
+    free(e);
+    return NULL;
+  }
+
+  if (engine_open_device(e, cfg) != 0)
+  {
+    goto fail_lock;
+  }
+
+  e->monitor_device = cfg->monitor_device;
+  e->repack = aud_format_needs_repack(e->dev.format);
+  e->wav_bytes = aud_format_wav_bytes(e->dev.format);
+  hw_bytes = aud_format_hw_bytes(e->dev.format);
+  period = (size_t)e->dev.period_frames;
+
+  if (hw_bytes == 0 || e->wav_bytes == 0 || period == 0)
+  {
+    aud_error("unsupported capture format");
+    goto fail_device;
+  }
+
+  if (engine_alloc_buffers(e, period, hw_bytes) != 0)
+  {
+    goto fail_buffers;
+  }
+
+  if (engine_init_rings(e, cfg, period, hw_bytes) != 0)
+  {
+    goto fail_rings;
+  }
+
+  engine_init_state(e);
+
+  if (engine_start_threads(e) != 0)
+  {
+    goto fail_rings;
+  }
 
   return e;
 
-fail_writer:
-  stop_writer(e);
 fail_rings:
   aud_ringbuf_free(&e->visual);
   aud_ringbuf_free(&e->take);

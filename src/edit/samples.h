@@ -149,8 +149,6 @@ int aud_samples_set_source(aud_samples *s, const char *path);
 /* Where it came from, or "" when nothing said. Never NULL, so it prints. */
 const char *aud_samples_source(const aud_samples *s);
 
-/* -- blocks still being recorded into --------------------------------------- */
-
 /*
  * Create a block with room for `capacity` frames but no frames in it yet, for
  * a take whose length is not known until it stops.

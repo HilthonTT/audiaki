@@ -265,99 +265,155 @@ static void describe(const wav_reader *wav, const aud_play_options *opts)
            wav->is_float ? "float" : "PCM");
 }
 
-static play_result play_run(const aud_play_options *opts, aud_keys *keys)
+/*
+ * One pass over one file: what was opened for it, and where it has got to.
+ * Gathered so the setup, the loop and the single teardown can be read apart.
+ */
+typedef struct
 {
+  const aud_play_options *opts;
   wav_reader wav;
   aud_meter meter;
-  aud_monitor_config mon_cfg;
-  aud_monitor *mon = NULL;
-  aud_spectrum *spectrum = NULL;
-  float *frames = NULL;
-  float *mono = NULL;
-  size_t bands = 0;
-  uint64_t written = 0; /* frames handed to the output, which is what was heard */
-  uint64_t limit = 0;
-  unsigned long dropped;
-  double next_meter_at = 0.0;
-  double last_drawn_at = 0.0;
-  int paused = 0;
-  play_result rc = PLAY_FAILED;
+  aud_monitor *mon;
+  aud_spectrum *spectrum;
+  float *frames;
+  float *mono;
+  size_t bands;
+  uint64_t written; /* frames handed to the output, which is what was heard */
+  uint64_t limit;
+  int paused;
+} play_state;
 
-  if (wav_read_open(&wav, opts->input_path) != 0)
+/* The file, and how much of it -t leaves. Nothing to clean up when this fails. */
+static int play_open(play_state *p)
+{
+  const aud_play_options *opts = p->opts;
+
+  if (wav_read_open(&p->wav, opts->input_path) != 0)
   {
     aud_error("cannot play %s: %s", opts->input_path,
-              wav.error != NULL ? wav.error : "unreadable");
-    return PLAY_FAILED;
+              p->wav.error != NULL ? p->wav.error : "unreadable");
+    return -1;
   }
 
-  if (wav.frames == 0 || wav.channels == 0 || wav.rate == 0)
+  if (p->wav.frames == 0 || p->wav.channels == 0 || p->wav.rate == 0)
   {
     aud_error("%s holds no audio to play", opts->input_path);
-    wav_read_close(&wav);
-    return PLAY_FAILED;
+    wav_read_close(&p->wav);
+    return -1;
   }
 
   if (opts->duration > 0.0)
   {
-    limit = (uint64_t)(opts->duration * (double)wav.rate + 0.5);
-    if (limit == 0)
+    p->limit = (uint64_t)(opts->duration * (double)p->wav.rate + 0.5);
+    if (p->limit == 0)
     {
-      limit = 1;
+      p->limit = 1;
     }
   }
 
   /* initialised before any early exit so the cleanup path is unconditional */
-  meter_init(&meter, opts->show_meter);
-  meter_set_total(&meter, wav_read_duration(&wav));
+  meter_init(&p->meter, opts->show_meter);
+  meter_set_total(&p->meter, wav_read_duration(&p->wav));
+  return 0;
+}
 
-  frames = malloc((size_t)PLAY_CHUNK_FRAMES * wav.channels * sizeof(*frames));
-  if (frames == NULL)
+/* The band analyser, when the terminal has room for one and asked for it. */
+static void play_open_spectrum(play_state *p)
+{
+  aud_spectrum_config spec_cfg;
+
+  if (!p->opts->show_spectrum || !p->opts->show_meter)
   {
-    aud_error("cannot allocate a playback buffer for %u channels", wav.channels);
-    goto out;
+    return;
   }
 
-  if (opts->show_spectrum && opts->show_meter)
+  p->bands = meter_fit_bands(&p->meter);
+  if (p->bands == 0)
   {
-    aud_spectrum_config spec_cfg;
-
-    bands = meter_fit_bands(&meter);
-    if (bands > 0)
-    {
-      aud_spectrum_config_defaults(&spec_cfg, wav.rate, bands);
-      spectrum = aud_spectrum_create(&spec_cfg);
-      mono = malloc((size_t)PLAY_CHUNK_FRAMES * sizeof(*mono));
-
-      if (spectrum == NULL || mono == NULL)
-      {
-        /* not worth refusing to play over: fall back to the peak bar */
-        aud_warn("cannot set up the spectrum display, showing the peak meter");
-        aud_spectrum_destroy(spectrum);
-        spectrum = NULL;
-        bands = 0;
-      }
-    }
+    return;
   }
 
-  aud_monitor_config_defaults(&mon_cfg, wav.rate, wav.channels);
-  if (opts->device != NULL)
+  aud_spectrum_config_defaults(&spec_cfg, p->wav.rate, p->bands);
+  p->spectrum = aud_spectrum_create(&spec_cfg);
+  p->mono = malloc((size_t)PLAY_CHUNK_FRAMES * sizeof(*p->mono));
+
+  if (p->spectrum == NULL || p->mono == NULL)
   {
-    mon_cfg.name = opts->device;
+    /* not worth refusing to play over: fall back to the peak bar */
+    aud_warn("cannot set up the spectrum display, showing the peak meter");
+    aud_spectrum_destroy(p->spectrum);
+    p->spectrum = NULL;
+    p->bands = 0;
+  }
+}
+
+static int play_setup(play_state *p)
+{
+  aud_monitor_config mon_cfg;
+
+  p->frames = malloc((size_t)PLAY_CHUNK_FRAMES * p->wav.channels * sizeof(*p->frames));
+  if (p->frames == NULL)
+  {
+    aud_error("cannot allocate a playback buffer for %u channels", p->wav.channels);
+    return -1;
   }
 
-  mon = aud_monitor_open(&mon_cfg);
-  if (mon == NULL)
+  play_open_spectrum(p);
+
+  aud_monitor_config_defaults(&mon_cfg, p->wav.rate, p->wav.channels);
+  if (p->opts->device != NULL)
+  {
+    mon_cfg.name = p->opts->device;
+  }
+
+  p->mon = aud_monitor_open(&mon_cfg);
+  if (p->mon == NULL)
   {
     /* the backend has already said which part of opening the output failed */
-    aud_error("cannot play %s", opts->input_path);
-    goto out;
+    aud_error("cannot play %s", p->opts->input_path);
+    return -1;
   }
+  return 0;
+}
 
-  describe(&wav, opts);
-  if (limit != 0)
+static void play_free(play_state *p)
+{
+  meter_clear(&p->meter);
+  aud_monitor_close(p->mon);
+  aud_spectrum_destroy(p->spectrum);
+  free(p->mono);
+  free(p->frames);
+  wav_read_close(&p->wav);
+}
+
+/*
+ * How many frames to read next, given the output's room and what -t leaves.
+ * Zero means the pass is over.
+ */
+static size_t play_want(const play_state *p, long space)
+{
+  size_t want = (size_t)space < PLAY_CHUNK_FRAMES ? (size_t)space : PLAY_CHUNK_FRAMES;
+
+  /* read only what is still missing so -t lands on an exact frame count */
+  if (p->limit != 0)
   {
-    aud_info("stopping after %.2f s", opts->duration);
+    if (p->wav.position >= p->limit)
+    {
+      return 0;
+    }
+    if (p->wav.position + want > p->limit)
+    {
+      want = (size_t)(p->limit - p->wav.position);
+    }
   }
+  return want;
+}
+
+static play_result play_loop(play_state *p, aud_keys *keys)
+{
+  double next_meter_at = 0.0;
+  double last_drawn_at = 0.0;
 
   while (!aud_signals_stop_requested())
   {
@@ -366,7 +422,7 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
     size_t want;
     double elapsed;
     int moved = 0;
-    play_result asked = apply_keys(keys, mon, &wav, &paused, &moved);
+    play_result asked = apply_keys(keys, p->mon, &p->wav, &p->paused, &moved);
 
     if (asked != PLAY_CONTINUE)
     {
@@ -375,33 +431,32 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
        * and a buffer's worth of the one being left over the top of it is not
        * what was wanted.
        */
-      meter_clear(&meter);
-      rc = asked;
-      goto out;
+      meter_clear(&p->meter);
+      return asked;
     }
 
-    elapsed = (double)wav.position / wav.rate;
+    elapsed = (double)p->wav.position / p->wav.rate;
 
     if (moved)
     {
-      meter_set_paused(&meter, paused);
-      draw_meter(&meter, spectrum, bands, 0.0, elapsed, 0.0);
+      meter_set_paused(&p->meter, p->paused);
+      draw_meter(&p->meter, p->spectrum, p->bands, 0.0, elapsed, 0.0);
       last_drawn_at = elapsed;
       next_meter_at = elapsed + PLAY_METER_INTERVAL;
     }
 
-    if (paused)
+    if (p->paused)
     {
       sleep_ms(PLAY_IDLE_SLEEP_MS);
       continue;
     }
 
-    space = aud_monitor_space(mon);
+    space = aud_monitor_space(p->mon);
     if (space < 0)
     {
-      meter_clear(&meter);
+      meter_clear(&p->meter);
       aud_error("playback stopped: the output failed");
-      goto out;
+      return PLAY_FAILED;
     }
     if (space == 0)
     {
@@ -409,53 +464,40 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
       continue;
     }
 
-    want = (size_t)space < PLAY_CHUNK_FRAMES ? (size_t)space : PLAY_CHUNK_FRAMES;
-
-    /* read only what is still missing so -t lands on an exact frame count */
-    if (limit != 0)
-    {
-      if (wav.position >= limit)
-      {
-        break;
-      }
-      if (wav.position + want > limit)
-      {
-        want = (size_t)(limit - wav.position);
-      }
-    }
+    want = play_want(p, space);
     if (want == 0)
     {
       break;
     }
 
-    got = wav_read_frames(&wav, frames, want);
+    got = wav_read_frames(&p->wav, p->frames, want);
     if (got < 0)
     {
-      meter_clear(&meter);
-      aud_error("cannot read %s: %s", opts->input_path,
-                wav.error != NULL ? wav.error : "read failed");
-      goto out;
+      meter_clear(&p->meter);
+      aud_error("cannot read %s: %s", p->opts->input_path,
+                p->wav.error != NULL ? p->wav.error : "read failed");
+      return PLAY_FAILED;
     }
     if (got == 0)
     {
       break;
     }
 
-    if (aud_monitor_write(mon, frames, (size_t)got, 1.0f) != 0)
+    if (aud_monitor_write(p->mon, p->frames, (size_t)got, 1.0f) != 0)
     {
-      meter_clear(&meter);
+      meter_clear(&p->meter);
       aud_error("playback stopped: the output failed");
-      goto out;
+      return PLAY_FAILED;
     }
 
-    if (spectrum != NULL)
+    if (p->spectrum != NULL)
     {
-      to_mono(mono, frames, (size_t)got, wav.channels);
-      aud_spectrum_push(spectrum, mono, (size_t)got);
+      to_mono(p->mono, p->frames, (size_t)got, p->wav.channels);
+      aud_spectrum_push(p->spectrum, p->mono, (size_t)got);
     }
 
-    written += (uint64_t)got;
-    elapsed = (double)wav.position / wav.rate;
+    p->written += (uint64_t)got;
+    elapsed = (double)p->wav.position / p->wav.rate;
 
     if (elapsed >= next_meter_at)
     {
@@ -463,13 +505,22 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
        * Smooth against played time rather than PLAY_METER_INTERVAL, so the
        * bars decay at the same rate whether or not a redraw was skipped.
        */
-      draw_meter(&meter, spectrum, bands, peak_of(frames, (size_t)got * wav.channels),
-                 elapsed, elapsed - last_drawn_at);
+      draw_meter(&p->meter, p->spectrum, p->bands,
+                 peak_of(p->frames, (size_t)got * p->wav.channels), elapsed,
+                 elapsed - last_drawn_at);
 
       last_drawn_at = elapsed;
       next_meter_at = elapsed + PLAY_METER_INTERVAL;
     }
   }
+
+  return PLAY_ENDED;
+}
+
+/* The tail of a pass that ran to its own end, rather than being left. */
+static void play_finish(play_state *p)
+{
+  unsigned long dropped;
 
   /*
    * The last buffer's worth has been handed over but not heard yet. Closing the
@@ -478,30 +529,57 @@ static play_result play_run(const aud_play_options *opts, aud_keys *keys)
    */
   if (!aud_signals_stop_requested())
   {
-    aud_monitor_drain(mon);
+    aud_monitor_drain(p->mon);
   }
 
-  meter_clear(&meter);
-  rc = PLAY_ENDED;
+  meter_clear(&p->meter);
 
-  dropped = aud_monitor_dropped(mon);
+  dropped = aud_monitor_dropped(p->mon);
   if (dropped > 0)
   {
     /* pacing on aud_monitor_space() should prevent this; say so if it did not */
     aud_warn("%lu frame(s) dropped: the output could not keep up", dropped);
   }
 
-  aud_info("played %.2f s of %s%s", (double)written / wav.rate, opts->input_path,
+  aud_info("played %.2f s of %s%s", (double)p->written / p->wav.rate, p->opts->input_path,
            aud_signals_stop_requested() ? " (stopped early)" : "");
+}
+
+static play_result play_run(const aud_play_options *opts, aud_keys *keys)
+{
+  play_state p;
+  play_result rc = PLAY_FAILED;
+
+  memset(&p, 0, sizeof(p));
+  p.opts = opts;
+
+  if (play_open(&p) != 0)
+  {
+    return PLAY_FAILED;
+  }
+
+  if (play_setup(&p) != 0)
+  {
+    goto out;
+  }
+
+  describe(&p.wav, opts);
+  if (p.limit != 0)
+  {
+    aud_info("stopping after %.2f s", opts->duration);
+  }
+
+  rc = play_loop(&p, keys);
+
+  /* only the natural end drains and reports; a key asking for another file is
+   * asking for it now, and apply_keys() never returns PLAY_ENDED */
+  if (rc == PLAY_ENDED)
+  {
+    play_finish(&p);
+  }
 
 out:
-  meter_clear(&meter);
-  aud_monitor_close(mon);
-  aud_spectrum_destroy(spectrum);
-  free(mono);
-  free(frames);
-  wav_read_close(&wav);
-
+  play_free(&p);
   return rc;
 }
 

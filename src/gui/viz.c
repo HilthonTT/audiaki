@@ -450,8 +450,6 @@ aud_viz_mode aud_viz_cycle_mode(aud_viz *v)
   return v->mode;
 }
 
-/* -- shared drawing helpers ------------------------------------------------ */
-
 static void draw_glow(const aud_viz *v, float cx, float cy, float size, Color tint)
 {
   Rectangle src = {0.0f, 0.0f, (float)v->glow.width, (float)v->glow.height};
@@ -493,8 +491,6 @@ static void draw_cap(const aud_viz *v, size_t band, float cx, float cy, float sl
   draw_glow(v, cx, cy, slot * VIZ_CAP_CORE * (0.70f + 0.30f * value),
             with_alpha(v->palette[band], 0.65f + 0.35f * value));
 }
-
-/* -- bars ------------------------------------------------------------------ */
 
 /*
  * One pass of stems and one of caps, rather than finishing each bar before
@@ -564,8 +560,6 @@ static void draw_bars(const aud_viz *v, Rectangle area, const float *values)
   EndBlendMode();
 }
 
-/* -- mirror ---------------------------------------------------------------- */
-
 /* The same bars opened around the centre line, each half at half the height. */
 static void draw_mirror(const aud_viz *v, Rectangle area, const float *values)
 {
@@ -609,8 +603,6 @@ static void draw_mirror(const aud_viz *v, Rectangle area, const float *values)
   }
   EndBlendMode();
 }
-
-/* -- radial ---------------------------------------------------------------- */
 
 /*
  * The spectrum wrapped into a ring, bass at the top and running clockwise.
@@ -673,8 +665,6 @@ static void draw_radial(const aud_viz *v, Rectangle area, const float *values)
   }
   EndBlendMode();
 }
-
-/* -- scope ----------------------------------------------------------------- */
 
 /*
  * Find a rising zero crossing to start the sweep from. Without one the trace
@@ -752,8 +742,6 @@ static void draw_scope(const aud_viz *v, Rectangle area)
   }
 }
 
-/* -- waterfall ------------------------------------------------------------- */
-
 /*
  * The spectrogram ring, unwrapped into two quads: the columns after the write
  * head are the oldest and go on the left, the rest follow. Time runs left to
@@ -786,8 +774,6 @@ static void draw_waterfall(const aud_viz *v, Rectangle area)
   DrawRectangleRec((Rectangle){area.x + area.width - 1.0f, area.y, 1.0f, area.height},
                    with_alpha(WHITE, 0.25f));
 }
-
-/* -- tuner ----------------------------------------------------------------- */
 
 /* Text centred on `cx`, which is how every line of the tuner is placed. */
 static void draw_centred(const char *text, float cx, float y, int size, Color tint)
@@ -915,8 +901,6 @@ static void draw_tuner(const aud_viz *v, Rectangle area)
                area.y + area.height - (float)small_size * 1.6f, small_size, AUD_UI_MUTED,
                line);
 }
-
-/* -- dispatch -------------------------------------------------------------- */
 
 void aud_viz_draw(const aud_viz *v, Rectangle area)
 {

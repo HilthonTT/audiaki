@@ -169,8 +169,6 @@ double wav_duration(const wav_writer *w);
 void wav_build_header(unsigned char out[WAV_HEADER_BYTES], uint32_t data_bytes,
                       uint32_t rate, uint16_t channels, uint16_t bits);
 
-/* -- reader ---------------------------------------------------------------- */
-
 typedef struct
 {
   FILE *file;

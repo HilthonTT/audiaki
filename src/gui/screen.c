@@ -309,8 +309,6 @@ static void format_monitor_gain(char *dst, size_t size, float gain)
   snprintf(dst, size, "%+.1f dB", 20.0 * log10((double)gain));
 }
 
-/* -- laying a row of buttons out ------------------------------------------- */
-
 /*
  * A toolbar is measured from its labels rather than cut into equal slots. "Cut"
  * does not need the room "Fade out" does, and a bar that hands them the same
@@ -475,41 +473,44 @@ static int toolbar_font(float row_w)
   return font;
 }
 
-/* -- the transport bar ------------------------------------------------------ */
-
-static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int font)
+/*
+ * What every button on the bar turns on, worked out once a frame. Asking the
+ * engine again for each of them would let two buttons in the same bar disagree
+ * about whether a take is open.
+ */
+typedef struct
 {
-  int recording = st->state == AUD_ENGINE_RECORDING;
-  int paused = st->state == AUD_ENGINE_PAUSED;
-  int rendering = a->video.render != NULL;
-  int live = (recording || paused) && !covered(a);
-  int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
-  int playing = aud_player_playing(&a->player);
-  Rectangle slot[SCREEN_TRANSPORT_COUNT];
-  Rectangle play;
-  Rectangle loop;
-  Rectangle rec;
-  Rectangle pause;
-  Rectangle stop;
-  Rectangle import;
-  Rectangle export_to;
-  Rectangle export_stems;
-  Rectangle open_project;
-  Rectangle save_project;
-  float filled = place_row(r, r.x, screen_transport, SCREEN_TRANSPORT_COUNT, font, slot);
+  int recording;
+  int paused;
+  int rendering;
+  int covered;
+  int live;
+  int usable;
+  int playing;
+} transport_flags;
 
-  draw_group_rules(screen_transport, slot, SCREEN_TRANSPORT_COUNT);
+static transport_flags transport_state(const app *a, const aud_engine_status *st)
+{
+  transport_flags f;
 
-  play = slot[SCREEN_PLAY];
-  loop = slot[SCREEN_LOOP];
-  rec = slot[SCREEN_REC];
-  pause = slot[SCREEN_PAUSE];
-  stop = slot[SCREEN_STOP];
-  import = slot[SCREEN_IMPORT];
-  export_to = slot[SCREEN_EXPORT];
-  export_stems = slot[SCREEN_STEMS];
-  open_project = slot[SCREEN_OPEN];
-  save_project = slot[SCREEN_SAVE];
+  f.recording = st->state == AUD_ENGINE_RECORDING;
+  f.paused = st->state == AUD_ENGINE_PAUSED;
+  f.rendering = a->video.render != NULL;
+  f.covered = covered(a);
+  f.live = (f.recording || f.paused) && !f.covered;
+  f.usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !f.covered;
+  f.playing = aud_player_playing(&a->player);
+  return f;
+}
+
+static void draw_tape_buttons(app *a, const Rectangle *slot, const aud_engine_status *st,
+                              const transport_flags *f)
+{
+  Rectangle play = slot[SCREEN_PLAY];
+  Rectangle loop = slot[SCREEN_LOOP];
+  Rectangle rec = slot[SCREEN_REC];
+  Rectangle pause = slot[SCREEN_PAUSE];
+  Rectangle stop = slot[SCREEN_STOP];
 
   /*
    * Play first, because it is the one pressed most and the one the eye goes to
@@ -519,17 +520,17 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   /* the metronome is something to play even with an empty timeline, and
    * counting a bar in before the first take is exactly what it is for */
   if (aud_ui_toggle_icon(
-          play, AUD_UI_ICON_PLAY, playing ? "Playing" : "Play", playing, AUD_UI_OK,
-          !covered(a) && !live && (a->doc.count > 0 || a->transport.click_on)))
+          play, AUD_UI_ICON_PLAY, f->playing ? "Playing" : "Play", f->playing, AUD_UI_OK,
+          !f->covered && !f->live && (a->doc.count > 0 || a->transport.click_on)))
   {
     app_toggle_play(a);
   }
   tip(a, play,
       (a->doc.count == 0 && !a->transport.click_on)
           ? "nothing on the timeline to play - turn Click on to count instead"
-          : (live ? "stop the take first"
-                  : (playing ? "stop playing   space"
-                             : "play the selection, or from the cursor   space")));
+          : (f->live ? "stop the take first"
+                     : (f->playing ? "stop playing   space"
+                                   : "play the selection, or from the cursor   space")));
 
   /*
    * Beside Play because it is a way of playing rather than a thing of its
@@ -538,33 +539,33 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    * without stopping it first.
    */
   if (aud_ui_toggle_icon(loop, AUD_UI_ICON_LOOP, "Loop", a->transport.loop, AUD_UI_OK,
-                         !covered(a) && !live))
+                         !f->covered && !f->live))
   {
     a->transport.loop = !a->transport.loop;
     app_apply_transport(a);
   }
   tip(a, loop,
-      live ? "stop the take first"
-           : (aud_doc_has_range(&a->doc)
-                  ? "play the selection round and round   L"
-                  : "play round and round; select a passage to loop that   L"));
+      f->live ? "stop the take first"
+              : (aud_doc_has_range(&a->doc)
+                     ? "play the selection round and round   L"
+                     : "play round and round; select a passage to loop that   L"));
 
   /* a render holds the drawing thread, so no new take can start under it */
-  if (aud_ui_toggle_icon(rec, AUD_UI_ICON_RECORD, live ? "Recording" : "Record", live,
-                         AUD_UI_RECORD, usable && !live && !rendering))
+  if (aud_ui_toggle_icon(rec, AUD_UI_ICON_RECORD, f->live ? "Recording" : "Record",
+                         f->live, AUD_UI_RECORD, f->usable && !f->live && !f->rendering))
   {
     app_begin_take(a);
   }
 
-  if (rendering)
+  if (f->rendering)
   {
     tip(a, rec, "the video is still being written");
   }
-  else if (recording || paused)
+  else if (f->recording || f->paused)
   {
     tip(a, rec, "a take is already open - stop it first");
   }
-  else if (!usable)
+  else if (!f->usable)
   {
     tip(a, rec, "no capture device");
   }
@@ -573,10 +574,10 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
     tip(a, rec, "record from the cursor onto the timeline   R");
   }
 
-  if (aud_ui_toggle_icon(pause, AUD_UI_ICON_PAUSE, paused ? "Resume" : "Pause", paused,
-                         AUD_UI_WARN, live))
+  if (aud_ui_toggle_icon(pause, AUD_UI_ICON_PAUSE, f->paused ? "Resume" : "Pause",
+                         f->paused, AUD_UI_WARN, f->live))
   {
-    if (paused)
+    if (f->paused)
     {
       aud_engine_resume(a->engine);
     }
@@ -586,17 +587,17 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
     }
   }
   tip(a, pause,
-      paused ? "carry on writing to the same file   space"
-             : (recording ? "stop writing without closing the file   space"
-                          : "nothing to pause - no take is open"));
+      f->paused ? "carry on writing to the same file   space"
+                : (f->recording ? "stop writing without closing the file   space"
+                                : "nothing to pause - no take is open"));
 
   /*
    * The same slot stops the take and, once the take is stopped and its video
    * is being written, abandons that. Both are "I have had enough of this".
    */
-  if (rendering)
+  if (f->rendering)
   {
-    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Cancel", AUD_UI_WARN, !covered(a)))
+    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Cancel", AUD_UI_WARN, !f->covered))
     {
       app_cancel_render(a);
     }
@@ -604,23 +605,32 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
   }
   else
   {
-    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Stop", AUD_UI_ACCENT, live))
+    if (aud_ui_button_icon(stop, AUD_UI_ICON_STOP, "Stop", AUD_UI_ACCENT, f->live))
     {
       app_stop_take(a, st);
     }
     tip(a, stop,
-        (recording || paused) ? "close the take and put it on the timeline   S"
-                              : "nothing to stop - no take is open");
+        (f->recording || f->paused) ? "close the take and put it on the timeline   S"
+                                    : "nothing to stop - no take is open");
   }
+}
 
-  if (aud_ui_button(import, "Import", AUD_UI_ACCENT, !covered(a) && !live))
+static void draw_file_buttons(app *a, const Rectangle *slot, const transport_flags *f)
+{
+  Rectangle import = slot[SCREEN_IMPORT];
+  Rectangle export_to = slot[SCREEN_EXPORT];
+  Rectangle export_stems = slot[SCREEN_STEMS];
+  Rectangle open_project = slot[SCREEN_OPEN];
+  Rectangle save_project = slot[SCREEN_SAVE];
+
+  if (aud_ui_button(import, "Import", AUD_UI_ACCENT, !f->covered && !f->live))
   {
     app_open_dialog(a);
   }
-  tip(a, import, live ? "stop the take first" : "open a WAV as a new track   I");
+  tip(a, import, f->live ? "stop the take first" : "open a WAV as a new track   I");
 
   if (aud_ui_button(export_to, "Export", AUD_UI_ACCENT,
-                    !covered(a) && !live && a->doc.count > 0))
+                    !f->covered && !f->live && a->doc.count > 0))
   {
     app_export_dialog(a, 0);
   }
@@ -633,7 +643,7 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    * the answer is the only thing that differs: one file, or one a track.
    */
   if (aud_ui_button(export_stems, "Stems", AUD_UI_ACCENT,
-                    !covered(a) && !live && a->doc.count > 0))
+                    !f->covered && !f->live && a->doc.count > 0))
   {
     app_export_dialog(a, 1);
   }
@@ -646,14 +656,14 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
    * window - but these two write the edits rather than the audio, and the
    * tooltips are where that distinction is made.
    */
-  if (aud_ui_button(open_project, "Open", AUD_UI_ACCENT, !covered(a) && !live))
+  if (aud_ui_button(open_project, "Open", AUD_UI_ACCENT, !f->covered && !f->live))
   {
     app_open_project_dialog(a);
   }
-  tip(a, open_project, live ? "stop the take first" : "open a saved session   ctrl+O");
+  tip(a, open_project, f->live ? "stop the take first" : "open a saved session   ctrl+O");
 
   if (aud_ui_button(save_project, a->session.dirty ? "Save *" : "Save", AUD_UI_ACCENT,
-                    !covered(a) && a->doc.count > 0))
+                    !f->covered && a->doc.count > 0))
   {
     app_save_project(a);
   }
@@ -661,106 +671,119 @@ static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int
       a->doc.count == 0
           ? "nothing to save yet"
           : "save the session - the tracks and edits, not the audio   ctrl+S");
+}
 
-  /* the capture options sit at the right hand end, away from the transport */
+/* the capture options sit at the right hand end, away from the transport */
+static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st, int font,
+                               float filled, const transport_flags *f)
+{
+  float buttons_w = row_width(screen_capture, SCREEN_CAPTURE_COUNT, font);
+  float slider_w = monitor_slider_width(font);
+  float group_w = buttons_w + SCREEN_BUTTON_GAP + slider_w;
+  /*
+   * The monitoring level goes before the switches do. On a narrow window
+   * there is not room for both, and being able to turn monitoring on at all
+   * matters more than being able to set how loud it is - which the status bar
+   * says in decibels anyway, and which the command line can be told.
+   */
+  int with_slider = r.x + r.width - group_w >= filled + SCREEN_GROUP_GAP;
+  Rectangle group[SCREEN_CAPTURE_COUNT];
+  Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f, slider_w,
+                      22.0f};
+  Rectangle overdub;
+  Rectangle video;
+  Rectangle audio;
+  Rectangle monitor;
+  int wanted = a->engine != NULL && aud_engine_monitor_wanted(a->engine);
+  /*
+   * Only settable between takes: the video is rendered from the finished
+   * WAV, so changing your mind halfway through would be answered either by
+   * rendering the whole take or none of it, and neither is what the click
+   * meant.
+   */
+  int settable = f->usable && !f->live && !f->rendering;
+
+  if (!with_slider)
   {
-    float buttons_w = row_width(screen_capture, SCREEN_CAPTURE_COUNT, font);
-    float slider_w = monitor_slider_width(font);
-    float group_w = buttons_w + SCREEN_BUTTON_GAP + slider_w;
-    /*
-     * The monitoring level goes before the switches do. On a narrow window
-     * there is not room for both, and being able to turn monitoring on at all
-     * matters more than being able to set how loud it is - which the status bar
-     * says in decibels anyway, and which the command line can be told.
-     */
-    int with_slider = r.x + r.width - group_w >= filled + SCREEN_GROUP_GAP;
-    Rectangle group[SCREEN_CAPTURE_COUNT];
-    Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f,
-                        slider_w, 22.0f};
+    group_w = buttons_w;
+  }
 
-    if (!with_slider)
+  if (r.x + r.width - group_w < filled + SCREEN_GROUP_GAP)
+  {
+    return; /* too narrow a window even for those; the transport comes first */
+  }
+
+  place_row(r, r.x + r.width - group_w, screen_capture, SCREEN_CAPTURE_COUNT, font,
+            group);
+  draw_group_rules(screen_capture, group, SCREEN_CAPTURE_COUNT);
+  overdub = group[SCREEN_OVERDUB];
+  video = group[SCREEN_VIDEO];
+  audio = group[SCREEN_VIDEO_AUDIO];
+  monitor = group[SCREEN_MONITOR];
+
+  /*
+   * Playing the project while recording over it. Only settable between
+   * takes, like the video options: it decides what the transport does when
+   * Record is pressed, and changing it mid-take would answer a question that
+   * has already been answered.
+   */
+  if (aud_ui_toggle(overdub, "Overdub", a->transport.overdub, AUD_UI_OK, settable))
+  {
+    a->transport.overdub = !a->transport.overdub;
+  }
+  tip(a, overdub,
+      a->doc.count == 0
+          ? "nothing on the timeline to play along to yet"
+          : (settable ? "play the project while recording over it - use headphones"
+                      : "only settable between takes"));
+
+  if (aud_ui_toggle(video, "Video", a->video.want, AUD_UI_ACCENT, settable))
+  {
+    a->video.want = !a->video.want;
+  }
+  tip(a, video,
+      settable ? "also render an MP4 of the visualiser when the take stops"
+               : "only settable between takes");
+
+  if (aud_ui_toggle(audio, a->video.want_audio ? "Audio" : "No audio",
+                    a->video.want_audio, AUD_UI_ACCENT, settable && a->video.want))
+  {
+    a->video.want_audio = !a->video.want_audio;
+  }
+  tip(a, audio,
+      !a->video.want ? "turn Video on first"
+                     : (settable ? "whether that video carries the take's own audio"
+                                 : "only settable between takes"));
+
+  if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted, AUD_UI_OK,
+                    f->usable))
+  {
+    aud_engine_set_monitor(a->engine, !wanted);
+  }
+  tip(a, monitor, "hear the input through the default output   M");
+
+  if (with_slider)
+  {
+    if (aud_ui_slider(slider, &a->levels.monitor_gain, 0.0f, 2.0f, AUD_UI_OK, f->usable))
     {
-      group_w = buttons_w;
+      aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
     }
-    Rectangle overdub;
-    Rectangle video;
-    Rectangle audio;
-    Rectangle monitor;
-    int wanted = a->engine != NULL && aud_engine_monitor_wanted(a->engine);
-    /*
-     * Only settable between takes: the video is rendered from the finished
-     * WAV, so changing your mind halfway through would be answered either by
-     * rendering the whole take or none of it, and neither is what the click
-     * meant.
-     */
-    int settable = usable && !live && !rendering;
-
-    if (r.x + r.width - group_w < filled + SCREEN_GROUP_GAP)
-    {
-      return; /* too narrow a window even for those; the transport comes first */
-    }
-
-    place_row(r, r.x + r.width - group_w, screen_capture, SCREEN_CAPTURE_COUNT, font,
-              group);
-    draw_group_rules(screen_capture, group, SCREEN_CAPTURE_COUNT);
-    overdub = group[SCREEN_OVERDUB];
-    video = group[SCREEN_VIDEO];
-    audio = group[SCREEN_VIDEO_AUDIO];
-    monitor = group[SCREEN_MONITOR];
-
-    /*
-     * Playing the project while recording over it. Only settable between
-     * takes, like the video options: it decides what the transport does when
-     * Record is pressed, and changing it mid-take would answer a question that
-     * has already been answered.
-     */
-    if (aud_ui_toggle(overdub, "Overdub", a->transport.overdub, AUD_UI_OK, settable))
-    {
-      a->transport.overdub = !a->transport.overdub;
-    }
-    tip(a, overdub,
-        a->doc.count == 0
-            ? "nothing on the timeline to play along to yet"
-            : (settable ? "play the project while recording over it - use headphones"
-                        : "only settable between takes"));
-
-    if (aud_ui_toggle(video, "Video", a->video.want, AUD_UI_ACCENT, settable))
-    {
-      a->video.want = !a->video.want;
-    }
-    tip(a, video,
-        settable ? "also render an MP4 of the visualiser when the take stops"
-                 : "only settable between takes");
-
-    if (aud_ui_toggle(audio, a->video.want_audio ? "Audio" : "No audio",
-                      a->video.want_audio, AUD_UI_ACCENT, settable && a->video.want))
-    {
-      a->video.want_audio = !a->video.want_audio;
-    }
-    tip(a, audio,
-        !a->video.want ? "turn Video on first"
-                       : (settable ? "whether that video carries the take's own audio"
-                                   : "only settable between takes"));
-
-    if (aud_ui_toggle(monitor, st->monitoring ? "Monitor on" : "Monitor", wanted,
-                      AUD_UI_OK, usable))
-    {
-      aud_engine_set_monitor(a->engine, !wanted);
-    }
-    tip(a, monitor, "hear the input through the default output   M");
-
-    if (with_slider)
-    {
-      if (aud_ui_slider(slider, &a->levels.monitor_gain, 0.0f, 2.0f, AUD_UI_OK, usable))
-      {
-        aud_engine_set_monitor_gain(a->engine, a->levels.monitor_gain);
-      }
-      tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
-    }
+    tip(a, slider, "monitoring level, silent to +6 dB - the wheel nudges it");
   }
 }
 
-/* -- the edit bar ----------------------------------------------------------- */
+static void draw_transport(app *a, Rectangle r, const aud_engine_status *st, int font)
+{
+  transport_flags f = transport_state(a, st);
+  Rectangle slot[SCREEN_TRANSPORT_COUNT];
+  float filled = place_row(r, r.x, screen_transport, SCREEN_TRANSPORT_COUNT, font, slot);
+
+  draw_group_rules(screen_transport, slot, SCREEN_TRANSPORT_COUNT);
+
+  draw_tape_buttons(a, slot, st, &f);
+  draw_file_buttons(a, slot, &f);
+  draw_capture_group(a, r, st, font, filled, &f);
+}
 
 /*
  * The metronome, the tempo and the grid, drawn as one control at the end of
@@ -947,8 +970,6 @@ static void draw_edit_bar(app *a, Rectangle r, Rectangle wave_area, int font)
   tip(a, fit, "fit the selection, or the whole project   F");
 }
 
-/* -- the drawer ------------------------------------------------------------- */
-
 /*
  * The drawer: the visualiser, which used to be the window and is now a panel in
  * it, and the spectrum editor beside it.
@@ -1068,8 +1089,6 @@ static void draw_drawer(app *a, Rectangle r)
   }
 }
 
-/* -- the status bar --------------------------------------------------------- */
-
 /* A position on the timeline, in the units the ruler is labelled in. */
 static void format_position(char *dst, size_t size, uint64_t frame, unsigned rate)
 {
@@ -1109,14 +1128,199 @@ static void format_input_gain(char *dst, size_t size, float gain)
   snprintf(dst, size, "%+.1f dB", 20.0 * log10((double)gain));
 }
 
+static void draw_meter_group(app *a, Rectangle r, const aud_engine_status *st, float top,
+                             float *x)
+{
+  const float meter_w = 190.0f;
+  Rectangle meter = {*x, top + 4.0f, meter_w, 14.0f};
+  char text[320];
+
+  if (meter.x + meter.width >= r.x + r.width - 260.0f)
+  {
+    return;
+  }
+
+  aud_ui_meter(meter, (float)st->peak, a->levels.peak_hold);
+  *x += meter_w + 10.0f;
+
+  snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
+  aud_ui_write(AUD_UI_MONO, *x, top + 4.0f, 15,
+               st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
+  *x += 80.0f;
+
+  /*
+   * The capture gain, next to the meter it moves - which is the whole point
+   * of it being here rather than up in the transport bar with the monitoring
+   * level. Setting an input level is something you do while watching a
+   * needle, and the needle is here.
+   *
+   * Only drawn when there is room for it and the readout beside it; on a
+   * narrow window the meter is worth more than the knob, and the knob is
+   * still reachable from the command line.
+   */
+  if (*x + SCREEN_GAIN_W + 84.0f < r.x + r.width - 260.0f)
+  {
+    Rectangle gain = {*x, top + 3.0f, SCREEN_GAIN_W, 16.0f};
+    int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
+    char level[32];
+
+    if (aud_ui_slider(gain, &a->levels.input_gain, (float)AUD_GAIN_MIN,
+                      (float)AUD_GAIN_MAX, AUD_UI_WARN, usable))
+    {
+      aud_engine_set_input_gain(a->engine, a->levels.input_gain);
+    }
+    tip(a, gain,
+        "gain added to the recording itself, silent to +24 dB - watch the meter, "
+        "this one can clip the take");
+
+    *x += SCREEN_GAIN_W + 8.0f;
+    format_input_gain(level, sizeof(level), a->levels.input_gain);
+    snprintf(text, sizeof(text), "in %s", level);
+    aud_ui_write(AUD_UI_MONO, *x, top + 4.0f, 15,
+                 a->levels.input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED, text);
+    *x += 84.0f;
+  }
+}
+
+/*
+ * The selection, spelled out. A highlighted band says roughly how much; the
+ * numbers are what you need to line one take up against another, and Audacity
+ * puts them here for the same reason.
+ */
+static void draw_selection_readout(const app *a, Rectangle r, float top)
+{
+  char text[320];
+  char from[24];
+  char to[24];
+
+  format_position(from, sizeof(from), a->doc.sel_start, a->doc.rate);
+  format_position(to, sizeof(to), a->doc.sel_end, a->doc.rate);
+
+  if (aud_doc_has_range(&a->doc))
+  {
+    snprintf(text, sizeof(text), "selection  %s - %s   (%.3f s)", from, to,
+             (double)(a->doc.sel_end - a->doc.sel_start) / a->doc.rate);
+  }
+  else
+  {
+    snprintf(text, sizeof(text), "cursor  %s", from);
+  }
+  aud_ui_write_right(AUD_UI_MONO, r.x + r.width, top + 4.0f, 15, AUD_UI_MUTED, text);
+}
+
+/*
+ * The second line: what just happened. Returns how far along it reached, which
+ * is what the figures on the right have to stay clear of.
+ */
+static float draw_message(const app *a, Rectangle r, const aud_engine_status *st)
+{
+  char text[320];
+  const char *say = a->status;
+  Color colour = AUD_UI_MUTED;
+
+  if (a->video.render != NULL)
+  {
+    snprintf(text, sizeof(text), "rendering %.0f%%",
+             aud_render_progress(a->video.render) * 100.0);
+    say = text;
+    colour = AUD_UI_ACCENT;
+  }
+  else if (st->error[0] != '\0')
+  {
+    say = st->error;
+    colour = AUD_UI_RECORD;
+  }
+  else if (a->video.note[0] != '\0')
+  {
+    say = a->video.note;
+    colour = strncmp(a->video.note, "wrote", 5) == 0 ? AUD_UI_OK : AUD_UI_WARN;
+  }
+  else if (a->timeline.hint[0] != '\0' && a->status[0] == '\0')
+  {
+    say = a->timeline.hint;
+  }
+
+  aud_ui_text(r.x, r.y + 24.0f, 14, colour, say);
+  return r.x + aud_ui_measure(AUD_UI_SANS, say, 14) + 24.0f;
+}
+
+/*
+ * The monitoring level in the units it is thought about in. Down here rather
+ * than beside its own slider: the toolbar has no room for it at the minimum
+ * window width, and a number about how loud something is belongs next to the
+ * meter anyway.
+ *
+ * After the capture gain above and dimmer than it, which is the order they
+ * matter in: one of these changes the recording and the other only changes
+ * what you hear while making it.
+ */
+static void draw_monitor_readout(const app *a, Rectangle r, float top, float x)
+{
+  char text[320];
+  char level[32];
+
+  if (x + 130.0f >= r.x + r.width - 260.0f)
+  {
+    return;
+  }
+
+  format_monitor_gain(level, sizeof(level), a->levels.monitor_gain);
+  snprintf(text, sizeof(text), "monitor %s", level);
+  aud_ui_write(AUD_UI_MONO, x + 16.0f, top + 4.0f, 15, AUD_UI_FAINT, text);
+}
+
+static void draw_project_readout(app *a, Rectangle r, float said)
+{
+  char text[320];
+  float right = r.x + r.width;
+  size_t bytes = aud_doc_bytes(&a->doc);
+
+  if (bytes > 0)
+  {
+    snprintf(text, sizeof(text), "%zu track(s)   %.1f MiB", a->doc.count,
+             (double)bytes / (1024.0 * 1024.0));
+    aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_FAINT, text);
+    right -= aud_ui_measure(AUD_UI_MONO, text, 14) + 24.0f;
+  }
+
+  /*
+   * LUFS rather than more decibels, because the peak meter above already
+   * answers the dBFS question and it is not this one: it says whether the mix
+   * fits, not whether it is as loud as the record you would put it next to.
+   * The three figures are the ones every R 128 meter shows - see loudness.h.
+   *
+   * Beside what the project costs rather than up on the meter line: that
+   * meter is the input, and putting a figure about what is coming out of the
+   * speakers next to a needle about what is going into the file would invite
+   * reading one for the other.
+   */
+  if (aud_player_playing(&a->player))
+  {
+    aud_loudness_live loud;
+    char momentary[16];
+    char short_term[16];
+    char integrated[16];
+
+    aud_player_loudness(&a->player, &loud);
+    format_lufs(momentary, sizeof(momentary), loud.momentary);
+    format_lufs(short_term, sizeof(short_term), loud.short_term);
+    format_lufs(integrated, sizeof(integrated), loud.integrated);
+    snprintf(text, sizeof(text), "M %s   S %s   I %s LUFS", momentary, short_term,
+             integrated);
+
+    /* the message on the left is what just happened and wins the room */
+    if (right - aud_ui_measure(AUD_UI_MONO, text, 14) > said)
+    {
+      aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_MUTED, text);
+    }
+  }
+}
+
 static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
 {
   char clock[16];
-  char text[320];
-  float meter_w = 190.0f;
-  Rectangle meter;
   float x = r.x;
-  float said = r.x; /* how far along the second line the message reached */
+  float said;
   float top = r.y + 2.0f;
 
   DrawRectangleRec((Rectangle){0.0f, r.y, (float)GetScreenWidth(), 1.0f},
@@ -1138,179 +1342,12 @@ static void draw_status(app *a, Rectangle r, const aud_engine_status *st)
   aud_ui_text(x, top + 4.0f, 16, AUD_UI_MUTED, state_label(st->state));
   x += 92.0f;
 
-  meter.x = x;
-  meter.y = top + 4.0f;
-  meter.width = meter_w;
-  meter.height = 14.0f;
-  if (meter.x + meter.width < r.x + r.width - 260.0f)
-  {
-    aud_ui_meter(meter, (float)st->peak, a->levels.peak_hold);
-    x += meter_w + 10.0f;
-
-    snprintf(text, sizeof(text), "%.1f dBFS", aud_format_dbfs(st->peak));
-    aud_ui_write(AUD_UI_MONO, x, top + 4.0f, 15,
-                 st->clipped ? AUD_UI_RECORD : AUD_UI_MUTED, text);
-    x += 80.0f;
-
-    /*
-     * The capture gain, next to the meter it moves - which is the whole point
-     * of it being here rather than up in the transport bar with the monitoring
-     * level. Setting an input level is something you do while watching a
-     * needle, and the needle is here.
-     *
-     * Only drawn when there is room for it and the readout beside it; on a
-     * narrow window the meter is worth more than the knob, and the knob is
-     * still reachable from the command line.
-     */
-    if (x + SCREEN_GAIN_W + 84.0f < r.x + r.width - 260.0f)
-    {
-      Rectangle gain = {x, top + 3.0f, SCREEN_GAIN_W, 16.0f};
-      int usable = a->engine != NULL && st->state != AUD_ENGINE_FAILED && !covered(a);
-      char level[32];
-
-      if (aud_ui_slider(gain, &a->levels.input_gain, (float)AUD_GAIN_MIN,
-                        (float)AUD_GAIN_MAX, AUD_UI_WARN, usable))
-      {
-        aud_engine_set_input_gain(a->engine, a->levels.input_gain);
-      }
-      tip(a, gain,
-          "gain added to the recording itself, silent to +24 dB - watch the meter, "
-          "this one can clip the take");
-
-      x += SCREEN_GAIN_W + 8.0f;
-      format_input_gain(level, sizeof(level), a->levels.input_gain);
-      snprintf(text, sizeof(text), "in %s", level);
-      aud_ui_write(AUD_UI_MONO, x, top + 4.0f, 15,
-                   a->levels.input_gain > 1.0f ? AUD_UI_WARN : AUD_UI_MUTED, text);
-      x += 84.0f;
-    }
-  }
-
-  /*
-   * The selection, spelled out. A highlighted band says roughly how much; the
-   * numbers are what you need to line one take up against another, and Audacity
-   * puts them here for the same reason.
-   */
-  {
-    char from[24];
-    char to[24];
-
-    format_position(from, sizeof(from), a->doc.sel_start, a->doc.rate);
-    format_position(to, sizeof(to), a->doc.sel_end, a->doc.rate);
-
-    if (aud_doc_has_range(&a->doc))
-    {
-      snprintf(text, sizeof(text), "selection  %s - %s   (%.3f s)", from, to,
-               (double)(a->doc.sel_end - a->doc.sel_start) / a->doc.rate);
-    }
-    else
-    {
-      snprintf(text, sizeof(text), "cursor  %s", from);
-    }
-    aud_ui_write_right(AUD_UI_MONO, r.x + r.width, top + 4.0f, 15, AUD_UI_MUTED, text);
-  }
-
-  /* the second line: what just happened, and what the project is costing */
-  {
-    const char *say = a->status;
-    Color colour = AUD_UI_MUTED;
-
-    if (a->video.render != NULL)
-    {
-      snprintf(text, sizeof(text), "rendering %.0f%%",
-               aud_render_progress(a->video.render) * 100.0);
-      say = text;
-      colour = AUD_UI_ACCENT;
-    }
-    else if (st->error[0] != '\0')
-    {
-      say = st->error;
-      colour = AUD_UI_RECORD;
-    }
-    else if (a->video.note[0] != '\0')
-    {
-      say = a->video.note;
-      colour = strncmp(a->video.note, "wrote", 5) == 0 ? AUD_UI_OK : AUD_UI_WARN;
-    }
-    else if (a->timeline.hint[0] != '\0' && a->status[0] == '\0')
-    {
-      say = a->timeline.hint;
-    }
-
-    aud_ui_text(r.x, r.y + 24.0f, 14, colour, say);
-    said = r.x + aud_ui_measure(AUD_UI_SANS, say, 14) + 24.0f;
-  }
-
-  /*
-   * The monitoring level in the units it is thought about in. Down here rather
-   * than beside its own slider: the toolbar has no room for it at the minimum
-   * window width, and a number about how loud something is belongs next to the
-   * meter anyway.
-   *
-   * After the capture gain above and dimmer than it, which is the order they
-   * matter in: one of these changes the recording and the other only changes
-   * what you hear while making it.
-   */
-  {
-    char level[32];
-
-    format_monitor_gain(level, sizeof(level), a->levels.monitor_gain);
-    snprintf(text, sizeof(text), "monitor %s", level);
-    if (x + 130.0f < r.x + r.width - 260.0f)
-    {
-      aud_ui_write(AUD_UI_MONO, x + 16.0f, top + 4.0f, 15, AUD_UI_FAINT, text);
-    }
-  }
-
-  {
-    float right = r.x + r.width;
-    size_t bytes = aud_doc_bytes(&a->doc);
-
-    if (bytes > 0)
-    {
-      snprintf(text, sizeof(text), "%zu track(s)   %.1f MiB", a->doc.count,
-               (double)bytes / (1024.0 * 1024.0));
-      aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_FAINT, text);
-      right -= aud_ui_measure(AUD_UI_MONO, text, 14) + 24.0f;
-    }
-
-    /*
-     * How loud the mix is, while there is one playing.
-     *
-     * LUFS rather than more decibels, because the peak meter above already
-     * answers the dBFS question and it is not this one: it says whether the mix
-     * fits, not whether it is as loud as the record you would put it next to.
-     * The three figures are the ones every R 128 meter shows - see loudness.h.
-     *
-     * Beside what the project costs rather than up on the meter line: that
-     * meter is the input, and putting a figure about what is coming out of the
-     * speakers next to a needle about what is going into the file would invite
-     * reading one for the other.
-     */
-    if (aud_player_playing(&a->player))
-    {
-      aud_loudness_live loud;
-      char momentary[16];
-      char short_term[16];
-      char integrated[16];
-
-      aud_player_loudness(&a->player, &loud);
-      format_lufs(momentary, sizeof(momentary), loud.momentary);
-      format_lufs(short_term, sizeof(short_term), loud.short_term);
-      format_lufs(integrated, sizeof(integrated), loud.integrated);
-      snprintf(text, sizeof(text), "M %s   S %s   I %s LUFS", momentary, short_term,
-               integrated);
-
-      /* the message on the left is what just happened and wins the room */
-      if (right - aud_ui_measure(AUD_UI_MONO, text, 14) > said)
-      {
-        aud_ui_write_right(AUD_UI_MONO, right, r.y + 24.0f, 14, AUD_UI_MUTED, text);
-      }
-    }
-  }
+  draw_meter_group(a, r, st, top, &x);
+  draw_selection_readout(a, r, top);
+  said = draw_message(a, r, st);
+  draw_monitor_readout(a, r, top, x);
+  draw_project_readout(a, r, said);
 }
-
-/* -- the shortcut list ------------------------------------------------------ */
 
 /*
  * Every key the window answers to. Kept next to the keys themselves rather
@@ -1477,8 +1514,6 @@ static void draw_help(app *a, Rectangle header)
     a->help_open = 0;
   }
 }
-
-/* -- the two whole screens -------------------------------------------------- */
 
 /*
  * The window when there is no device to draw from. It keeps the picker, so a

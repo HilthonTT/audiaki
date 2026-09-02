@@ -65,8 +65,6 @@ struct aud_tuner
   double confidence;
 };
 
-/* -- note arithmetic ------------------------------------------------------- */
-
 /*
  * Sharps rather than flats. A chromatic tuner has no key signature to tell it
  * whether the note between A and B is A# or Bb, and picking one and staying
@@ -153,8 +151,6 @@ void aud_tuner_note_label(const aud_tuner_reading *reading, char *dst, size_t si
 
   snprintf(dst, size, "%s%d", reading->note, reading->octave);
 }
-
-/* -- setup ----------------------------------------------------------------- */
 
 void aud_tuner_config_defaults(aud_tuner_config *cfg, unsigned rate)
 {
@@ -286,8 +282,6 @@ size_t aud_tuner_window(const aud_tuner *t)
   return t != NULL ? t->window : 0;
 }
 
-/* -- input ----------------------------------------------------------------- */
-
 void aud_tuner_push(aud_tuner *t, const float *mono, size_t frames)
 {
   size_t n;
@@ -338,8 +332,6 @@ void aud_tuner_push_pcm(aud_tuner *t, const void *buf, size_t frames, unsigned c
     frames -= take;
   }
 }
-
-/* -- YIN ------------------------------------------------------------------- */
 
 /*
  * The newest integration + tau_max samples, which is the span every step below
@@ -472,8 +464,6 @@ static double window_level_db(const aud_tuner *t)
 
   return aud_format_dbfs(sqrt(sum / (double)t->integration));
 }
-
-/* -- analysis -------------------------------------------------------------- */
 
 /* Exponential approach: the fraction of the remaining distance to cover. */
 static double smoothing_step(double dt, double tau)

@@ -81,8 +81,6 @@ static void note(aud_repair_panel *p, const char *fmt, ...)
   va_end(args);
 }
 
-/* -- what is being looked at ------------------------------------------------ */
-
 /*
  * The lane the panel is working on: the first selected one, or - with nothing
  * selected - the first that has any audio in it. Returns d->count for none.
@@ -179,8 +177,6 @@ static void refresh(aud_repair_panel *p, aud_doc *d, size_t index, uint64_t from
   p->edits = edits;
   p->clips = clips;
 }
-
-/* -- the graph -------------------------------------------------------------- */
 
 static float x_of_hz(Rectangle g, double hz, double top_hz)
 {
@@ -413,8 +409,6 @@ static void draw_cut(const aud_spectral *s, Rectangle g, double top_hz)
   }
 }
 
-/* -- drawing on it ---------------------------------------------------------- */
-
 /* The band the brush covers around `hz`, at least a few bins wide. */
 static void brush_span(const aud_repair_panel *p, double hz, double *lo, double *hi)
 {
@@ -565,8 +559,6 @@ static void handle_graph(aud_repair_panel *p, Rectangle g, double top_hz, int en
   stroke(p, hz, (float)pow(10.0, (double)db / 20.0), p->lifting);
 }
 
-/* -- the controls ----------------------------------------------------------- */
-
 /* One slot of a row of `count` equal ones, with a gap between them. */
 static Rectangle slot(Rectangle row, float width, float *x)
 {
@@ -640,6 +632,268 @@ int aud_repair_panel_apply(aud_repair_panel *p, aud_doc *d, const char *dir)
   return 1;
 }
 
+/*
+ * The analyser belongs to the project's rate, and a session can change it.
+ * Returns 0 when there is none to draw with, having said so in the panel.
+ */
+static int ensure_analyser(aud_repair_panel *p, const aud_doc *d, Rectangle area)
+{
+  if (p->sp != NULL && aud_spectral_rate(p->sp) != d->rate)
+  {
+    aud_repair_panel_free(p);
+  }
+
+  if (p->sp == NULL)
+  {
+    p->sp = aud_spectral_create(d->rate, AUD_SPECTRAL_FFT);
+    if (p->sp == NULL)
+    {
+      aud_ui_text_centred(area, 15, AUD_UI_WARN, "not enough memory to analyse");
+      return 0;
+    }
+    p->have = 0;
+  }
+  return 1;
+}
+
+/* The result buffer follows the analyser's bin count across a rate change. */
+static void fit_result(aud_repair_panel *p)
+{
+  if (p->result_bins == aud_spectral_bins(p->sp))
+  {
+    return;
+  }
+
+  free(p->result);
+  p->result_bins = aud_spectral_bins(p->sp);
+  p->result = calloc(p->result_bins, sizeof(*p->result));
+  if (p->result == NULL)
+  {
+    p->result_bins = 0;
+  }
+}
+
+/* The panel less the dB scale, the heading above it and the controls below. */
+static Rectangle graph_area(Rectangle area)
+{
+  Rectangle g = area;
+
+  g.x += REPAIR_SCALE_W + 8.0f;
+  g.y += 24.0f;
+  g.width -= REPAIR_SCALE_W + 20.0f;
+  g.height -= 24.0f + REPAIR_CONTROLS_H;
+  return g;
+}
+
+/* the lane and the range, above the graph, because both are inferred */
+static void draw_heading(const aud_repair_panel *p, const aud_doc *d, Rectangle area,
+                         size_t index, uint64_t from, uint64_t to)
+{
+  char heading[192];
+  char span[64];
+  double seconds = d->rate > 0 ? (double)(to - from) / (double)d->rate : 0.0;
+
+  if (aud_doc_has_range(d))
+  {
+    snprintf(span, sizeof(span), "%.1fs selected", seconds);
+  }
+  else
+  {
+    snprintf(span, sizeof(span), "all %.1fs of it", seconds);
+  }
+
+  snprintf(heading, sizeof(heading), "%s  -  %s", d->tracks[index].name, span);
+  aud_ui_text(area.x + 8.0f, area.y + 5.0f, 13, AUD_UI_TEXT, heading);
+  aud_ui_text_right(area.x + area.width - 8.0f, area.y + 5.0f, 12, AUD_UI_MUTED, p->note);
+}
+
+static void draw_curves(aud_repair_panel *p, Rectangle graph, double top_hz, int usable)
+{
+  if (!p->have)
+  {
+    aud_ui_text_centred(graph, 14, AUD_UI_MUTED, "reading the audio...");
+    return;
+  }
+
+  /*
+   * Loudest first and quietest last, so nothing important is drawn under
+   * something faint: the envelope is background, what is being kept is the
+   * line to read.
+   */
+  draw_trace(p->sp, aud_spectral_peak(p->sp), graph, top_hz, Fade(AUD_UI_MUTED, 0.20f),
+             1);
+  draw_trace(p->sp, aud_spectral_mean(p->sp), graph, top_hz, AUD_UI_MUTED, 0);
+
+  if (aud_spectral_noise(p->sp) != NULL)
+  {
+    draw_trace(p->sp, aud_spectral_noise(p->sp), graph, top_hz, AUD_UI_WARN, 0);
+  }
+
+  draw_cut(p->sp, graph, top_hz);
+
+  if (p->result != NULL)
+  {
+    aud_spectral_result(p->sp, p->result);
+    draw_trace(p->sp, p->result, graph, top_hz, AUD_UI_ACCENT, 0);
+  }
+
+  handle_graph(p, graph, top_hz, usable);
+}
+
+/* Row one: the hum, and the brush. */
+static void draw_hum_row(aud_repair_panel *p, Rectangle row, int usable)
+{
+  float x = row.x;
+  Rectangle find = slot(row, 84.0f, &x);
+  Rectangle reading = slot(row, 76.0f, &x);
+  Rectangle harmonics = slot(row, 130.0f, &x);
+  Rectangle notch = slot(row, 84.0f, &x);
+  Rectangle brush = slot(row, 130.0f, &x);
+  char label[32];
+
+  if (aud_ui_button(find, "Find hum", AUD_UI_ACCENT, usable))
+  {
+    double found = aud_spectral_find_hum(p->sp);
+
+    p->hum_hz = (float)found;
+    if (found > 0.0)
+    {
+      note(p, "a steady tone at %.0f Hz - press Notch to take it and its harmonics out",
+           found);
+    }
+    else
+    {
+      note(p, "nothing steady enough to call a hum; drag the graph instead");
+    }
+  }
+  aud_ui_tooltip(find, "look for a steady tone under the take, and its harmonics");
+
+  if (p->hum_hz > 0.0f)
+  {
+    snprintf(label, sizeof(label), "%.0f Hz", (double)p->hum_hz);
+  }
+  else
+  {
+    snprintf(label, sizeof(label), "-");
+  }
+  aud_ui_text_centred(reading, 14, p->hum_hz > 0.0f ? AUD_UI_WARN : AUD_UI_MUTED, label);
+
+  snprintf(label, sizeof(label), "%d", (int)p->harmonics);
+  labelled_slider(harmonics, "harmonics", label, &p->harmonics, 1.0f,
+                  (float)AUD_REPAIR_HARMONICS_MAX, usable);
+
+  if (aud_ui_button(notch, "Notch", AUD_UI_ACCENT, usable && p->hum_hz > 0.0f))
+  {
+    double lo;
+    double hi;
+
+    brush_span(p, (double)p->hum_hz, &lo, &hi);
+    aud_spectral_notch(p->sp, (double)p->hum_hz, hi - lo, (unsigned)p->harmonics, 0.0f);
+
+    if ((int)p->harmonics > 1)
+    {
+      note(p, "notched %.0f Hz and %d harmonics of it", (double)p->hum_hz,
+           (int)p->harmonics - 1);
+    }
+    else
+    {
+      note(p, "notched %.0f Hz - raise harmonics to reach the rest of the series",
+           (double)p->hum_hz);
+    }
+  }
+  aud_ui_tooltip(notch, p->hum_hz > 0.0f ? "take that frequency and its harmonics out"
+                                         : "press Find hum first, or drag on the graph");
+
+  snprintf(label, sizeof(label), "1/%.0f oct", 1.0 / (double)p->brush);
+  labelled_slider(brush, "brush", label, &p->brush, AUD_REPAIR_BRUSH_MIN,
+                  AUD_REPAIR_BRUSH_MAX, usable);
+  aud_ui_tooltip(brush, "how wide a stroke on the graph is; the wheel over the "
+                        "graph does this too");
+}
+
+/* Row two: the noise profile, and what to do with the result. */
+static void draw_noise_row(aud_repair_panel *p, Rectangle row, int usable)
+{
+  float x = row.x;
+  Rectangle learn = slot(row, 84.0f, &x);
+  Rectangle guess = slot(row, 84.0f, &x);
+  Rectangle strength = slot(row, 130.0f, &x);
+  Rectangle floor_at = slot(row, 130.0f, &x);
+  float apply_w = 84.0f;
+  Rectangle apply = {row.x + row.width - apply_w, row.y, apply_w, row.height};
+  Rectangle reset = {apply.x - apply_w - 6.0f, row.y, apply_w, row.height};
+  char label[32];
+  float strength_v = aud_spectral_strength(p->sp);
+  float floor_v = aud_spectral_floor_db(p->sp);
+  int have_noise = aud_spectral_noise(p->sp) != NULL;
+  int ready = usable && aud_spectral_would_change(p->sp);
+
+  if (aud_ui_toggle(learn, "Learn", have_noise, AUD_UI_WARN, usable))
+  {
+    if (have_noise)
+    {
+      aud_spectral_forget_noise(p->sp);
+      note(p, "noise profile forgotten");
+    }
+    else
+    {
+      aud_spectral_learn_noise(p->sp);
+      note(p, "took this selection as the noise itself - now select the take");
+    }
+  }
+  aud_ui_tooltip(learn, have_noise ? "forget the noise profile"
+                                   : "select a stretch with nothing played on it, then "
+                                     "press this");
+
+  if (aud_ui_button(guess, "Guess", AUD_UI_WARN, usable))
+  {
+    aud_spectral_guess_noise(p->sp);
+    note(p, "took the quietest each frequency ever got as the noise floor");
+  }
+  aud_ui_tooltip(guess, "work the noise floor out from this selection, without "
+                        "needing a silent stretch");
+
+  snprintf(label, sizeof(label), "%.2fx", (double)strength_v);
+  if (labelled_slider(strength, "reduce", label, &strength_v, 0.0f,
+                      AUD_SPECTRAL_STRENGTH_MAX, usable && have_noise))
+  {
+    aud_spectral_set_reduction(p->sp, strength_v, floor_v);
+  }
+  aud_ui_tooltip(strength, have_noise ? "how hard the noise profile is subtracted"
+                                      : "learn or guess a noise profile first");
+
+  snprintf(label, sizeof(label), "%.0f dB", (double)floor_v);
+  if (labelled_slider(floor_at, "floor", label, &floor_v, AUD_SPECTRAL_FLOOR_MIN_DB,
+                      AUD_SPECTRAL_FLOOR_MAX_DB, usable && have_noise))
+  {
+    aud_spectral_set_reduction(p->sp, strength_v, floor_v);
+  }
+  aud_ui_tooltip(floor_at, "how far down it may pull; less is gentler and warbles "
+                           "less");
+
+  if (aud_ui_button(reset, "Reset", AUD_UI_MUTED, usable))
+  {
+    aud_spectral_flatten(p->sp);
+    aud_spectral_forget_noise(p->sp);
+    p->hum_hz = 0.0f;
+    note(p, "back to the audio as it was recorded");
+  }
+  aud_ui_tooltip(reset, "put the whole curve back to flat");
+
+  /*
+   * Asked for rather than done. What this costs - rewritten audio and a
+   * file on disk - is a question the window puts up, and it is the window
+   * that carries it out if the answer is yes.
+   */
+  if (aud_ui_button(apply, "Apply", AUD_UI_OK, ready))
+  {
+    p->apply_wanted = 1;
+  }
+  aud_ui_tooltip(apply, ready ? "write this back onto the track; one press of "
+                                "Undo takes it off again"
+                              : "drag something out of the spectrum first");
+}
+
 void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int enabled)
 {
   Rectangle graph;
@@ -650,7 +904,6 @@ void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int 
   uint64_t to = 0;
   double top_hz;
   int usable;
-  float x;
 
   if (p == NULL || d == NULL)
   {
@@ -674,62 +927,17 @@ void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int 
     return;
   }
 
-  /* The analyser belongs to the project's rate, and a session can change it. */
-  if (p->sp != NULL && aud_spectral_rate(p->sp) != d->rate)
+  if (!ensure_analyser(p, d, area))
   {
-    aud_repair_panel_free(p);
-  }
-  if (p->sp == NULL)
-  {
-    p->sp = aud_spectral_create(d->rate, AUD_SPECTRAL_FFT);
-    if (p->sp == NULL)
-    {
-      aud_ui_text_centred(area, 15, AUD_UI_WARN, "not enough memory to analyse");
-      return;
-    }
-    p->have = 0;
+    return;
   }
 
   working_range(d, index, &from, &to);
   refresh(p, d, index, from, to);
+  fit_result(p);
 
-  if (p->result_bins != aud_spectral_bins(p->sp))
-  {
-    free(p->result);
-    p->result_bins = aud_spectral_bins(p->sp);
-    p->result = calloc(p->result_bins, sizeof(*p->result));
-    if (p->result == NULL)
-    {
-      p->result_bins = 0;
-    }
-  }
-
-  graph = area;
-  graph.x += REPAIR_SCALE_W + 8.0f;
-  graph.y += 24.0f;
-  graph.width -= REPAIR_SCALE_W + 20.0f;
-  graph.height -= 24.0f + REPAIR_CONTROLS_H;
-
-  /* the lane and the range, above the graph, because both are inferred */
-  {
-    char heading[192];
-    char span[64];
-    double seconds = d->rate > 0 ? (double)(to - from) / (double)d->rate : 0.0;
-
-    if (aud_doc_has_range(d))
-    {
-      snprintf(span, sizeof(span), "%.1fs selected", seconds);
-    }
-    else
-    {
-      snprintf(span, sizeof(span), "all %.1fs of it", seconds);
-    }
-
-    snprintf(heading, sizeof(heading), "%s  -  %s", d->tracks[index].name, span);
-    aud_ui_text(area.x + 8.0f, area.y + 5.0f, 13, AUD_UI_TEXT, heading);
-    aud_ui_text_right(area.x + area.width - 8.0f, area.y + 5.0f, 12, AUD_UI_MUTED,
-                      p->note);
-  }
+  graph = graph_area(area);
+  draw_heading(p, d, area, index, from, to);
 
   if (graph.width < REPAIR_MIN_GRAPH_W || graph.height < REPAIR_MIN_GRAPH_H)
   {
@@ -742,41 +950,8 @@ void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int 
 
   DrawRectangleRec(graph, BLACK);
   draw_grid(graph, top_hz);
-
-  if (!p->have)
-  {
-    aud_ui_text_centred(graph, 14, AUD_UI_MUTED, "reading the audio...");
-  }
-  else
-  {
-    /*
-     * Loudest first and quietest last, so nothing important is drawn under
-     * something faint: the envelope is background, what is being kept is the
-     * line to read.
-     */
-    draw_trace(p->sp, aud_spectral_peak(p->sp), graph, top_hz, Fade(AUD_UI_MUTED, 0.20f),
-               1);
-    draw_trace(p->sp, aud_spectral_mean(p->sp), graph, top_hz, AUD_UI_MUTED, 0);
-
-    if (aud_spectral_noise(p->sp) != NULL)
-    {
-      draw_trace(p->sp, aud_spectral_noise(p->sp), graph, top_hz, AUD_UI_WARN, 0);
-    }
-
-    draw_cut(p->sp, graph, top_hz);
-
-    if (p->result != NULL)
-    {
-      aud_spectral_result(p->sp, p->result);
-      draw_trace(p->sp, p->result, graph, top_hz, AUD_UI_ACCENT, 0);
-    }
-
-    handle_graph(p, graph, top_hz, usable);
-  }
-
+  draw_curves(p, graph, top_hz, usable);
   DrawRectangleLinesEx(graph, 1.0f, AUD_UI_EDGE);
-
-  /* -- the two rows of controls -- */
 
   row_one.x = area.x + 8.0f;
   row_one.width = area.width - 16.0f;
@@ -786,163 +961,6 @@ void aud_repair_panel_draw(aud_repair_panel *p, aud_doc *d, Rectangle area, int 
   row_two = row_one;
   row_two.y = row_one.y + REPAIR_ROW_H + REPAIR_ROW_GAP;
 
-  /* Row one: the hum, and the brush. */
-  x = row_one.x;
-  {
-    Rectangle find = slot(row_one, 84.0f, &x);
-    Rectangle reading = slot(row_one, 76.0f, &x);
-    Rectangle harmonics = slot(row_one, 130.0f, &x);
-    Rectangle notch = slot(row_one, 84.0f, &x);
-    Rectangle brush = slot(row_one, 130.0f, &x);
-    char label[32];
-
-    if (aud_ui_button(find, "Find hum", AUD_UI_ACCENT, usable))
-    {
-      double found = aud_spectral_find_hum(p->sp);
-
-      p->hum_hz = (float)found;
-      if (found > 0.0)
-      {
-        note(p,
-             "a steady tone at %.0f Hz - press Notch to take it and its "
-             "harmonics out",
-             found);
-      }
-      else
-      {
-        note(p, "nothing steady enough to call a hum; drag the graph instead");
-      }
-    }
-    aud_ui_tooltip(find, "look for a steady tone under the take, and its harmonics");
-
-    if (p->hum_hz > 0.0f)
-    {
-      snprintf(label, sizeof(label), "%.0f Hz", (double)p->hum_hz);
-    }
-    else
-    {
-      snprintf(label, sizeof(label), "-");
-    }
-    aud_ui_text_centred(reading, 14, p->hum_hz > 0.0f ? AUD_UI_WARN : AUD_UI_MUTED,
-                        label);
-
-    snprintf(label, sizeof(label), "%d", (int)p->harmonics);
-    labelled_slider(harmonics, "harmonics", label, &p->harmonics, 1.0f,
-                    (float)AUD_REPAIR_HARMONICS_MAX, usable);
-
-    if (aud_ui_button(notch, "Notch", AUD_UI_ACCENT, usable && p->hum_hz > 0.0f))
-    {
-      double lo;
-      double hi;
-
-      brush_span(p, (double)p->hum_hz, &lo, &hi);
-      aud_spectral_notch(p->sp, (double)p->hum_hz, hi - lo, (unsigned)p->harmonics, 0.0f);
-
-      if ((int)p->harmonics > 1)
-      {
-        note(p, "notched %.0f Hz and %d harmonics of it", (double)p->hum_hz,
-             (int)p->harmonics - 1);
-      }
-      else
-      {
-        note(p, "notched %.0f Hz - raise harmonics to reach the rest of the series",
-             (double)p->hum_hz);
-      }
-    }
-    aud_ui_tooltip(notch, p->hum_hz > 0.0f
-                              ? "take that frequency and its harmonics out"
-                              : "press Find hum first, or drag on the graph");
-
-    snprintf(label, sizeof(label), "1/%.0f oct", 1.0 / (double)p->brush);
-    labelled_slider(brush, "brush", label, &p->brush, AUD_REPAIR_BRUSH_MIN,
-                    AUD_REPAIR_BRUSH_MAX, usable);
-    aud_ui_tooltip(brush, "how wide a stroke on the graph is; the wheel over the "
-                          "graph does this too");
-  }
-
-  /* Row two: the noise profile, and what to do with the result. */
-  x = row_two.x;
-  {
-    Rectangle learn = slot(row_two, 84.0f, &x);
-    Rectangle guess = slot(row_two, 84.0f, &x);
-    Rectangle strength = slot(row_two, 130.0f, &x);
-    Rectangle floor_at = slot(row_two, 130.0f, &x);
-    float apply_w = 84.0f;
-    Rectangle apply = {row_two.x + row_two.width - apply_w, row_two.y, apply_w,
-                       row_two.height};
-    Rectangle reset = {apply.x - apply_w - 6.0f, row_two.y, apply_w, row_two.height};
-    char label[32];
-    float strength_v = aud_spectral_strength(p->sp);
-    float floor_v = aud_spectral_floor_db(p->sp);
-    int have_noise = aud_spectral_noise(p->sp) != NULL;
-
-    if (aud_ui_toggle(learn, "Learn", have_noise, AUD_UI_WARN, usable))
-    {
-      if (have_noise)
-      {
-        aud_spectral_forget_noise(p->sp);
-        note(p, "noise profile forgotten");
-      }
-      else
-      {
-        aud_spectral_learn_noise(p->sp);
-        note(p, "took this selection as the noise itself - now select the take");
-      }
-    }
-    aud_ui_tooltip(learn, have_noise ? "forget the noise profile"
-                                     : "select a stretch with nothing played on it, then "
-                                       "press this");
-
-    if (aud_ui_button(guess, "Guess", AUD_UI_WARN, usable))
-    {
-      aud_spectral_guess_noise(p->sp);
-      note(p, "took the quietest each frequency ever got as the noise floor");
-    }
-    aud_ui_tooltip(guess, "work the noise floor out from this selection, without "
-                          "needing a silent stretch");
-
-    snprintf(label, sizeof(label), "%.2fx", (double)strength_v);
-    if (labelled_slider(strength, "reduce", label, &strength_v, 0.0f,
-                        AUD_SPECTRAL_STRENGTH_MAX, usable && have_noise))
-    {
-      aud_spectral_set_reduction(p->sp, strength_v, floor_v);
-    }
-    aud_ui_tooltip(strength, have_noise ? "how hard the noise profile is subtracted"
-                                        : "learn or guess a noise profile first");
-
-    snprintf(label, sizeof(label), "%.0f dB", (double)floor_v);
-    if (labelled_slider(floor_at, "floor", label, &floor_v, AUD_SPECTRAL_FLOOR_MIN_DB,
-                        AUD_SPECTRAL_FLOOR_MAX_DB, usable && have_noise))
-    {
-      aud_spectral_set_reduction(p->sp, strength_v, floor_v);
-    }
-    aud_ui_tooltip(floor_at, "how far down it may pull; less is gentler and warbles "
-                             "less");
-
-    if (aud_ui_button(reset, "Reset", AUD_UI_MUTED, usable))
-    {
-      aud_spectral_flatten(p->sp);
-      aud_spectral_forget_noise(p->sp);
-      p->hum_hz = 0.0f;
-      note(p, "back to the audio as it was recorded");
-    }
-    aud_ui_tooltip(reset, "put the whole curve back to flat");
-
-    {
-      int ready = usable && aud_spectral_would_change(p->sp);
-
-      /*
-       * Asked for rather than done. What this costs - rewritten audio and a
-       * file on disk - is a question the window puts up, and it is the window
-       * that carries it out if the answer is yes.
-       */
-      if (aud_ui_button(apply, "Apply", AUD_UI_OK, ready))
-      {
-        p->apply_wanted = 1;
-      }
-      aud_ui_tooltip(apply, ready ? "write this back onto the track; one press of "
-                                    "Undo takes it off again"
-                                  : "drag something out of the spectrum first");
-    }
-  }
+  draw_hum_row(p, row_one, usable);
+  draw_noise_row(p, row_two, usable);
 }

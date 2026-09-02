@@ -86,8 +86,6 @@ void app_confirm_dismiss(app *a)
   memset(&a->confirm, 0, sizeof(a->confirm));
 }
 
-/* -- what is worth asking about --------------------------------------------- */
-
 /*
  * Whether `action` takes a checkpoint, and so would throw away the redo stack.
  * The ones that do not are the ones that change no audio: undo and redo
@@ -488,8 +486,6 @@ int app_confirm_quit(app *a)
 
   return 1;
 }
-
-/* -- the dialog ------------------------------------------------------------- */
 
 int app_confirm_draw(app *a)
 {

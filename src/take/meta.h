@@ -96,8 +96,6 @@ void aud_meta_stamp_now(aud_meta *m, unsigned rate);
  */
 size_t aud_meta_build(const aud_meta *m, unsigned char *out, size_t size);
 
-/* -- reading back ---------------------------------------------------------- */
-
 /*
  * What was found in a file. Empty strings mean the field was absent; `present`
  * is non-zero once anything at all has been read, which is what a printer

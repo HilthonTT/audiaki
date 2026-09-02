@@ -34,8 +34,6 @@
 #define AUD_HOST_LITTLE_ENDIAN 0
 #endif
 
-/* -- reads ----------------------------------------------------------------- */
-
 static inline uint16_t aud_rd_u16le(const unsigned char *p)
 {
   return (uint16_t)((uint16_t)p[0] | ((uint16_t)p[1] << 8));
@@ -97,8 +95,6 @@ static inline double aud_rd_f64le(const unsigned char *p)
   memcpy(&v, &bits, sizeof(v));
   return v;
 }
-
-/* -- writes ---------------------------------------------------------------- */
 
 static inline void aud_wr_u16le(unsigned char *p, uint16_t v)
 {

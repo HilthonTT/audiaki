@@ -79,8 +79,6 @@ int aud_project_is_project(const char *path)
   return 1;
 }
 
-/* -- writing --------------------------------------------------------------- */
-
 /*
  * The distinct blocks a project refers to, in the order they are written. Two
  * clips over one block - what a split leaves behind - name the same source, so
@@ -363,8 +361,6 @@ failed:
   say(why, "the project could not be written");
   return -1;
 }
-
-/* -- reading --------------------------------------------------------------- */
 
 /* Split `line` into its keyword and whatever follows it, both trimmed. */
 static char *split_word(char *line, char **rest)

@@ -1169,8 +1169,6 @@ void aud_track_tidy(aud_track *t)
   }
 }
 
-/* -- recording -------------------------------------------------------------- */
-
 int aud_track_recording(const aud_track *t)
 {
   return t != NULL && t->recording >= 0 && (size_t)t->recording < t->count;

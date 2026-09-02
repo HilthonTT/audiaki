@@ -204,8 +204,6 @@ static void app_place_prefix(app *a)
   }
 }
 
-/* -- the app, as the shell sees it ------------------------------------------ */
-
 /*
  * The state, on the heap.
  *
@@ -240,21 +238,17 @@ static void app_name_styles(app *a)
   }
 }
 
-int aud_plug_init(int argc, char **argv)
+/* Every way out of aud_plug_init() before the window is up. */
+static int plug_failed(app *a, int rc)
 {
-  aud_config cfg;
-  app *a;
-  int rc;
+  app_free(a);
+  plug = NULL;
+  return rc;
+}
 
-  a = calloc(1u, sizeof(*a));
-  if (a == NULL)
-  {
-    aud_error("cannot allocate the window's state");
-    return EXIT_FAILURE;
-  }
-  plug = a;
-  a->self_size = sizeof(*a);
-
+/* What the window is before the config file or the command line touch it. */
+static void plug_set_defaults(app *a)
+{
   aud_engine_config_defaults(&a->cfg);
   snprintf(a->rec.prefix, sizeof(a->rec.prefix), "%s", APP_DEFAULT_PREFIX);
   a->levels.monitor_gain = 1.0f;
@@ -279,26 +273,21 @@ int aud_plug_init(int argc, char **argv)
   /* the sentinel, until the config file or --latency says otherwise below */
   a->transport.latency_ms = -1.0;
 
-  /*
-   * A quarter of a second of drain per pass at the usual channel counts. The
-   * ring holds four seconds, so this empties it comfortably faster than it
-   * fills even on a frame that took far longer than a frame should. How many
-   * frames that is depends on the device, and is worked out in app_open_engine.
-   */
-  a->rec.buf = malloc(APP_TAKE_BUF_SAMPLES * sizeof(float));
-  if (a->rec.buf == NULL)
-  {
-    aud_error("cannot allocate the take buffer");
-    app_free(a);
-    plug = NULL;
-    return EXIT_FAILURE;
-  }
+  a->video.want_audio = 1; /* before parse_args, which only ever clears it */
+  a->video.width = AUD_RENDER_DEFAULT_WIDTH;
+  a->video.height = AUD_RENDER_DEFAULT_HEIGHT;
+  a->video.fps = AUD_RENDER_DEFAULT_FPS;
+}
 
-  /*
-   * The same file the CLI reads, and for the same reason: where takes are kept
-   * is answered once and then meant every session. Before parse_args, which is
-   * what lets --dir and --no-dialog say otherwise.
-   */
+/*
+ * The same file the CLI reads, and for the same reason: where takes are kept
+ * is answered once and then meant every session. Before parse_args, which is
+ * what lets --dir and --no-dialog say otherwise.
+ */
+static void plug_apply_config(app *a)
+{
+  aud_config cfg;
+
   aud_config_load(&cfg);
   snprintf(a->rec.dir, sizeof(a->rec.dir), "%s", cfg.take_dir);
   a->transport.latency_ms = cfg.latency_ms; /* --latency on the command line still wins */
@@ -315,45 +304,25 @@ int aud_plug_init(int argc, char **argv)
    * and Export is how a finished mix leaves.
    */
   a->rec.want_dialog = cfg.prompt == AUD_PROMPT_ALWAYS;
-  a->video.want_audio = 1; /* before parse_args, which only ever clears it */
-  a->video.width = AUD_RENDER_DEFAULT_WIDTH;
-  a->video.height = AUD_RENDER_DEFAULT_HEIGHT;
-  a->video.fps = AUD_RENDER_DEFAULT_FPS;
+}
 
-  app_name_styles(a);
+/* the same variable the CLI honours; --backend on the command line wins */
+static void plug_pick_backend(app *a)
+{
+  const char *env_backend = getenv("AUDIAKI_BACKEND");
 
+  a->backend = AUD_BACKEND_AUTO;
+  if (env_backend != NULL && *env_backend != '\0' &&
+      aud_backend_parse(env_backend, &a->backend) != 0)
   {
-    /* the same variable the CLI honours; --backend on the command line wins */
-    const char *env_backend = getenv("AUDIAKI_BACKEND");
-
+    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
+             env_backend);
     a->backend = AUD_BACKEND_AUTO;
-    if (env_backend != NULL && *env_backend != '\0' &&
-        aud_backend_parse(env_backend, &a->backend) != 0)
-    {
-      aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
-               env_backend);
-      a->backend = AUD_BACKEND_AUTO;
-    }
   }
+}
 
-  rc = app_parse_args(a, argc, argv);
-  if (rc != 0)
-  {
-    app_free(a);
-    plug = NULL;
-    return rc < 0 ? -1 : rc;
-  }
-
-  app_place_prefix(a);
-
-  /* before the first enumeration: the dropdown is filled from whichever answers */
-  if (aud_backend_select(a->backend) != 0)
-  {
-    app_free(a);
-    plug = NULL;
-    return EXIT_FAILURE;
-  }
-
+static void plug_open_window(void)
+{
   /* raylib is chatty on stdout by default; audiaki reports through log.h */
   SetTraceLogLevel(aud_log_get_level() == AUD_LOG_VERBOSE ? LOG_INFO : LOG_WARNING);
   SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT | FLAG_VSYNC_HINT);
@@ -361,7 +330,10 @@ int aud_plug_init(int argc, char **argv)
   SetWindowMinSize(APP_MIN_WIDTH, APP_MIN_HEIGHT);
   SetTargetFPS(60);
   SetExitKey(KEY_NULL); /* Escape closing an open take would be unforgivable */
+}
 
+static void plug_start_device(app *a)
+{
   /*
    * The project takes its rate from whatever the device negotiated, so a take
    * lands on the timeline at the rate it was recorded at rather than being
@@ -388,40 +360,100 @@ int aud_plug_init(int argc, char **argv)
     aud_engine_set_monitor(a->engine, a->start_monitor);
     aud_doc_init(&a->doc, aud_engine_rate(a->engine));
   }
+}
 
-  /* whatever was named on the command line, now that there is a rate to put
-   * it at and a window to say so in if one of them will not open */
+/*
+ * A session opens as a session and a WAV as a track, so one argument list
+ * covers both and 'audiaki-gui yesterday.aki' does what it looks like. Only
+ * the first project named: opening a second would throw the first away.
+ */
+static void plug_open_project(app *a, const char *path)
+{
+  const char *why = NULL;
+
+  if (a->session.path[0] != '\0')
+  {
+    aud_warn("only one project can be open; ignoring %s", path);
+  }
+  else if (aud_project_load(&a->doc, path, &why) != 0)
+  {
+    aud_error("cannot open %s: %s", path, why != NULL ? why : "unknown");
+    app_set_status(a, "cannot open %.80s: %s", aud_path_basename(path),
+                   why != NULL ? why : "unknown");
+  }
+  else
+  {
+    snprintf(a->session.path, sizeof(a->session.path), "%s", path);
+    a->session.dirty = 0;
+  }
+}
+
+/* whatever was named on the command line, now that there is a rate to put
+ * it at and a window to say so in if one of them will not open */
+static void plug_open_named_files(app *a)
+{
   for (int i = 0; i < a->open_count; i++)
   {
-    /*
-     * A session opens as a session and a WAV as a track, so one argument list
-     * covers both and 'audiaki-gui yesterday.aki' does what it looks like.
-     * Only the first project named: opening a second would throw the first away.
-     */
     if (aud_project_is_project(a->open_paths[i]))
     {
-      const char *why = NULL;
-
-      if (a->session.path[0] != '\0')
-      {
-        aud_warn("only one project can be open; ignoring %s", a->open_paths[i]);
-      }
-      else if (aud_project_load(&a->doc, a->open_paths[i], &why) != 0)
-      {
-        aud_error("cannot open %s: %s", a->open_paths[i], why != NULL ? why : "unknown");
-        app_set_status(a, "cannot open %.80s: %s", aud_path_basename(a->open_paths[i]),
-                       why != NULL ? why : "unknown");
-      }
-      else
-      {
-        snprintf(a->session.path, sizeof(a->session.path), "%s", a->open_paths[i]);
-        a->session.dirty = 0;
-      }
+      plug_open_project(a, a->open_paths[i]);
       continue;
     }
 
     app_load_track(a, a->open_paths[i]);
   }
+}
+
+int aud_plug_init(int argc, char **argv)
+{
+  app *a;
+  int rc;
+
+  a = calloc(1u, sizeof(*a));
+  if (a == NULL)
+  {
+    aud_error("cannot allocate the window's state");
+    return EXIT_FAILURE;
+  }
+  plug = a;
+  a->self_size = sizeof(*a);
+
+  plug_set_defaults(a);
+
+  /*
+   * A quarter of a second of drain per pass at the usual channel counts. The
+   * ring holds four seconds, so this empties it comfortably faster than it
+   * fills even on a frame that took far longer than a frame should. How many
+   * frames that is depends on the device, and is worked out in app_open_engine.
+   */
+  a->rec.buf = malloc(APP_TAKE_BUF_SAMPLES * sizeof(float));
+  if (a->rec.buf == NULL)
+  {
+    aud_error("cannot allocate the take buffer");
+    return plug_failed(a, EXIT_FAILURE);
+  }
+
+  plug_apply_config(a);
+  app_name_styles(a);
+  plug_pick_backend(a);
+
+  rc = app_parse_args(a, argc, argv);
+  if (rc != 0)
+  {
+    return plug_failed(a, rc < 0 ? -1 : rc);
+  }
+
+  app_place_prefix(a);
+
+  /* before the first enumeration: the dropdown is filled from whichever answers */
+  if (aud_backend_select(a->backend) != 0)
+  {
+    return plug_failed(a, EXIT_FAILURE);
+  }
+
+  plug_open_window();
+  plug_start_device(a);
+  plug_open_named_files(a);
 
   /*
    * After the files, so a tempo asked for on the command line is the one that
@@ -643,8 +675,6 @@ void aud_plug_shutdown(void)
   app_free(a);
   plug = NULL;
 }
-
-/* -- being replaced --------------------------------------------------------- */
 
 /*
  * The library is about to be thrown away, and the state has to be able to

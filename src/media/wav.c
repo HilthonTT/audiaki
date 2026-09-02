@@ -403,8 +403,6 @@ double wav_duration(const wav_writer *w)
   return (double)(w->data_bytes / block_align) / (double)w->rate;
 }
 
-/* -- reader ---------------------------------------------------------------- */
-
 #define WAV_FORMAT_PCM 0x0001u
 #define WAV_FORMAT_FLOAT 0x0003u
 #define WAV_FORMAT_EXTENSIBLE 0xFFFEu

@@ -146,12 +146,8 @@ typedef struct
   int dirty;
 } aud_doc;
 
-/* -- lifecycle ------------------------------------------------------------- */
-
 void aud_doc_init(aud_doc *d, unsigned rate);
 void aud_doc_free(aud_doc *d);
-
-/* -- tracks ---------------------------------------------------------------- */
 
 /*
  * Append an empty track and return it, or NULL when there is no room. The
@@ -171,8 +167,6 @@ uint64_t aud_doc_end(const aud_doc *d);
 
 /* Frames of audio held across every track, for the memory readout. */
 size_t aud_doc_bytes(const aud_doc *d);
-
-/* -- the tempo ------------------------------------------------------------- */
 
 /*
  * Set the tempo, held to what click.h will play. A `bpm` outside those bounds
@@ -229,8 +223,6 @@ uint64_t aud_doc_snap(const aud_doc *d, uint64_t frame);
  */
 uint64_t aud_doc_grid_step(const aud_doc *d, uint64_t frame, int back);
 
-/* -- markers --------------------------------------------------------------- */
-
 /*
  * Put a marker at `at`, called `name` - which may be NULL or empty for one that
  * is only a place. Returns its index, or -1 when there is no room for another.
@@ -281,8 +273,6 @@ uint64_t aud_doc_marker_step(const aud_doc *d, uint64_t frame, int back);
  */
 void aud_doc_markers_ripple(aud_doc *d, uint64_t at, int64_t by);
 
-/* -- selection ------------------------------------------------------------- */
-
 /* Put the cursor at `frame` and collapse the selection onto it. */
 void aud_doc_set_cursor(aud_doc *d, uint64_t frame);
 
@@ -312,8 +302,6 @@ int aud_doc_any_track_selected(const aud_doc *d);
  * nothing has been selected at all.
  */
 void aud_doc_select_all(aud_doc *d);
-
-/* -- undo ------------------------------------------------------------------ */
 
 /*
  * Remember the project as it is now, under `label`, before changing it. Called

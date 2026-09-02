@@ -115,8 +115,6 @@ typedef struct
   long recording;
 } aud_track;
 
-/* -- lifecycle ------------------------------------------------------------- */
-
 /* Set up an empty track. Returns 0, or -1 if the arguments are unusable. */
 int aud_track_init(aud_track *t, const char *name, unsigned channels);
 
@@ -131,8 +129,6 @@ void aud_track_free(aud_track *t);
  * Returns 0 on success, -1 when the list could not be allocated.
  */
 int aud_track_copy(aud_track *dst, const aud_track *src);
-
-/* -- reading --------------------------------------------------------------- */
 
 /* One past the last frame any clip reaches, or 0 for an empty track. */
 uint64_t aud_track_end(const aud_track *t);
@@ -179,8 +175,6 @@ void aud_track_range(const aud_track *t, unsigned ch, uint64_t from, uint64_t to
  * what the track holds rather than something the mix decides.
  */
 void aud_track_read(const aud_track *t, uint64_t at, float *interleaved, size_t frames);
-
-/* -- editing --------------------------------------------------------------- */
 
 /*
  * Place `audio` on the timeline at `start`, as one clip covering all of it.
@@ -338,8 +332,6 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
  * `src`'s length. Returns 0 on success, -1 on failure.
  */
 int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src);
-
-/* -- recording into a track ------------------------------------------------- */
 
 /*
  * Open a clip at `start` that will grow as audio arrives, so a take appears on

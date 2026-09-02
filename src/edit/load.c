@@ -183,8 +183,6 @@ int aud_edit_load_wav(aud_doc *d, const char *path, const char **why)
   return (int)index;
 }
 
-/* -- writing one back out --------------------------------------------------- */
-
 /*
  * One float sample as LOAD_WRITE_BITS of little-endian PCM.
  *

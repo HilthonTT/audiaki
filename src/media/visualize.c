@@ -422,25 +422,262 @@ void aud_visualize_defaults(aud_visualize_options *opts)
   opts->style = AUD_VIZ_STYLE_BARS;
 }
 
-int aud_visualize_render(const aud_visualize_options *opts)
+/*
+ * Everything one render owns. Gathered rather than threaded through, because
+ * the frame loop wants nearly all of it and because whichever step fails then
+ * has one place to be cleaned up from.
+ */
+typedef struct
 {
+  const aud_visualize_options *opts;
   wav_reader reader;
   aud_canvas canvas;
-  aud_spectrum_config spec_cfg;
-  aud_spectrum *spec = NULL;
-  FFMPEG *ffmpeg = NULL;
-  float *chunk = NULL;
-  float *caps = NULL;
-  float *scope = NULL;
-  float *env_lo = NULL;
-  float *env_hi = NULL;
-  size_t scope_frames = 0;
+  aud_spectrum *spec;
+  FFMPEG *ffmpeg;
+  float *chunk;
+  float *caps;
+  float *scope;
+  size_t scope_frames;
+  float *env_lo;
+  float *env_hi;
   uint64_t total_video_frames;
   uint64_t total_audio_frames;
-  uint64_t consumed = 0;
+  uint64_t consumed;
   double dt;
   int needs_audio;
-  int cancelled = 0;
+  int cancelled;
+} viz_render;
+
+static int viz_open_input(viz_render *v)
+{
+  const aud_visualize_options *opts = v->opts;
+
+  if (wav_read_open(&v->reader, opts->input_path) != 0)
+  {
+    if (v->reader.error != NULL && errno != 0)
+    {
+      aud_error("cannot read %s: %s (%s)", opts->input_path, v->reader.error,
+                strerror(errno));
+    }
+    else
+    {
+      aud_error("cannot read %s: %s", opts->input_path,
+                v->reader.error != NULL ? v->reader.error : "unrecognised file");
+    }
+    return -1;
+  }
+
+  if (v->reader.frames == 0)
+  {
+    aud_error("%s contains no audio", opts->input_path);
+    wav_read_close(&v->reader);
+    return -1;
+  }
+
+  /* ceil, so the last partial video frame is still rendered */
+  v->total_audio_frames = v->reader.frames;
+  v->total_video_frames =
+      (v->reader.frames * opts->fps + v->reader.rate - 1u) / (uint64_t)v->reader.rate;
+  if (v->total_video_frames == 0)
+  {
+    v->total_video_frames = 1;
+  }
+  return 0;
+}
+
+static int viz_buffers_init(viz_render *v)
+{
+  const aud_visualize_options *opts = v->opts;
+  aud_spectrum_config spec_cfg;
+
+  /*
+   * The waveform style knows the whole take before the first frame is drawn,
+   * so the render pass only has to follow the playhead. The other two are
+   * looking at the audio as it goes past and have to decode it.
+   */
+  v->needs_audio = opts->style != AUD_VIZ_STYLE_WAVEFORM;
+
+  v->chunk = malloc(VIZ_CHUNK_FRAMES * sizeof(*v->chunk));
+  if (v->chunk == NULL)
+  {
+    aud_perror("cannot set up the renderer");
+    return -1;
+  }
+
+  switch (opts->style)
+  {
+  case AUD_VIZ_STYLE_BARS:
+    aud_spectrum_config_defaults(&spec_cfg, v->reader.rate, opts->bars);
+    v->spec = aud_spectrum_create(&spec_cfg);
+    v->caps = calloc(opts->bars, sizeof(*v->caps));
+    if (v->spec == NULL || v->caps == NULL)
+    {
+      aud_perror("cannot set up the analyser");
+      return -1;
+    }
+    break;
+
+  case AUD_VIZ_STYLE_SCOPE:
+    v->scope_frames = (size_t)(VIZ_SCOPE_SECONDS * (double)v->reader.rate);
+    if (v->scope_frames < 2u)
+    {
+      v->scope_frames = 2u;
+    }
+    v->scope = calloc(v->scope_frames, sizeof(*v->scope));
+    if (v->scope == NULL)
+    {
+      aud_perror("cannot set up the scope");
+      return -1;
+    }
+    break;
+
+  case AUD_VIZ_STYLE_WAVEFORM:
+  default:
+    v->env_lo = calloc(opts->width, sizeof(*v->env_lo));
+    v->env_hi = calloc(opts->width, sizeof(*v->env_hi));
+    if (v->env_lo == NULL || v->env_hi == NULL)
+    {
+      aud_perror("cannot set up the waveform");
+      return -1;
+    }
+    break;
+  }
+  return 0;
+}
+
+static void viz_free(viz_render *v)
+{
+  if (v->ffmpeg != NULL)
+  {
+    /* an error on our side: stop ffmpeg and do not leave half a video behind */
+    ffmpeg_finish(v->ffmpeg, 1);
+    remove(v->opts->output_path);
+  }
+
+  free(v->env_hi);
+  free(v->env_lo);
+  free(v->scope);
+  free(v->caps);
+  free(v->chunk);
+  aud_spectrum_destroy(v->spec);
+  aud_canvas_free(&v->canvas);
+  wav_read_close(&v->reader);
+}
+
+/* Decode `need` frames into whichever analyser the style is running. */
+static int viz_feed(viz_render *v, size_t need)
+{
+  while (need > 0)
+  {
+    size_t take = need < VIZ_CHUNK_FRAMES ? need : VIZ_CHUNK_FRAMES;
+    long got = wav_read_mono(&v->reader, v->chunk, take);
+
+    if (got < 0)
+    {
+      aud_error("cannot read %s: %s", v->opts->input_path,
+                v->reader.error != NULL ? v->reader.error : "read error");
+      return -1;
+    }
+    if (got == 0)
+    {
+      /* past the end of the audio: feed silence so the display falls away */
+      memset(v->chunk, 0, take * sizeof(*v->chunk));
+      got = (long)take;
+    }
+
+    if (v->spec != NULL)
+    {
+      aud_spectrum_push(v->spec, v->chunk, (size_t)got);
+    }
+    if (v->scope != NULL)
+    {
+      scope_push(v->scope, v->scope_frames, v->chunk, (size_t)got);
+    }
+    need -= (size_t)got;
+  }
+  return 0;
+}
+
+static void viz_draw(viz_render *v)
+{
+  const aud_visualize_options *opts = v->opts;
+
+  if (v->spec != NULL)
+  {
+    const float *bands = aud_spectrum_analyse(v->spec, v->dt);
+
+    for (size_t b = 0; b < opts->bars; b++)
+    {
+      float fallen = v->caps[b] - (float)(VIZ_CAP_FALL * v->dt);
+      if (fallen < 0.0f)
+      {
+        fallen = 0.0f;
+      }
+      v->caps[b] = bands[b] > fallen ? bands[b] : fallen;
+    }
+
+    draw_bars(&v->canvas, bands, v->caps, opts->bars);
+  }
+  else if (v->scope != NULL)
+  {
+    draw_scope(&v->canvas, v->scope, v->scope_frames);
+  }
+  else
+  {
+    draw_waveform(&v->canvas, v->env_lo, v->env_hi, opts->width,
+                  (double)v->consumed / (double)v->total_audio_frames);
+  }
+}
+
+static int viz_run(viz_render *v)
+{
+  const aud_visualize_options *opts = v->opts;
+
+  for (uint64_t frame = 0; frame < v->total_video_frames; frame++)
+  {
+    /*
+     * Derive the sample position from the frame index rather than accumulating
+     * a per-frame step, so 44100 Hz at 60 fps (735 samples) and 48000 at 30
+     * (1600) both stay exactly in step with the audio ffmpeg is muxing.
+     */
+    uint64_t target = ((frame + 1u) * (uint64_t)v->reader.rate) / opts->fps;
+    size_t need = v->needs_audio ? (size_t)(target - v->consumed) : 0;
+
+    if (aud_signals_stop_requested())
+    {
+      v->cancelled = 1;
+      break;
+    }
+
+    if (viz_feed(v, need) != 0)
+    {
+      clear_progress();
+      return -1;
+    }
+    v->consumed = target;
+
+    viz_draw(v);
+
+    if (ffmpeg_send_frame(v->ffmpeg, v->canvas.pixels, v->canvas.width,
+                          v->canvas.height) != 0)
+    {
+      clear_progress();
+      return -1;
+    }
+
+    if (frame % opts->fps == 0)
+    {
+      draw_progress(frame, v->total_video_frames);
+    }
+  }
+
+  clear_progress();
+  return 0;
+}
+
+int aud_visualize_render(const aud_visualize_options *opts)
+{
+  viz_render v;
   int rc = -1;
 
   if (opts == NULL || opts->input_path == NULL || opts->output_path == NULL)
@@ -449,209 +686,55 @@ int aud_visualize_render(const aud_visualize_options *opts)
     return -1;
   }
 
-  if (wav_read_open(&reader, opts->input_path) != 0)
+  memset(&v, 0, sizeof(v));
+  v.opts = opts;
+  v.dt = 1.0 / (double)opts->fps;
+
+  if (viz_open_input(&v) != 0)
   {
-    if (reader.error != NULL && errno != 0)
-    {
-      aud_error("cannot read %s: %s (%s)", opts->input_path, reader.error,
-                strerror(errno));
-    }
-    else
-    {
-      aud_error("cannot read %s: %s", opts->input_path,
-                reader.error != NULL ? reader.error : "unrecognised file");
-    }
     return -1;
   }
 
-  if (reader.frames == 0)
-  {
-    aud_error("%s contains no audio", opts->input_path);
-    wav_read_close(&reader);
-    return -1;
-  }
-
-  /* ceil, so the last partial video frame is still rendered */
-  total_audio_frames = reader.frames;
-  total_video_frames =
-      (reader.frames * opts->fps + reader.rate - 1u) / (uint64_t)reader.rate;
-  if (total_video_frames == 0)
-  {
-    total_video_frames = 1;
-  }
-
-  if (aud_canvas_init(&canvas, opts->width, opts->height) != 0)
+  if (aud_canvas_init(&v.canvas, opts->width, opts->height) != 0)
   {
     aud_perror("cannot allocate a %ux%u canvas", opts->width, opts->height);
-    wav_read_close(&reader);
+    wav_read_close(&v.reader);
     return -1;
   }
 
-  /*
-   * The waveform style knows the whole take before the first frame is drawn,
-   * so the render pass only has to follow the playhead. The other two are
-   * looking at the audio as it goes past and have to decode it.
-   */
-  needs_audio = opts->style != AUD_VIZ_STYLE_WAVEFORM;
-
-  chunk = malloc(VIZ_CHUNK_FRAMES * sizeof(*chunk));
-  if (chunk == NULL)
+  if (viz_buffers_init(&v) != 0)
   {
-    aud_perror("cannot set up the renderer");
     goto out;
-  }
-
-  switch (opts->style)
-  {
-  case AUD_VIZ_STYLE_BARS:
-    aud_spectrum_config_defaults(&spec_cfg, reader.rate, opts->bars);
-    spec = aud_spectrum_create(&spec_cfg);
-    caps = calloc(opts->bars, sizeof(*caps));
-    if (spec == NULL || caps == NULL)
-    {
-      aud_perror("cannot set up the analyser");
-      goto out;
-    }
-    break;
-
-  case AUD_VIZ_STYLE_SCOPE:
-    scope_frames = (size_t)(VIZ_SCOPE_SECONDS * (double)reader.rate);
-    if (scope_frames < 2u)
-    {
-      scope_frames = 2u;
-    }
-    scope = calloc(scope_frames, sizeof(*scope));
-    if (scope == NULL)
-    {
-      aud_perror("cannot set up the scope");
-      goto out;
-    }
-    break;
-
-  case AUD_VIZ_STYLE_WAVEFORM:
-  default:
-    env_lo = calloc(opts->width, sizeof(*env_lo));
-    env_hi = calloc(opts->width, sizeof(*env_hi));
-    if (env_lo == NULL || env_hi == NULL)
-    {
-      aud_perror("cannot set up the waveform");
-      goto out;
-    }
-    break;
   }
 
   aud_info("rendering %s -> %s: %ux%u at %u fps, %s, %.2f s", opts->input_path,
            opts->output_path, opts->width, opts->height, opts->fps,
-           aud_visualize_style_name(opts->style), wav_read_duration(&reader));
-  aud_debug("input: %u Hz, %u ch, %u bit%s", reader.rate, reader.channels, reader.bits,
-            reader.is_float ? " float" : "");
+           aud_visualize_style_name(opts->style), wav_read_duration(&v.reader));
+  aud_debug("input: %u Hz, %u ch, %u bit%s", v.reader.rate, v.reader.channels,
+            v.reader.bits, v.reader.is_float ? " float" : "");
 
-  if (env_lo != NULL && scan_envelope(opts->input_path, total_audio_frames, env_lo,
-                                      env_hi, opts->width) != 0)
+  if (v.env_lo != NULL && scan_envelope(opts->input_path, v.total_audio_frames, v.env_lo,
+                                        v.env_hi, opts->width) != 0)
   {
     goto out;
   }
 
-  ffmpeg = ffmpeg_start_rendering(opts->output_path, opts->width, opts->height, opts->fps,
-                                  opts->input_path);
-  if (ffmpeg == NULL)
+  v.ffmpeg = ffmpeg_start_rendering(opts->output_path, opts->width, opts->height,
+                                    opts->fps, opts->input_path);
+  if (v.ffmpeg == NULL)
   {
     goto out;
   }
 
-  dt = 1.0 / (double)opts->fps;
-
-  for (uint64_t frame = 0; frame < total_video_frames; frame++)
+  if (viz_run(&v) != 0)
   {
-    /*
-     * Derive the sample position from the frame index rather than accumulating
-     * a per-frame step, so 44100 Hz at 60 fps (735 samples) and 48000 at 30
-     * (1600) both stay exactly in step with the audio ffmpeg is muxing.
-     */
-    uint64_t target = ((frame + 1u) * (uint64_t)reader.rate) / opts->fps;
-    size_t need = needs_audio ? (size_t)(target - consumed) : 0;
-
-    if (aud_signals_stop_requested())
-    {
-      cancelled = 1;
-      break;
-    }
-
-    while (need > 0)
-    {
-      size_t take = need < VIZ_CHUNK_FRAMES ? need : VIZ_CHUNK_FRAMES;
-      long got = wav_read_mono(&reader, chunk, take);
-
-      if (got < 0)
-      {
-        clear_progress();
-        aud_error("cannot read %s: %s", opts->input_path,
-                  reader.error != NULL ? reader.error : "read error");
-        goto out;
-      }
-      if (got == 0)
-      {
-        /* past the end of the audio: feed silence so the display falls away */
-        memset(chunk, 0, take * sizeof(*chunk));
-        got = (long)take;
-      }
-
-      if (spec != NULL)
-      {
-        aud_spectrum_push(spec, chunk, (size_t)got);
-      }
-      if (scope != NULL)
-      {
-        scope_push(scope, scope_frames, chunk, (size_t)got);
-      }
-      need -= (size_t)got;
-    }
-    consumed = target;
-
-    if (spec != NULL)
-    {
-      const float *bands = aud_spectrum_analyse(spec, dt);
-
-      for (size_t b = 0; b < opts->bars; b++)
-      {
-        float fallen = caps[b] - (float)(VIZ_CAP_FALL * dt);
-        if (fallen < 0.0f)
-        {
-          fallen = 0.0f;
-        }
-        caps[b] = bands[b] > fallen ? bands[b] : fallen;
-      }
-
-      draw_bars(&canvas, bands, caps, opts->bars);
-    }
-    else if (scope != NULL)
-    {
-      draw_scope(&canvas, scope, scope_frames);
-    }
-    else
-    {
-      draw_waveform(&canvas, env_lo, env_hi, opts->width,
-                    (double)consumed / (double)total_audio_frames);
-    }
-
-    if (ffmpeg_send_frame(ffmpeg, canvas.pixels, canvas.width, canvas.height) != 0)
-    {
-      clear_progress();
-      goto out;
-    }
-
-    if (frame % opts->fps == 0)
-    {
-      draw_progress(frame, total_video_frames);
-    }
+    goto out;
   }
 
-  clear_progress();
+  rc = ffmpeg_finish(v.ffmpeg, v.cancelled);
+  v.ffmpeg = NULL;
 
-  rc = ffmpeg_finish(ffmpeg, cancelled);
-  ffmpeg = NULL;
-
-  if (cancelled)
+  if (v.cancelled)
   {
     aud_warn("cancelled, removing %s", opts->output_path);
     remove(opts->output_path);
@@ -662,20 +745,6 @@ int aud_visualize_render(const aud_visualize_options *opts)
   }
 
 out:
-  if (ffmpeg != NULL)
-  {
-    /* an error on our side: stop ffmpeg and do not leave half a video behind */
-    ffmpeg_finish(ffmpeg, 1);
-    remove(opts->output_path);
-  }
-
-  free(env_hi);
-  free(env_lo);
-  free(scope);
-  free(caps);
-  free(chunk);
-  aud_spectrum_destroy(spec);
-  aud_canvas_free(&canvas);
-  wav_read_close(&reader);
+  viz_free(&v);
   return rc;
 }

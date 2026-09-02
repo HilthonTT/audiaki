@@ -213,8 +213,6 @@ float aud_spectral_db(float magnitude)
   return (float)db;
 }
 
-/* -- taking a reading ------------------------------------------------------ */
-
 void aud_spectral_read_begin(aud_spectral *s)
 {
   if (s == NULL)
@@ -327,8 +325,6 @@ const float *aud_spectral_low(const aud_spectral *s)
   return s != NULL ? s->low : NULL;
 }
 
-/* -- the noise profile ----------------------------------------------------- */
-
 void aud_spectral_learn_noise(aud_spectral *s)
 {
   if (s == NULL || !s->has_reading)
@@ -397,8 +393,6 @@ float aud_spectral_floor_db(const aud_spectral *s)
 {
   return s != NULL ? s->floor_db : 0.0f;
 }
-
-/* -- the curve ------------------------------------------------------------- */
 
 const float *aud_spectral_curve(const aud_spectral *s)
 {
@@ -694,8 +688,6 @@ double aud_spectral_find_hum(const aud_spectral *s)
   return best_score >= SPECTRAL_HUM_THRESHOLD_DB ? best_hz : 0.0;
 }
 
-/* -- what it would come to ------------------------------------------------- */
-
 /*
  * How far the profile pulls bin `k` down, given that the bin currently holds
  * `mag`. Shared by the resynthesis and by the predicted curve the graph draws,
@@ -731,8 +723,6 @@ void aud_spectral_result(const aud_spectral *s, float *out)
     out[k] = (float)(mag * (double)s->curve[k] * reduce(s, k, mag));
   }
 }
-
-/* -- putting the audio back together --------------------------------------- */
 
 size_t aud_spectral_context(const aud_spectral *s)
 {

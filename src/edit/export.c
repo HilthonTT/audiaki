@@ -88,8 +88,6 @@ static void say(const char **why, const char *text)
   }
 }
 
-/* -- which file this is ----------------------------------------------------- */
-
 /*
  * The extensions audiaki writes, and nothing else. A short list on purpose:
  * one that holds the samples as they are, one that holds them losslessly in
@@ -290,8 +288,6 @@ static int plan_export(const aud_doc *d, const aud_export_options *opts, export_
 
   return 0;
 }
-
-/* -- where the PCM goes ----------------------------------------------------- */
 
 /*
  * The file being written, which is a WAV writer or a pipe to ffmpeg. The mixing
@@ -522,8 +518,6 @@ int aud_export_wav(const aud_doc *d, const aud_export_options *opts, const char 
 
   return write_mix(d, &plan, -1, opts->path, opts->overwrite, why);
 }
-
-/* -- stems ------------------------------------------------------------------ */
 
 /*
  * `name` reduced to something every filesystem will take, and something worth

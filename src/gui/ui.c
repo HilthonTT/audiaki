@@ -134,8 +134,6 @@ static int same_rect(Rectangle a, Rectangle b)
   return a.x == b.x && a.y == b.y && a.width == b.width && a.height == b.height;
 }
 
-/* -- shapes ----------------------------------------------------------------- */
-
 /*
  * raylib takes a corner as a fraction of the shorter side, which means a
  * rectangle's corner changes when the rectangle is resized. Every corner in
@@ -212,8 +210,6 @@ static void top_highlight(Rectangle bounds, float radius, float strength)
       (Rectangle){bounds.x + inset, bounds.y + 1.0f, bounds.width - 2.0f * inset, 1.0f},
       fade_to(WHITE, 0.055f * strength));
 }
-
-/* -- lettering -------------------------------------------------------------- */
 
 static Font ui_face[AUD_UI_FACE_COUNT];
 static int ui_faces_loaded;
@@ -503,8 +499,6 @@ static void label_centred(Rectangle bounds, int size, Color color, const char *l
                        shortened(AUD_UI_STRONG, label, font, room));
 }
 
-/* -- glyphs ----------------------------------------------------------------- */
-
 float aud_ui_icon_width(int font)
 {
   return 0.62f * (float)font + 6.0f;
@@ -603,8 +597,6 @@ static void draw_icon(aud_ui_icon icon, float cx, float cy, float size, Color co
     break;
   }
 }
-
-/* -- buttons ---------------------------------------------------------------- */
 
 /* Shared body of button and toggle: returns non-zero when clicked. */
 static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Color tint,
@@ -764,8 +756,6 @@ int aud_ui_ghost(Rectangle bounds, const char *label, Color tint, int enabled)
   return hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
 }
 
-/* -- slider ----------------------------------------------------------------- */
-
 /* The slider the pointer grabbed, so the drag survives leaving its bounds. */
 static Rectangle ui_slider_held;
 static int ui_slider_dragging;
@@ -909,8 +899,6 @@ int aud_ui_slider(Rectangle bounds, float *value, float min, float max, Color ti
   return changed;
 }
 
-/* -- meter ------------------------------------------------------------------ */
-
 /*
  * Green up to about -12 dBFS, amber through the last few dB and red at the
  * top, so a glance at the colour is enough to know whether the input is hot.
@@ -985,8 +973,6 @@ void aud_ui_meter(Rectangle bounds, float level, float peak_hold)
                      mix(meter_color(t), WHITE, 0.5f));
   }
 }
-
-/* -- tabs ------------------------------------------------------------------- */
 
 /*
  * Where the lit pill was last frame, so it can slide to where it is now rather
@@ -1099,8 +1085,6 @@ int aud_ui_tabs(Rectangle bounds, const char *const *labels, int count, int *sel
 
   return changed;
 }
-
-/* -- rows, fields and menus -------------------------------------------------- */
 
 /*
  * Draw `text` clipped to `max_width`, ending in an ellipsis when it does not
@@ -1540,8 +1524,6 @@ int aud_ui_dropdown(Rectangle bounds, const char *const *items, int count, int *
 
   return changed;
 }
-
-/* -- hover help -------------------------------------------------------------- */
 
 /* The one line of hover help a frame can show, held between ask and draw. */
 static struct

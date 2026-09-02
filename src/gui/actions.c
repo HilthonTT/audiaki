@@ -115,6 +115,173 @@ void app_move_selection(app *a, int64_t by)
   app_edit(a, APP_EDIT_MOVE);
 }
 
+/*
+ * Its own reply rather than the shared one below, because what anyone moving
+ * audio wants to be told is how far it went - the length of what moved is the
+ * number they were already looking at. Asked for beforehand, since a move that
+ * ran out of room went less far than it was asked to.
+ */
+static void edit_move(app *a)
+{
+  aud_doc *d = &a->doc;
+  int64_t went = aud_edit_move_room(d, a->move_by);
+  int ok = aud_edit_move(d, a->move_by);
+
+  a->move_by = 0;
+
+  if (ok == 0)
+  {
+    a->session.dirty = 1;
+    app_set_status(a, "moved %+.3f s", d->rate > 0 ? (double)went / d->rate : 0.0);
+    return;
+  }
+
+  app_set_status(a, aud_doc_has_range(d) && aud_doc_any_track_selected(d)
+                        ? "no room to move it that way"
+                        : "select some audio first - click and drag across a track");
+}
+
+/*
+ * The four edits with a reply of their own.
+ *
+ * Each returns 1 when it has already said what happened, and 0 to fall through
+ * to the shared reply at the end of app_edit_now(), with `ok` saying which of
+ * the two it should give.
+ */
+static int edit_gain_step(app *a, app_edit_action action, int *ok)
+{
+  double db = action == APP_EDIT_LOUDER ? APP_GAIN_STEP_DB : -APP_GAIN_STEP_DB;
+
+  *ok = aud_edit_gain(&a->doc, db);
+  if (*ok != 0)
+  {
+    return 0; /* and the shared "why it refused" below says why */
+  }
+
+  /* the step, not the total: a clip's gain is per clip and a selection
+   * across several of them has no single number to report */
+  a->session.dirty = 1;
+  app_set_status(a, "%+.1f dB", db);
+  return 1;
+}
+
+static int edit_normalize(app *a, app_edit_action action, int *ok)
+{
+  aud_doc *d = &a->doc;
+  int loudness = action == APP_EDIT_NORMALIZE_LOUDNESS;
+  double level = loudness ? AUD_NORMALIZE_LOUDNESS_DEFAULT : AUD_NORMALIZE_PEAK_DEFAULT;
+
+  *ok = aud_edit_normalize(d, loudness ? AUD_NORMALIZE_LOUDNESS : AUD_NORMALIZE_PEAK,
+                           level);
+  if (*ok == 0)
+  {
+    a->session.dirty = 1;
+    app_set_status(a, "normalized to %.1f %s", level, loudness ? "LUFS" : "dBTP");
+    return 1;
+  }
+
+  /*
+   * A normalize that refused with something selected refused for its own
+   * reason - silence has no peak to raise, and BS.1770 has no loudness for a
+   * selection under 400 ms - which the shared answer below would get wrong.
+   */
+  if (aud_doc_has_range(d) && aud_doc_any_track_selected(d))
+  {
+    app_set_status(a, loudness ? "too short or too quiet to measure a loudness"
+                               : "nothing to measure in that selection");
+    return 1;
+  }
+  return 0;
+}
+
+static int edit_limit(app *a, int *ok)
+{
+  double reduction = 0.0;
+  const char *why = NULL;
+
+  *ok = aud_limit_selection(&a->doc, AUD_LIMITER_CEILING_DEFAULT, a->rec.dir, &reduction,
+                            &why);
+  if (*ok == 0)
+  {
+    a->session.dirty = 1;
+    aud_repair_panel_reset(&a->repair); /* the audio under it is new audio */
+    app_set_status(a, "limited by %.1f dB, to %.0f dBTP", reduction,
+                   AUD_LIMITER_CEILING_DEFAULT);
+    return 1;
+  }
+
+  /* it says why itself, and its reasons are better than the shared ones */
+  if (why != NULL)
+  {
+    app_set_status(a, "%.90s", why);
+    return 1;
+  }
+  return 0;
+}
+
+static int edit_mute_toggle(app *a, int *ok)
+{
+  aud_doc *d = &a->doc;
+  /*
+   * Off what the first selected lane is doing, so the key is a toggle rather
+   * than two keys: a selection that is being heard goes silent, and one that
+   * has been silenced comes back.
+   */
+  int muted = 0;
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    if (d->tracks[i].selected)
+    {
+      muted = aud_track_muted_at(&d->tracks[i], d->sel_start);
+      break;
+    }
+  }
+
+  *ok = aud_edit_mute(d, !muted);
+  if (*ok != 0)
+  {
+    return 0;
+  }
+
+  a->session.dirty = 1;
+  app_set_status(a, muted ? "heard again" : "muted - alt+K brings it back");
+  return 1;
+}
+
+/* What the edits with nothing of their own to say all report. */
+static void edit_report(app *a, app_edit_action action, int ok)
+{
+  aud_doc *d = &a->doc;
+
+  if (ok == 0)
+  {
+    static const char *const done[] = {
+        "",         "",        "cut",   "copied",     "pasted",        "deleted",
+        "silenced", "trimmed", "split", "duplicated", "faded in over", "faded out over"};
+
+    /* the session has moved away from whatever is on disk, if anything is */
+    a->session.dirty = 1;
+    app_set_status(a, "%s %.2f s", done[action],
+                   d->rate > 0 ? (double)(d->sel_end - d->sel_start) / d->rate : 0.0);
+    return;
+  }
+
+  /* why it refused, which is nearly always one of these two */
+  if (action == APP_EDIT_PASTE && aud_clipboard_empty(&a->clipboard))
+  {
+    app_set_status(a, "nothing on the clipboard");
+  }
+  else if (!aud_doc_any_track_selected(d))
+  {
+    app_set_status(a, "click a track first");
+  }
+  else
+  {
+    app_set_status(a, "select some audio first - click and drag across a track");
+  }
+}
+
 void app_edit_now(app *a, app_edit_action action)
 {
   aud_doc *d = &a->doc;
@@ -137,30 +304,9 @@ void app_edit_now(app *a, app_edit_action action)
     app_set_status(a, "everything selected");
     return;
   case APP_EDIT_MOVE:
-  {
-    /*
-     * Its own reply rather than the shared one below, because what anyone
-     * moving audio wants to be told is how far it went - the length of what
-     * moved is the number they were already looking at. Asked for beforehand,
-     * since a move that ran out of room went less far than it was asked to.
-     */
-    int64_t went = aud_edit_move_room(d, a->move_by);
-
-    ok = aud_edit_move(d, a->move_by);
-    a->move_by = 0;
-
-    if (ok == 0)
-    {
-      a->session.dirty = 1;
-      app_set_status(a, "moved %+.3f s", d->rate > 0 ? (double)went / d->rate : 0.0);
-      return;
-    }
-
-    app_set_status(a, aud_doc_has_range(d) && aud_doc_any_track_selected(d)
-                          ? "no room to move it that way"
-                          : "select some audio first - click and drag across a track");
+    edit_move(a);
     return;
-  }
+
   case APP_EDIT_CUT:
     ok = aud_edit_cut(d, &a->clipboard);
     break;
@@ -191,131 +337,39 @@ void app_edit_now(app *a, app_edit_action action)
   case APP_EDIT_FADE_OUT:
     ok = aud_edit_fade_out(d);
     break;
+
   case APP_EDIT_LOUDER:
   case APP_EDIT_QUIETER:
-  {
-    double db = action == APP_EDIT_LOUDER ? APP_GAIN_STEP_DB : -APP_GAIN_STEP_DB;
-
-    ok = aud_edit_gain(d, db);
-    if (ok == 0)
+    if (edit_gain_step(a, action, &ok))
     {
-      /* the step, not the total: a clip's gain is per clip and a selection
-       * across several of them has no single number to report */
-      a->session.dirty = 1;
-      app_set_status(a, "%+.1f dB", db);
       return;
     }
-    break; /* and the shared "why it refused" below says why */
-  }
+    break;
   case APP_EDIT_NORMALIZE_PEAK:
   case APP_EDIT_NORMALIZE_LOUDNESS:
-  {
-    int loudness = action == APP_EDIT_NORMALIZE_LOUDNESS;
-    double level = loudness ? AUD_NORMALIZE_LOUDNESS_DEFAULT : AUD_NORMALIZE_PEAK_DEFAULT;
-
-    ok = aud_edit_normalize(d, loudness ? AUD_NORMALIZE_LOUDNESS : AUD_NORMALIZE_PEAK,
-                            level);
-    if (ok == 0)
+    if (edit_normalize(a, action, &ok))
     {
-      a->session.dirty = 1;
-      app_set_status(a, "normalized to %.1f %s", level, loudness ? "LUFS" : "dBTP");
-      return;
-    }
-
-    /*
-     * A normalize that refused with something selected refused for its own
-     * reason - silence has no peak to raise, and BS.1770 has no loudness for a
-     * selection under 400 ms - which the shared answer below would get wrong.
-     */
-    if (aud_doc_has_range(d) && aud_doc_any_track_selected(d))
-    {
-      app_set_status(a, loudness ? "too short or too quiet to measure a loudness"
-                                 : "nothing to measure in that selection");
       return;
     }
     break;
-  }
   case APP_EDIT_LIMIT:
-  {
-    double reduction = 0.0;
-    const char *why = NULL;
-
-    ok =
-        aud_limit_selection(d, AUD_LIMITER_CEILING_DEFAULT, a->rec.dir, &reduction, &why);
-    if (ok == 0)
+    if (edit_limit(a, &ok))
     {
-      a->session.dirty = 1;
-      aud_repair_panel_reset(&a->repair); /* the audio under it is new audio */
-      app_set_status(a, "limited by %.1f dB, to %.0f dBTP", reduction,
-                     AUD_LIMITER_CEILING_DEFAULT);
-      return;
-    }
-
-    /* it says why itself, and its reasons are better than the shared ones */
-    if (why != NULL)
-    {
-      app_set_status(a, "%.90s", why);
       return;
     }
     break;
-  }
   case APP_EDIT_MUTE_TOGGLE:
-  {
-    /*
-     * Off what the first selected lane is doing, so the key is a toggle rather
-     * than two keys: a selection that is being heard goes silent, and one that
-     * has been silenced comes back.
-     */
-    int muted = 0;
-
-    for (size_t i = 0; i < d->count; i++)
+    if (edit_mute_toggle(a, &ok))
     {
-      if (d->tracks[i].selected)
-      {
-        muted = aud_track_muted_at(&d->tracks[i], d->sel_start);
-        break;
-      }
-    }
-
-    ok = aud_edit_mute(d, !muted);
-    if (ok == 0)
-    {
-      a->session.dirty = 1;
-      app_set_status(a, muted ? "heard again" : "muted - alt+K brings it back");
       return;
     }
     break;
-  }
+
   default:
     return;
   }
 
-  if (ok == 0)
-  {
-    static const char *const done[] = {
-        "",         "",        "cut",   "copied",     "pasted",        "deleted",
-        "silenced", "trimmed", "split", "duplicated", "faded in over", "faded out over"};
-
-    /* the session has moved away from whatever is on disk, if anything is */
-    a->session.dirty = 1;
-    app_set_status(a, "%s %.2f s", done[action],
-                   d->rate > 0 ? (double)(d->sel_end - d->sel_start) / d->rate : 0.0);
-    return;
-  }
-
-  /* why it refused, which is nearly always one of these two */
-  if (action == APP_EDIT_PASTE && aud_clipboard_empty(&a->clipboard))
-  {
-    app_set_status(a, "nothing on the clipboard");
-  }
-  else if (!aud_doc_any_track_selected(d))
-  {
-    app_set_status(a, "click a track first");
-  }
-  else
-  {
-    app_set_status(a, "select some audio first - click and drag across a track");
-  }
+  edit_report(a, action, ok);
 }
 
 /*
@@ -542,8 +596,6 @@ static void app_step_track(app *a, int down, int add)
   aud_timeline_reveal_track(&a->timeline, &a->doc, to, a->timeline.rows_h);
 }
 
-/* -- the ruler, and choosing between passes -------------------------------- */
-
 /* Frames either side of the cursor that count as "on" a marker at this zoom. */
 static uint64_t marker_reach(const app *a)
 {
@@ -643,8 +695,6 @@ void app_comp(app *a, int forward)
   a->session.dirty = 1;
   app_set_status(a, "%.40s (%zu of %zu)", d->tracks[lanes[at]].name, at + 1u, count);
 }
-
-/* -- the keyboard's commands ----------------------------------------------- */
 
 /*
  * Carry one out.

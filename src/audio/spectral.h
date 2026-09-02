@@ -105,8 +105,6 @@ size_t aud_spectral_bins(const aud_spectral *s);
 double aud_spectral_hz(const aud_spectral *s, size_t bin);
 size_t aud_spectral_bin_at(const aud_spectral *s, double hz);
 
-/* -- taking a reading ------------------------------------------------------ */
-
 /*
  * Look at some audio. `begin` throws away whatever was read before, `scan`
  * takes one window of up to `size` mono samples - short ones are zero-padded,
@@ -145,8 +143,6 @@ const float *aud_spectral_mean(const aud_spectral *s);
 const float *aud_spectral_peak(const aud_spectral *s);
 const float *aud_spectral_low(const aud_spectral *s);
 
-/* -- the noise profile ----------------------------------------------------- */
-
 /*
  * Take the reading just made as the noise itself. For a selection the user has
  * said holds nothing but the noise - the count-in, the tail after the last
@@ -172,8 +168,6 @@ const float *aud_spectral_noise(const aud_spectral *s);
 void aud_spectral_set_reduction(aud_spectral *s, float strength, float floor_db);
 float aud_spectral_strength(const aud_spectral *s);
 float aud_spectral_floor_db(const aud_spectral *s);
-
-/* -- the curve ------------------------------------------------------------- */
 
 /*
  * The gain per bin, linear, one entry per aud_spectral_bins(). All ones until
@@ -253,8 +247,6 @@ double aud_spectral_find_hum(const aud_spectral *s);
 #define AUD_SPECTRAL_HUM_MIN_HZ 30.0
 #define AUD_SPECTRAL_HUM_MAX_HZ 130.0
 
-/* -- what it would come to ------------------------------------------------- */
-
 /*
  * The reading as it would be after the curve and the profile, in the same
  * linear units, written into `out` (aud_spectral_bins() entries).
@@ -267,8 +259,6 @@ void aud_spectral_result(const aud_spectral *s, float *out);
 
 /* Magnitude to dBFS, floored at AUD_SPECTRAL_FLOOR_DB. */
 float aud_spectral_db(float magnitude);
-
-/* -- putting the audio back together --------------------------------------- */
 
 /*
  * Frames of run-up the caller should hand over either side of the range it

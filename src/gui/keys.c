@@ -16,8 +16,6 @@
 
 #include <string.h>
 
-/* -- reading it ------------------------------------------------------------ */
-
 /*
  * The one table that says which raylib key each of ours is. A key with two
  * spellings has both, so the app can go on not caring which Delete or which
@@ -102,8 +100,6 @@ static int walk(const app_input *in, app_key k)
 {
   return in->pressed[k] != 0 || in->repeated[k] != 0;
 }
-
-/* -- where the arrows point ------------------------------------------------ */
 
 /*
  * How far one press of an arrow moves the cursor: the time a few pixels covers
@@ -263,8 +259,6 @@ int64_t app_move_step(const app *a, int back, int off_grid)
   by = app_nudge(a);
   return back ? -(int64_t)by : (int64_t)by;
 }
-
-/* -- the mapping ----------------------------------------------------------- */
 
 /*
  * The list being written, and the one place a command is added to it.

@@ -653,12 +653,24 @@ static const char *in_the_way(const app *a, app_save_mode mode, const char *targ
  * A failure keeps the dialog open with the reason in it: the file has not
  * moved, and the next answer is a correction rather than a new question.
  */
-static int save_confirm(app *a)
+/* The folder the answer names, made if it is not there yet. */
+static int save_make_folder(app_save *s, const char *folder)
 {
-  app_save *s = &a->save;
-  char folder[AUD_PATH_MAX];
-  char target[AUD_PATH_MAX];
+  if (aud_path_mkdirs(folder) != 0)
+  {
+    snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
+    return -1;
+  }
+  return 0;
+}
 
+/*
+ * The two fields turned into one path. Returns -1 with the reason in `note`
+ * when they do not make one, and the mode-specific work below is skipped.
+ */
+static int save_resolve(app_save *s, char *folder, size_t folder_size, char *target,
+                        size_t target_size)
+{
   if (s->name[0] == '\0')
   {
     const char *ask = "the take needs a name";
@@ -695,8 +707,8 @@ static int save_confirm(app *a)
     return -1;
   }
 
-  if (aud_path_expand(folder, sizeof(folder), s->folder) != 0 ||
-      aud_path_join(target, sizeof(target), folder, s->name) != 0 ||
+  if (aud_path_expand(folder, folder_size, s->folder) != 0 ||
+      aud_path_join(target, target_size, folder, s->name) != 0 ||
       strlen(target) >= AUD_ENGINE_PATH_MAX)
   {
     snprintf(s->note, sizeof(s->note), "that is too long a path");
@@ -708,117 +720,117 @@ static int save_confirm(app *a)
     snprintf(s->note, sizeof(s->note), "that is a folder - click it to go in");
     return -1;
   }
+  return 0;
+}
 
-  if (s->mode == APP_SAVE_MODE_OPEN)
+static int confirm_project_open(app *a, const char *target)
+{
+  app_save *s = &a->save;
+  const char *why = NULL;
+
+  /*
+   * A failed load leaves the timeline alone - see project.h - so the dialog
+   * can simply stay open with the reason in it and let the answer be
+   * corrected. Nothing has been lost either way.
+   */
+  if (aud_project_load(&a->doc, target, &why) != 0)
   {
-    s->open = 0;
-    app_load_track(a, target);
-    return 0;
+    snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot open that");
+    return -1;
   }
 
-  if (s->mode == APP_SAVE_MODE_PROJECT_OPEN)
+  snprintf(a->session.path, sizeof(a->session.path), "%s", target);
+  a->session.dirty = 0;
+  a->rec.track = -1;
+  a->rec.last_track = -1;
+  aud_player_stop(&a->player);
+  /* a different session's audio, at possibly a different rate */
+  aud_repair_panel_reset(&a->repair);
+  s->open = 0;
+  app_set_status(a, "opened %.80s: %zu track(s)", aud_path_basename(target),
+                 a->doc.count);
+  return 0;
+}
+
+static int confirm_project_save(app *a, const char *folder, const char *target)
+{
+  app_save *s = &a->save;
+  const char *why = NULL;
+
+  /* replacing a session is asked about once, like an export */
+  if (access(target, F_OK) == 0 && strcmp(target, a->session.path) != 0 && !s->confirmed)
   {
-    const char *why = NULL;
-
-    /*
-     * A failed load leaves the timeline alone - see project.h - so the dialog
-     * can simply stay open with the reason in it and let the answer be
-     * corrected. Nothing has been lost either way.
-     */
-    if (aud_project_load(&a->doc, target, &why) != 0)
-    {
-      snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot open that");
-      return -1;
-    }
-
-    snprintf(a->session.path, sizeof(a->session.path), "%s", target);
-    a->session.dirty = 0;
-    a->rec.track = -1;
-    a->rec.last_track = -1;
-    aud_player_stop(&a->player);
-    /* a different session's audio, at possibly a different rate */
-    aud_repair_panel_reset(&a->repair);
-    s->open = 0;
-    app_set_status(a, "opened %.80s: %zu track(s)", aud_path_basename(target),
-                   a->doc.count);
-    return 0;
+    snprintf(s->note, sizeof(s->note),
+             "%.140s is already there - Save again to "
+             "replace it",
+             aud_path_basename(target));
+    s->confirmed = 1;
+    return -1;
   }
 
-  if (s->mode == APP_SAVE_MODE_PROJECT_SAVE)
+  if (save_make_folder(s, folder) != 0)
   {
-    const char *why = NULL;
-
-    /* replacing a session is asked about once, like an export */
-    if (access(target, F_OK) == 0 && strcmp(target, a->session.path) != 0 &&
-        !s->confirmed)
-    {
-      snprintf(s->note, sizeof(s->note),
-               "%.140s is already there - Save again to "
-               "replace it",
-               aud_path_basename(target));
-      s->confirmed = 1;
-      return -1;
-    }
-
-    if (aud_path_mkdirs(folder) != 0)
-    {
-      snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
-      return -1;
-    }
-
-    if (aud_project_save(&a->doc, target, &why) != 0)
-    {
-      snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot save that");
-      return -1;
-    }
-
-    snprintf(a->session.path, sizeof(a->session.path), "%s", target);
-    a->session.dirty = 0;
-    s->open = 0;
-    app_set_status(a, "saved %.80s", aud_path_basename(target));
-    return 0;
+    return -1;
   }
 
-  if (APP_SAVE_IS_EXPORT(s->mode))
+  if (aud_project_save(&a->doc, target, &why) != 0)
   {
-    const char *taken = in_the_way(a, s->mode, target);
-
-    /*
-     * Asked before writing rather than refused afterwards. An export is
-     * something you do repeatedly to the same name while you get a mix right,
-     * so replacing one has to be possible - but not by accident.
-     *
-     * A set of stems asks about the whole set at once, and names the first file
-     * of it that is in the way: finding out at the fourth that the third was
-     * there would have left two of them replaced already.
-     */
-    if (taken != NULL && !s->confirmed)
-    {
-      snprintf(s->note, sizeof(s->note),
-               "%.140s is already there - Export again to "
-               "replace it",
-               taken);
-      s->confirmed = 1;
-      return -1;
-    }
-
-    if (aud_path_mkdirs(folder) != 0)
-    {
-      snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
-      return -1;
-    }
-
-    s->open = 0;
-    if (s->mode == APP_SAVE_MODE_STEMS)
-    {
-      app_export_stems(a, target);
-    }
-    else
-    {
-      app_export(a, target);
-    }
-    return 0;
+    snprintf(s->note, sizeof(s->note), "%s", why != NULL ? why : "cannot save that");
+    return -1;
   }
+
+  snprintf(a->session.path, sizeof(a->session.path), "%s", target);
+  a->session.dirty = 0;
+  s->open = 0;
+  app_set_status(a, "saved %.80s", aud_path_basename(target));
+  return 0;
+}
+
+static int confirm_export(app *a, const char *folder, const char *target)
+{
+  app_save *s = &a->save;
+  const char *taken = in_the_way(a, s->mode, target);
+
+  /*
+   * Asked before writing rather than refused afterwards. An export is
+   * something you do repeatedly to the same name while you get a mix right,
+   * so replacing one has to be possible - but not by accident.
+   *
+   * A set of stems asks about the whole set at once, and names the first file
+   * of it that is in the way: finding out at the fourth that the third was
+   * there would have left two of them replaced already.
+   */
+  if (taken != NULL && !s->confirmed)
+  {
+    snprintf(s->note, sizeof(s->note),
+             "%.140s is already there - Export again to "
+             "replace it",
+             taken);
+    s->confirmed = 1;
+    return -1;
+  }
+
+  if (save_make_folder(s, folder) != 0)
+  {
+    return -1;
+  }
+
+  s->open = 0;
+  if (s->mode == APP_SAVE_MODE_STEMS)
+  {
+    app_export_stems(a, target);
+  }
+  else
+  {
+    app_export(a, target);
+  }
+  return 0;
+}
+
+/* The take itself, moved out of the scratch folder and onto its name. */
+static int confirm_keep(app *a, const char *folder, const char *target)
+{
+  app_save *s = &a->save;
 
   /* the file is already there and already called that: nothing to do */
   if (strcmp(target, s->take) == 0)
@@ -827,9 +839,8 @@ static int save_confirm(app *a)
     return 0;
   }
 
-  if (aud_path_mkdirs(folder) != 0)
+  if (save_make_folder(s, folder) != 0)
   {
-    snprintf(s->note, sizeof(s->note), "cannot use that folder: %s", strerror(errno));
     return -1;
   }
 
@@ -859,6 +870,42 @@ static int save_confirm(app *a)
   s->open = 0;
   app_finish_take(a, target);
   return 0;
+}
+
+static int save_confirm(app *a)
+{
+  app_save *s = &a->save;
+  char folder[AUD_PATH_MAX];
+  char target[AUD_PATH_MAX];
+
+  if (save_resolve(s, folder, sizeof(folder), target, sizeof(target)) != 0)
+  {
+    return -1;
+  }
+
+  if (s->mode == APP_SAVE_MODE_OPEN)
+  {
+    s->open = 0;
+    app_load_track(a, target);
+    return 0;
+  }
+
+  if (s->mode == APP_SAVE_MODE_PROJECT_OPEN)
+  {
+    return confirm_project_open(a, target);
+  }
+
+  if (s->mode == APP_SAVE_MODE_PROJECT_SAVE)
+  {
+    return confirm_project_save(a, folder, target);
+  }
+
+  if (APP_SAVE_IS_EXPORT(s->mode))
+  {
+    return confirm_export(a, folder, target);
+  }
+
+  return confirm_keep(a, folder, target);
 }
 
 /* What the dialog is asking, and what the button that answers it says. */
@@ -1002,43 +1049,10 @@ static void cycle_focus(app_save *s, int back)
   }
 }
 
-void app_save_draw(app *a)
+/* The dialog, centred, and never wider than the window it is over. */
+static Rectangle save_panel_rect(Rectangle screen)
 {
-  app_save *s = &a->save;
-  Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
   Rectangle panel;
-  Rectangle row;
-  Rectangle tools;
-  Rectangle list;
-  Rectangle keep;
-  Rectangle save;
-  float label_w = 66.0f;
-  int clicked;
-  int marked = -1;
-
-  if (!s->open)
-  {
-    /*
-     * Whatever was being auditioned goes with the dialog that started it.
-     * Here rather than beside each of the half dozen ways out, so a way out
-     * added later cannot leave a take playing to an empty window.
-     */
-    if (aud_preview_playing(&a->preview))
-    {
-      aud_preview_stop(&a->preview);
-    }
-    return;
-  }
-
-  /*
-   * Once a frame, so the window keeps drawing while the desktop's chooser is
-   * up. A no-op unless one is - see gui/chooser.h.
-   */
-  chooser_step(a);
-
-  /* the window dimmed rather than replaced: the take that was just played is
-   * still on the meters behind this, and that is worth seeing */
-  DrawRectangleRec(screen, Fade(BLACK, 0.72f));
 
   panel.width = SAVE_PANEL_W;
   panel.height = SAVE_PANEL_H;
@@ -1052,10 +1066,11 @@ void app_save_draw(app *a)
   }
   panel.x = (screen.width - panel.width) / 2.0f;
   panel.y = (screen.height - panel.height) / 2.0f;
+  return panel;
+}
 
-  aud_ui_shadow(panel, 14.0f, 22.0f);
-  aud_ui_panel(panel, 14.0f, AUD_UI_SURFACE, AUD_UI_EDGE);
-
+static void draw_save_header(const app_save *s, Rectangle panel)
+{
   aud_ui_write(AUD_UI_STRONG, panel.x + SAVE_PAD, panel.y + 20.0f, 22, AUD_UI_TEXT,
                save_title(s->mode));
 
@@ -1068,15 +1083,25 @@ void app_save_draw(app *a)
     aud_ui_text_right(panel.x + panel.width - SAVE_PAD, panel.y + 25.0f, 16, AUD_UI_MUTED,
                       detail);
   }
+}
 
-  row.x = panel.x + SAVE_PAD + label_w;
-  row.width = panel.width - 2.0f * SAVE_PAD - label_w;
-  row.height = SAVE_ROW_H;
-  row.y = panel.y + 58.0f;
+/*
+ * The name and the folder. Returns 0 when a submitted field closed the dialog,
+ * which is the one case where the rest of the frame must not be drawn.
+ */
+static int draw_save_fields(app *a, Rectangle panel, float label_w, Rectangle *row)
+{
+  app_save *s = &a->save;
+  int clicked;
 
-  aud_ui_text(panel.x + SAVE_PAD, row.y + 8.0f, 18, AUD_UI_MUTED, "name");
+  row->x = panel.x + SAVE_PAD + label_w;
+  row->width = panel.width - 2.0f * SAVE_PAD - label_w;
+  row->height = SAVE_ROW_H;
+  row->y = panel.y + 58.0f;
+
+  aud_ui_text(panel.x + SAVE_PAD, row->y + 8.0f, 18, AUD_UI_MUTED, "name");
   clicked =
-      aud_ui_field(row, s->name, sizeof(s->name), s->focus == APP_SAVE_FIELD_NAME, 1);
+      aud_ui_field(*row, s->name, sizeof(s->name), s->focus == APP_SAVE_FIELD_NAME, 1);
   if (clicked & AUD_UI_FIELD_CLICKED)
   {
     s->focus = APP_SAVE_FIELD_NAME;
@@ -1093,12 +1118,12 @@ void app_save_draw(app *a)
    */
   if ((clicked & AUD_UI_FIELD_SUBMITTED) && save_confirm(a) == 0)
   {
-    return;
+    return 0;
   }
 
-  row.y += SAVE_ROW_H + 12.0f;
-  aud_ui_text(panel.x + SAVE_PAD, row.y + 8.0f, 18, AUD_UI_MUTED, "folder");
-  clicked = aud_ui_field(row, s->folder, sizeof(s->folder),
+  row->y += SAVE_ROW_H + 12.0f;
+  aud_ui_text(panel.x + SAVE_PAD, row->y + 8.0f, 18, AUD_UI_MUTED, "folder");
+  clicked = aud_ui_field(*row, s->folder, sizeof(s->folder),
                          s->focus == APP_SAVE_FIELD_FOLDER, 1);
   if (clicked & AUD_UI_FIELD_CLICKED)
   {
@@ -1106,21 +1131,17 @@ void app_save_draw(app *a)
   }
   if ((clicked & AUD_UI_FIELD_SUBMITTED) && save_confirm(a) == 0)
   {
-    return;
+    return 0;
   }
+  return 1;
+}
 
-  /*
-   * The list follows the field rather than the other way round, so a folder
-   * that was typed or pasted is walked into as soon as it exists. Compared as
-   * strings because that is what changes: a folder that has grown a new
-   * sub-folder since it was listed is not worth a stat every frame.
-   */
-  if (strcmp(s->listed, s->folder) != 0)
-  {
-    relist(s);
-  }
+/* what is listed on the left, and what can be heard on the right */
+static Rectangle draw_save_tools(app *a, Rectangle panel, Rectangle row)
+{
+  app_save *s = &a->save;
+  Rectangle tools;
 
-  /* what is listed on the left, and what can be heard on the right */
   tools.x = panel.x + SAVE_PAD;
   tools.y = row.y + SAVE_ROW_H + 14.0f;
   tools.width = 108.0f;
@@ -1159,6 +1180,12 @@ void app_save_draw(app *a)
   {
     save_draw_preview(a, panel, tools);
   }
+  return tools;
+}
+
+static Rectangle save_list_rect(Rectangle panel, Rectangle tools)
+{
+  Rectangle list;
 
   list.x = panel.x + SAVE_PAD;
   list.width = panel.width - 2.0f * SAVE_PAD;
@@ -1175,6 +1202,48 @@ void app_save_draw(app *a)
   {
     list.height = AUD_UI_LIST_ROW;
   }
+  return list;
+}
+
+/* A folder is stepped into; a file is what was being looked for. */
+static void save_take_row(app_save *s, int clicked)
+{
+  char next[AUD_PATH_MAX];
+  int ok;
+
+  if (!s->row_is_dir[clicked])
+  {
+    snprintf(s->name, sizeof(s->name), "%s", s->rows[clicked]);
+    s->note[0] = '\0';
+    s->focus = APP_SAVE_FIELD_NAME;
+    return;
+  }
+
+  if (strcmp(s->rows[clicked], SAVE_PARENT) == 0)
+  {
+    char here[AUD_PATH_MAX];
+
+    /* through the real path, so ".." out of a relative folder still works */
+    ok = aud_path_expand(here, sizeof(here), s->folder) == 0 &&
+         aud_path_dirname(next, sizeof(next), here) == 0;
+  }
+  else
+  {
+    ok = aud_path_join(next, sizeof(next), s->folder, s->rows[clicked]) == 0;
+  }
+
+  if (ok)
+  {
+    snprintf(s->folder, sizeof(s->folder), "%s", next);
+    s->note[0] = '\0';
+    relist(s);
+  }
+}
+
+static void draw_save_list(app_save *s, Rectangle list)
+{
+  int marked = -1;
+  int clicked;
 
   /*
    * The row the name field is pointing at, drawn as the current one. With the
@@ -1193,51 +1262,16 @@ void app_save_draw(app *a)
   clicked = aud_ui_list(list, s->labels, s->count, marked, &s->scroll, 1);
   if (clicked >= 0 && clicked < s->count)
   {
-    char next[AUD_PATH_MAX];
-    int ok;
-
-    /* a file is what was being looked for; a folder is a step towards it */
-    if (!s->row_is_dir[clicked])
-    {
-      snprintf(s->name, sizeof(s->name), "%s", s->rows[clicked]);
-      s->note[0] = '\0';
-      s->focus = APP_SAVE_FIELD_NAME;
-    }
-    else
-    {
-      if (strcmp(s->rows[clicked], SAVE_PARENT) == 0)
-      {
-        char here[AUD_PATH_MAX];
-
-        /* through the real path, so ".." out of a relative folder still works */
-        ok = aud_path_expand(here, sizeof(here), s->folder) == 0 &&
-             aud_path_dirname(next, sizeof(next), here) == 0;
-      }
-      else
-      {
-        ok = aud_path_join(next, sizeof(next), s->folder, s->rows[clicked]) == 0;
-      }
-
-      if (ok)
-      {
-        snprintf(s->folder, sizeof(s->folder), "%s", next);
-        s->note[0] = '\0';
-        relist(s);
-      }
-    }
+    save_take_row(s, clicked);
   }
+}
 
-  /* why the last attempt did not work, immediately under what it was about */
-  if (s->note[0] != '\0')
-  {
-    aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_WARN,
-                s->note);
-  }
-  else
-  {
-    aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_MUTED,
-                save_hint(s->mode));
-  }
+/* Returns 0 when the dialog is gone and the rest of the frame is moot. */
+static int draw_save_buttons(app *a, Rectangle panel)
+{
+  app_save *s = &a->save;
+  Rectangle save;
+  Rectangle keep;
 
   save.width = 130.0f;
   save.height = 38.0f;
@@ -1252,13 +1286,91 @@ void app_save_draw(app *a)
                     AUD_UI_MUTED, 1))
   {
     app_save_dismiss(a);
-    return;
+    return 0;
   }
 
   /* filled, so the button that does the thing the dialog is named after is not
    * the same shape as the one that walks away from it */
   if (aud_ui_toggle(save, save_action(s->mode), 1, AUD_UI_ACCENT, 1) &&
       save_confirm(a) == 0)
+  {
+    return 0;
+  }
+  return 1;
+}
+
+void app_save_draw(app *a)
+{
+  app_save *s = &a->save;
+  Rectangle screen = {0.0f, 0.0f, (float)GetScreenWidth(), (float)GetScreenHeight()};
+  Rectangle panel;
+  Rectangle row;
+  Rectangle tools;
+  Rectangle list;
+
+  if (!s->open)
+  {
+    /*
+     * Whatever was being auditioned goes with the dialog that started it.
+     * Here rather than beside each of the half dozen ways out, so a way out
+     * added later cannot leave a take playing to an empty window.
+     */
+    if (aud_preview_playing(&a->preview))
+    {
+      aud_preview_stop(&a->preview);
+    }
+    return;
+  }
+
+  /*
+   * Once a frame, so the window keeps drawing while the desktop's chooser is
+   * up. A no-op unless one is - see gui/chooser.h.
+   */
+  chooser_step(a);
+
+  /* the window dimmed rather than replaced: the take that was just played is
+   * still on the meters behind this, and that is worth seeing */
+  DrawRectangleRec(screen, Fade(BLACK, 0.72f));
+
+  panel = save_panel_rect(screen);
+  aud_ui_shadow(panel, 14.0f, 22.0f);
+  aud_ui_panel(panel, 14.0f, AUD_UI_SURFACE, AUD_UI_EDGE);
+
+  draw_save_header(s, panel);
+
+  if (!draw_save_fields(a, panel, 66.0f, &row))
+  {
+    return;
+  }
+
+  /*
+   * The list follows the field rather than the other way round, so a folder
+   * that was typed or pasted is walked into as soon as it exists. Compared as
+   * strings because that is what changes: a folder that has grown a new
+   * sub-folder since it was listed is not worth a stat every frame.
+   */
+  if (strcmp(s->listed, s->folder) != 0)
+  {
+    relist(s);
+  }
+
+  tools = draw_save_tools(a, panel, row);
+  list = save_list_rect(panel, tools);
+  draw_save_list(s, list);
+
+  /* why the last attempt did not work, immediately under what it was about */
+  if (s->note[0] != '\0')
+  {
+    aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_WARN,
+                s->note);
+  }
+  else
+  {
+    aud_ui_text(panel.x + SAVE_PAD, list.y + list.height + 6.0f, 16, AUD_UI_MUTED,
+                save_hint(s->mode));
+  }
+
+  if (!draw_save_buttons(a, panel))
   {
     return;
   }

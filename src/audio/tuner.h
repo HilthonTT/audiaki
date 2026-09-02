@@ -120,8 +120,6 @@ int aud_tuner_analyse(aud_tuner *t, double dt, aud_tuner_reading *out);
 /* Samples the analysis window spans, for a caller sizing its own buffer. */
 size_t aud_tuner_window(const aud_tuner *t);
 
-/* -- note arithmetic ------------------------------------------------------- */
-
 /*
  * Describe `frequency` as a note. Pure: no analyser needed, which is what makes
  * the note mapping testable on its own.

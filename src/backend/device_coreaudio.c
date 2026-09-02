@@ -48,8 +48,6 @@
 #define CA_INPUT_BUS 1
 #define CA_OUTPUT_BUS 0
 
-/* -- listing --------------------------------------------------------------- */
-
 static int coreaudio_enumerate(aud_device_entry **out)
 {
   AudioDeviceID *devices = NULL;
@@ -208,8 +206,6 @@ static int coreaudio_probe(const char *name, int json)
   free(rates);
   return 0;
 }
-
-/* -- the capture stream ---------------------------------------------------- */
 
 typedef struct
 {
@@ -455,23 +451,18 @@ static int set_channel_map(AudioUnit unit, unsigned channels)
   return err == noErr ? 0 : -1;
 }
 
-static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
+/*
+ * The handle, before anything of the system's is attached to it. Cleans up
+ * after itself, because capture_free() is not usable until this has returned.
+ */
+static ca_capture *ca_capture_new(const aud_device_config *cfg)
 {
-  AudioStreamBasicDescription asbd;
-  AURenderCallbackStruct callback;
-  ca_capture *c;
-  unsigned available;
-  unsigned period;
-  size_t fifo_frames;
-  char status[16];
-  char label[128];
-  OSStatus err;
+  ca_capture *c = calloc(1, sizeof(*c));
 
-  c = calloc(1, sizeof(*c));
   if (c == NULL)
   {
     aud_error("out of memory opening the capture stream");
-    return -1;
+    return NULL;
   }
 
   /*
@@ -486,42 +477,53 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   {
     aud_error("cannot create the capture lock");
     free(c);
-    return -1;
+    return NULL;
   }
   if (pthread_cond_init(&c->cond, NULL) != 0)
   {
     aud_error("cannot create the capture condition");
     pthread_mutex_destroy(&c->lock);
     free(c);
-    return -1;
+    return NULL;
   }
+  return c;
+}
 
+/*
+ * The device -D named, and whether it has the channels asked of it. From here
+ * on a failure is the caller's to clean up with capture_free().
+ */
+static int ca_pick_device(ca_capture *c, const aud_device_config *cfg, char *label,
+                          size_t label_size, unsigned *available)
+{
   c->device = aud_ca_find_device(cfg->name, 1 /* input */);
   if (c->device == kAudioObjectUnknown)
   {
     aud_error("cannot open capture device '%s'",
               cfg->name != NULL ? cfg->name : AUD_DEFAULT_DEVICE);
     aud_info("run '" AUDIAKI_NAME " --list' to see the available capture devices");
-    capture_free(c);
     return -1;
   }
 
-  aud_ca_device_name(c->device, label, sizeof(label));
+  aud_ca_device_name(c->device, label, label_size);
 
-  available = aud_ca_channels(c->device, kAudioObjectPropertyScopeInput);
-  if (available < c->channels)
+  *available = aud_ca_channels(c->device, kAudioObjectPropertyScopeInput);
+  if (*available < c->channels)
   {
-    aud_error("cannot set %u channel(s): %s has %u", c->channels, label, available);
-    aud_info("device supports 1..%u channels", available);
-    capture_free(c);
+    aud_error("cannot set %u channel(s): %s has %u", c->channels, label, *available);
+    aud_info("device supports 1..%u channels", *available);
     return -1;
   }
+  return 0;
+}
 
-  /*
-   * The rate is the device's, so this moves it rather than negotiating one for
-   * this stream alone. Declining to move it would mean recording at whatever
-   * the last application left the device at, which is worse.
-   */
+/*
+ * The rate is the device's, so this moves it rather than negotiating one for
+ * this stream alone. Declining to move it would mean recording at whatever
+ * the last application left the device at, which is worse.
+ */
+static int ca_settle_rate(ca_capture *c, const aud_device_config *cfg, const char *label)
+{
   if (aud_ca_set_rate(c->device, (double)cfg->rate) != 0)
   {
     c->rate = (unsigned)(aud_ca_rate(c->device) + 0.5);
@@ -531,25 +533,30 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   {
     c->rate = cfg->rate;
   }
+
   if (c->rate == 0)
   {
     aud_error("coreaudio: %s did not say what rate it is running at", label);
-    capture_free(c);
     return -1;
   }
+  return 0;
+}
 
-  period = aud_ca_set_period(c->device, cfg->period_frames);
+static int ca_build_unit(ca_capture *c, const char *label, unsigned available)
+{
+  AudioStreamBasicDescription asbd;
+  AURenderCallbackStruct callback;
+  char status[16];
+  OSStatus err;
 
   c->unit = aud_ca_new_unit("capture");
   if (c->unit == NULL)
   {
-    capture_free(c);
     return -1;
   }
 
   if (enable_input_only(c->unit) != 0)
   {
-    capture_free(c);
     return -1;
   }
 
@@ -559,7 +566,6 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   {
     aud_error("cannot open capture device '%s': %s", label,
               aud_ca_status_text(err, status, sizeof(status)));
-    capture_free(c);
     return -1;
   }
 
@@ -581,7 +587,6 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   {
     aud_error("coreaudio: %s will not give %u channel(s) at %u Hz: %s", label,
               c->channels, c->rate, aud_ca_status_text(err, status, sizeof(status)));
-    capture_free(c);
     return -1;
   }
 
@@ -594,10 +599,14 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   {
     aud_error("coreaudio: cannot attach the capture callback: %s",
               aud_ca_status_text(err, status, sizeof(status)));
-    capture_free(c);
     return -1;
   }
+  return 0;
+}
 
+static int ca_alloc_buffers(ca_capture *c, const aud_device_config *cfg, unsigned period,
+                            size_t *fifo_frames)
+{
   /*
    * A period longer than the device asked for, because the HAL is entitled to
    * hand over more than kAudioDevicePropertyBufferFrameSize in a cycle and a
@@ -613,28 +622,32 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
   if (c->staging == NULL || c->decode == NULL)
   {
     aud_error("out of memory opening the capture stream");
-    capture_free(c);
     return -1;
   }
 
-  fifo_frames = (size_t)cfg->period_frames * cfg->periods;
-  if (fifo_frames < CA_FIFO_MIN_FRAMES)
+  *fifo_frames = (size_t)cfg->period_frames * cfg->periods;
+  if (*fifo_frames < CA_FIFO_MIN_FRAMES)
   {
-    fifo_frames = CA_FIFO_MIN_FRAMES;
+    *fifo_frames = CA_FIFO_MIN_FRAMES;
   }
-  if (fifo_frames < (size_t)period * CA_FIFO_MIN_PERIODS)
+  if (*fifo_frames < (size_t)period * CA_FIFO_MIN_PERIODS)
   {
-    fifo_frames = (size_t)period * CA_FIFO_MIN_PERIODS;
+    *fifo_frames = (size_t)period * CA_FIFO_MIN_PERIODS;
   }
 
-  if (aud_ringbuf_init(&c->fifo, fifo_frames * c->channels) != 0)
+  if (aud_ringbuf_init(&c->fifo, *fifo_frames * c->channels) != 0)
   {
     aud_error("out of memory sizing the capture buffer");
-    capture_free(c);
     return -1;
   }
+  return 0;
+}
 
-  err = AudioUnitInitialize(c->unit);
+static int ca_start(ca_capture *c, const char *label)
+{
+  char status[16];
+  OSStatus err = AudioUnitInitialize(c->unit);
+
   if (err != noErr)
   {
     aud_error("cannot open capture device '%s': %s", label,
@@ -643,7 +656,6 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
     {
       aud_info("the device is held exclusively by another program");
     }
-    capture_free(c);
     return -1;
   }
 
@@ -658,10 +670,41 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
               aud_ca_status_text(err, status, sizeof(status)));
     aud_info("macOS asks for microphone permission the first time; check System "
              "Settings > Privacy & Security > Microphone");
-    capture_free(c);
     return -1;
   }
   c->running = 1;
+  return 0;
+}
+
+static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
+{
+  ca_capture *c;
+  unsigned available = 0;
+  unsigned period;
+  size_t fifo_frames = 0;
+  char label[128];
+
+  c = ca_capture_new(cfg);
+  if (c == NULL)
+  {
+    return -1;
+  }
+
+  if (ca_pick_device(c, cfg, label, sizeof(label), &available) != 0 ||
+      ca_settle_rate(c, cfg, label) != 0)
+  {
+    capture_free(c);
+    return -1;
+  }
+
+  period = aud_ca_set_period(c->device, cfg->period_frames);
+
+  if (ca_build_unit(c, label, available) != 0 ||
+      ca_alloc_buffers(c, cfg, period, &fifo_frames) != 0 || ca_start(c, label) != 0)
+  {
+    capture_free(c);
+    return -1;
+  }
 
   dev->handle = c;
   dev->name = cfg->name;
@@ -677,7 +720,6 @@ static int coreaudio_open_capture(aud_device *dev, const aud_device_config *cfg)
             dev->buffer_frames);
   return 0;
 }
-
 static long coreaudio_read(aud_device *dev, void *buf, unsigned long frames,
                            unsigned *xruns)
 {
@@ -766,8 +808,6 @@ static void coreaudio_drop(aud_device *dev)
   }
   aud_ringbuf_skip(&c->fifo, aud_ringbuf_available(&c->fifo));
 }
-
-/* -- the hotplug watch ----------------------------------------------------- */
 
 /*
  * The HAL says when a device arrives or goes, so like the PipeWire and JACK

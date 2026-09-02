@@ -58,8 +58,6 @@ static void ensure_pw_init(void)
   pthread_once(&pw_init_once, pw_init_call);
 }
 
-/* -- a connection to the server ------------------------------------------- */
-
 typedef struct
 {
   struct pw_thread_loop *loop;
@@ -233,8 +231,6 @@ int aud_pipewire_daemon_responds(void)
   cached = ok;
   return cached;
 }
-
-/* -- the nodes the server is offering -------------------------------------- */
 
 /*
  * A node worth capturing from. Sinks are in here as well as sources: a sink's
@@ -493,8 +489,6 @@ static int pipewire_enumerate(aud_device_entry **out)
   }
 }
 
-/* -- probe ----------------------------------------------------------------- */
-
 /*
  * What a device supports, through a server that converts. The honest answer is
  * different in kind from ALSA's: the hardware's own format list is not what
@@ -566,8 +560,6 @@ static int pipewire_probe(const char *name, int json)
   nodes_free(&n);
   return 0;
 }
-
-/* -- the capture stream ---------------------------------------------------- */
 
 typedef struct
 {
@@ -1138,8 +1130,6 @@ static void pipewire_drop(aud_device *dev)
   c->fill = 0;
   pthread_mutex_unlock(&c->lock);
 }
-
-/* -- the hotplug watch ----------------------------------------------------- */
 
 /*
  * PipeWire says when something appears or goes, so unlike the ALSA watch there
