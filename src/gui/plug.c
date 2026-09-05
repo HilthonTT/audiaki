@@ -315,8 +315,8 @@ static void plug_pick_backend(app *a)
   if (env_backend != NULL && *env_backend != '\0' &&
       aud_backend_parse(env_backend, &a->backend) != 0)
   {
-    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected auto, pipewire or alsa",
-             env_backend);
+    aud_warn("ignoring $AUDIAKI_BACKEND=%s: expected %s", env_backend,
+             aud_backend_list());
     a->backend = AUD_BACKEND_AUTO;
   }
 }

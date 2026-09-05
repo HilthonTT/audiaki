@@ -319,6 +319,47 @@ TEST(the_reader_takes_rf64_and_bw64)
   remove(g_path);
 }
 
+TEST(a_ds64_size_that_would_step_backwards_is_refused)
+{
+  /*
+   * The same layout as above with the 64-bit data size set to -8: stepping
+   * over "the payload" would land on the data chunk's own header, which would
+   * be read again and stepped over again for as long as anyone waited. The
+   * walk has to refuse the size rather than take the seek.
+   */
+  static const unsigned char file[] = {
+      'R',  'F',  '6',  '4',  0xFF, 0xFF, 0xFF, 0xFF, 'W',  'A',
+      'V',  'E',  'd',  's',  '6',  '4',  0x1C, 0x00, 0x00, 0x00, /* ds64, 28 */
+      0x54, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* riffSize */
+      0xF8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,             /* dataSize -8 */
+      0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,             /* frames   */
+      0x00, 0x00, 0x00, 0x00,                                     /* no table */
+      'f',  'm',  't',  ' ',  0x10, 0x00, 0x00, 0x00, 0x01, 0x00, /* PCM */
+      0x01, 0x00,                                                 /* mono */
+      0x44, 0xAC, 0x00, 0x00,                                     /* 44100 */
+      0x88, 0x58, 0x01, 0x00,                                     /* byte rate */
+      0x02, 0x00,                                                 /* align */
+      0x10, 0x00,                                                 /* 16 bit */
+      'd',  'a',  't',  'a',  0xFF, 0xFF, 0xFF, 0xFF,             /* size from ds64 */
+      0x00, 0x40, 0x00, 0xC0,
+  };
+  wav_reader r;
+  FILE *f = fopen(g_path, "wb");
+
+  CHECK(f != NULL);
+  if (f == NULL)
+  {
+    return;
+  }
+  CHECK_EQ_INT(fwrite(file, 1, sizeof(file), f), (int)sizeof(file));
+  fclose(f);
+
+  CHECK_EQ_INT(wav_read_open(&r, g_path), -1);
+  CHECK(r.error != NULL);
+
+  remove(g_path);
+}
+
 TEST(an_rf64_file_with_no_ds64_is_refused)
 {
   static const unsigned char file[] = {
@@ -1150,6 +1191,7 @@ int main(void)
   RUN(a_take_that_outgrows_riff_is_promoted_to_rf64);
   RUN(a_take_that_stayed_small_keeps_its_slot_as_junk);
   RUN(the_reader_takes_rf64_and_bw64);
+  RUN(a_ds64_size_that_would_step_backwards_is_refused);
   RUN(an_rf64_file_with_no_ds64_is_refused);
   RUN(a_take_can_be_carried_on_in_the_same_file);
   RUN(carrying_on_refuses_a_stream_that_does_not_match);

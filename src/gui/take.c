@@ -267,6 +267,27 @@ void app_begin_take(app *a)
     return;
   }
 
+  /*
+   * The take lands on the timeline frame for frame, so the two have to agree
+   * about what a frame is. An empty project takes its rate from the device the
+   * way it takes it from the first file imported; one that already holds audio
+   * at another rate is refused, the way aud_edit_load_wav() refuses a file at
+   * one - laying 48 kHz frames on a 44.1 kHz lane would play back a semitone
+   * and a half sharp.
+   */
+  if (a->doc.count == 0)
+  {
+    a->doc.rate = aud_engine_rate(a->engine);
+  }
+  else if (a->doc.rate != aud_engine_rate(a->engine))
+  {
+    app_set_status(a,
+                   "the project is at %u Hz and %.40s captures at %u Hz - open a "
+                   "device at the project's rate, or start a new session",
+                   a->doc.rate, a->picker.active, aud_engine_rate(a->engine));
+    return;
+  }
+
   aud_player_stop(&a->player);
 
   /*
@@ -430,6 +451,48 @@ void app_pump_take(app *a)
 }
 
 /*
+ * Put the take at `path` back on lane `index` from the file, over the clip that
+ * grew there while it was being recorded.
+ *
+ * The file is what the take is; the clip was a view of it arriving, and the two
+ * agree unless the drawing thread fell so far behind that the ring overflowed.
+ * When that happens only the take's own clip is replaced: the lane may hold
+ * earlier takes, and throwing the whole of it away to put one of them right
+ * would lose audio that was never in doubt. Returns 0 with the lane as the file
+ * has it, or -1 with the lane as it was.
+ */
+static int app_reload_take(app *a, size_t index, uint64_t at, const char *path)
+{
+  aud_track *t = &a->doc.tracks[index];
+  aud_samples *block;
+  unsigned rate = 0;
+  const char *why = NULL;
+
+  block = aud_edit_read_wav(path, &rate, &why);
+  if (block == NULL)
+  {
+    return -1;
+  }
+
+  if (rate != a->doc.rate || block->channels != t->channels)
+  {
+    aud_samples_release(block);
+    return -1;
+  }
+
+  aud_track_delete(t, at, aud_track_end(t), 0);
+  if (aud_track_place(t, block, 0, block->frames, at, 0, 0) != 0)
+  {
+    aud_samples_release(block);
+    return -1;
+  }
+
+  aud_samples_release(block); /* the clip holds it now */
+  aud_track_tidy(t);
+  return 0;
+}
+
+/*
  * Stop the take, and then deal with what it left behind. The WAV has to be
  * closed first, before either of those: ffmpeg opens it to read the audio, and
  * a header that has not been patched yet describes a file of zero length.
@@ -439,14 +502,19 @@ void app_stop_take(app *a, const aud_engine_status *st)
   char take[AUD_ENGINE_PATH_MAX];
   double seconds = st->elapsed;
   unsigned long dropped;
+  int closed;
 
   snprintf(take, sizeof(take), "%s", st->path);
   dropped = aud_engine_take_dropped(a->engine);
 
-  if (aud_engine_stop(a->engine) != 0)
-  {
-    return;
-  } /* the failure is already in the status line */
+  /*
+   * A file that would not close - a disk that filled as the header was being
+   * patched - is said on the status line by the engine. The timeline is still
+   * closed out below: the clip that was growing has stopped growing whatever
+   * happened to the file, and a lane left open on it would refuse the next
+   * take and keep the playhead running for a recording that is over.
+   */
+  closed = aud_engine_stop(a->engine) == 0;
 
   /* stopping stops the transport, overdub and all */
   aud_player_stop(&a->player);
@@ -459,6 +527,7 @@ void app_stop_take(app *a, const aud_engine_status *st)
   if (a->rec.track >= 0 && (size_t)a->rec.track < a->doc.count)
   {
     aud_track *t = &a->doc.tracks[a->rec.track];
+    int passes = 1;
 
     /*
      * Tell the block which file it is, while the clip that holds it is still
@@ -474,55 +543,58 @@ void app_stop_take(app *a, const aud_engine_status *st)
 
     aud_track_record_end(t);
 
-    /*
-     * The file is what the take is; the track was a view of it arriving. They
-     * agree unless the drawing thread fell so far behind that the ring
-     * overflowed, and in that one case the track is rebuilt from the file
-     * rather than left quietly wrong.
-     */
-    if (dropped > 0)
+    /* the display fell behind the file; the clip is put right from the file */
+    if (dropped > 0 && closed)
     {
-      aud_doc_remove_track(&a->doc, (size_t)a->rec.track);
-      a->rec.track = -1;
-      app_load_track(a, take);
-      /* the reload appended it, and it brought its own source with it */
-      a->rec.last_track = (long)a->doc.count - 1;
+      if (app_reload_take(a, (size_t)a->rec.track, a->rec.at, take) != 0)
+      {
+        aud_warn("the display fell behind and %s could not be re-read; the lane is "
+                 "shorter than the file",
+                 take);
+      }
+    }
+
+    snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+
+    /*
+     * A take recorded round a loop, cut into one lane a lap. After the name,
+     * because the passes take theirs from it.
+     */
+    if (a->rec.lap_frames > 0 && closed)
+    {
+      passes = aud_edit_take_passes(&a->doc, (size_t)a->rec.track, a->rec.at,
+                                    a->rec.lap_frames);
+    }
+
+    if (!closed)
+    {
+      /* the engine's own message stands; this is what happened on the lane */
+      aud_warn("%s could not be finished; what reached the timeline is kept", take);
+    }
+    else if (dropped > 0)
+    {
       app_set_status(a, "the display fell behind; the take was reloaded from disk");
+    }
+    else if (passes > 1)
+    {
+      app_set_status(a, "%d passes of %.2f s - K walks them, alt+K mutes one", passes,
+                     (double)a->rec.lap_frames / a->doc.rate);
     }
     else
     {
-      int passes = 1;
-
-      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
-
-      /*
-       * A take recorded round a loop, cut into one lane a lap. After the name,
-       * because the passes take theirs from it - and only here, where the take
-       * and the timeline are known to agree: the reload above rebuilds the lane
-       * from the file at frame zero, which is not where the laps were.
-       */
-      if (a->rec.lap_frames > 0)
-      {
-        passes = aud_edit_take_passes(&a->doc, (size_t)a->rec.track, a->rec.at,
-                                      a->rec.lap_frames);
-      }
-
-      if (passes > 1)
-      {
-        a->session.dirty = 1;
-        app_set_status(a, "%d passes of %.2f s - K walks them, alt+K mutes one", passes,
-                       (double)a->rec.lap_frames / a->doc.rate);
-      }
-      else
-      {
-        app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
-      }
+      app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
     }
   }
   a->rec.track = -1;
   a->rec.skip = 0;
   a->rec.lap_frames = 0;
   a->video.note[0] = '\0';
+
+  /* a file that did not close is not one to move about or render a video from */
+  if (!closed)
+  {
+    return;
+  }
 
   /*
    * The video waits for the dialog rather than starting beside it: it is
@@ -591,18 +663,19 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
     a->rec.last_track = a->rec.track;
     aud_track_record_end(t);
 
-    if (dropped > 0)
+    /*
+     * The display fell behind as well as the device going, so the lane is not
+     * what the file is. Put right from the file, like a take that stopped
+     * normally. A lane that could not be put right is not offered to be
+     * carried on: the second half would land where the lane ends rather than
+     * where the file does, and the two would disagree for good.
+     */
+    if (dropped > 0 && app_reload_take(a, (size_t)a->rec.track, a->rec.at, take) != 0)
     {
-      /*
-       * The display fell behind as well as the device going, so the track is
-       * not what the file is. Rebuilt from the file, like a take that stopped
-       * normally - and not offered to be carried on, because the frame the
-       * reload lands on is not the frame the take stopped at.
-       */
-      aud_doc_remove_track(&a->doc, (size_t)a->rec.track);
-      a->rec.track = -1;
-      app_load_track(a, take);
-      a->rec.last_track = (long)a->doc.count - 1;
+      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+      aud_warn("the display fell behind and %s could not be re-read; the lane is "
+               "shorter than the file",
+               take);
     }
     else
     {

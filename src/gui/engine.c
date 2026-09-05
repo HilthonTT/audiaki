@@ -598,6 +598,13 @@ static void *capture_thread(void *arg)
 {
   aud_engine *e = (aud_engine *)arg;
   unsigned xruns = 0;
+  /*
+   * How many of `xruns` have already been added to e->xruns. The device count
+   * runs for the life of the thread, but the one published is the take's:
+   * aud_engine_start() zeroes it, and copying the running total over that zero
+   * would hand every take the xruns of the ones before it.
+   */
+  unsigned published = 0;
 
   while (atomic_load_explicit(&e->running, memory_order_acquire))
   {
@@ -657,7 +664,8 @@ static void *capture_thread(void *arg)
     pthread_mutex_lock(&e->lock);
 
     e->peak = peak;
-    e->xruns = xruns;
+    e->xruns += xruns - published;
+    published = xruns;
     /*
      * A write the writer thread could not make. Ending the take is done here
      * rather than there so that every way one ends - the device going, the disk

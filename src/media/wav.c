@@ -229,7 +229,7 @@ int wav_open_append(wav_writer *w, const char *path, uint32_t rate, uint16_t cha
   uint64_t data_offset;
   uint64_t data_bytes;
   int large;
-  long end;
+  off_t end;
 
   memset(w, 0, sizeof(*w));
 
@@ -277,7 +277,7 @@ int wav_open_append(wav_writer *w, const char *path, uint32_t rate, uint16_t cha
    * overwritten by the first frame - so that one is refused rather than
    * quietly damaged.
    */
-  if (fseek(w->file, 0, SEEK_END) != 0 || (end = ftell(w->file)) < 0 ||
+  if (fseeko(w->file, 0, SEEK_END) != 0 || (end = ftello(w->file)) < 0 ||
       (uint64_t)end != data_offset + data_bytes + (data_bytes & 1u))
   {
     fclose(w->file);
@@ -288,9 +288,11 @@ int wav_open_append(wav_writer *w, const char *path, uint32_t rate, uint16_t cha
 
   /*
    * An odd payload was followed by a pad byte on close. It is not part of the
-   * audio, so the next frame goes over it.
+   * audio, so the next frame goes over it. Through the off_t seek, like the
+   * reader: a take being carried on is exactly the kind that has grown past
+   * what a 32-bit long can point into.
    */
-  if (fseek(w->file, (long)(data_offset + data_bytes), SEEK_SET) != 0)
+  if (fseeko(w->file, (off_t)(data_offset + data_bytes), SEEK_SET) != 0)
   {
     fclose(w->file);
     w->file = NULL;
@@ -563,6 +565,7 @@ static chunk_result read_data_chunk(wav_reader *r, wav_scan *s, uint32_t size,
    * else.
    */
   uint64_t payload = size;
+  uint64_t step;
 
   if (size == WAV_SIZE_IS_64_BIT && (s->have_ds64 || s->is_rf64))
   {
@@ -572,6 +575,21 @@ static chunk_result read_data_chunk(wav_reader *r, wav_scan *s, uint32_t size,
       return CHUNK_BAD;
     }
     payload = s->ds64_data_bytes;
+  }
+
+  /*
+   * The step over the payload has to be a forward one. A ds64 size in the top
+   * half of the range comes out negative once it is an off_t, and a seek by it
+   * lands back on chunks already read - on this very header, for the size that
+   * comes to minus eight - and the walk goes round for ever. No file is that
+   * long, so a size that will not fit the offset type is a broken file.
+   */
+  step = payload + (payload & 1u);
+  if (step < payload || step > (uint64_t)INT64_MAX || (off_t)step < 0 ||
+      (uint64_t)(off_t)step != step)
+  {
+    *msg = "implausible data chunk size";
+    return CHUNK_BAD;
   }
 
   /* the first one is the audio; a malformed second is not a second take */
@@ -592,7 +610,7 @@ static chunk_result read_data_chunk(wav_reader *r, wav_scan *s, uint32_t size,
    * killed before its header was patched - lands past the end, where the next
    * read fails and ends the walk with what has been found.
    */
-  if (fseeko(r->file, (off_t)(payload + (payload & 1u)), SEEK_CUR) != 0)
+  if (fseeko(r->file, (off_t)step, SEEK_CUR) != 0)
   {
     return CHUNK_END;
   }

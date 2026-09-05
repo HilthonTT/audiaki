@@ -991,6 +991,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **A WAV whose `ds64` chunk names an absurd data size no longer hangs the
+  reader.** The size is 64 bits and the file offset it is stepped over by is a
+  signed one, so a value in the top half of the range seeked backwards - onto
+  the data chunk's own header, for the value that comes to minus eight - and
+  the chunk walk read it and stepped back onto it for as long as anyone waited.
+  `--info`, `--play`, an import and the fuzz target all went through that walk.
+  A size that will not fit the offset type is now refused as a broken file,
+  with a unit test and a corpus entry to keep it that way.
+
+- **The window's xrun count is the take's.** The engine zeroed it when a take
+  started and then copied the capture thread's running total back over the
+  zero on the next period, so every take reported the xruns of every take
+  before it as well as its own.
+
+- **A take whose display fell behind keeps the rest of its lane.** When the
+  timeline's copy of a take overflowed its ring, the whole track was thrown
+  away and the WAV reloaded as a new one at frame zero - taking earlier takes
+  on the same lane with it and moving the new one off the cursor it was
+  recorded at. Only the take's own clip is now replaced, in place, from the
+  file; a loop take cut into passes still becomes passes, and a take
+  interrupted by the cable coming out can still be carried on.
+
+- **A take that would not close is still closed out on the timeline.** When
+  the engine could not finalise the file - a disk full as the header was
+  patched - the window stopped half way: the lane stayed open on a clip that
+  had stopped growing, the playhead kept running, and Record refused the next
+  take for as long as the window was open.
+
+- **Recording is refused onto a project at another rate.** Nothing checked
+  that the device the window opened was running at the project's rate before a
+  take was laid on the timeline, so a 44.1 kHz session opened on a 48 kHz
+  interface took a clip that played back a semitone and a half sharp. An empty
+  project now takes its rate from the device, the way it takes it from the
+  first file imported; one with audio in it says why it will not record.
+
+- **Ctrl+O is refused while a take is open**, as the Open button already was.
+  Opening a session replaces the timeline, and the clip the take was arriving
+  into went with it while the engine carried on writing the file.
+
+- **Carrying a take on seeks with an `off_t`.** `wav_open_append()` measured
+  the file with `ftell()` and `fseek()`, which on a 32-bit `long` cannot reach
+  past 2 GB - and a take being carried on is exactly the kind that has.
+
 - **The unit tests build on macOS again.** `make test` there linked the option
   parser's own tests without the option parser in them and stopped at an
   undefined `cli_parse`.

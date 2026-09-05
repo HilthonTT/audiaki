@@ -435,6 +435,18 @@ void app_open_project_dialog(app *a)
 {
   app_save *s = &a->save;
 
+  /*
+   * Not over a take. Opening a session replaces the timeline, and the clip the
+   * take is arriving into is on it: the engine would go on writing a file
+   * that no lane refers to any more. The button is greyed out while a take is
+   * open; the key that reaches this is not, so it is refused here as well.
+   */
+  if (a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before opening a session");
+    return;
+  }
+
   memset(s, 0, sizeof(*s));
   s->mode = APP_SAVE_MODE_PROJECT_OPEN;
   s->focus = APP_SAVE_FIELD_NAME;
