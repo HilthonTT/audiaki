@@ -36,6 +36,7 @@ static const int key_codes[APP_KEY_COUNT][2] = {
     [APP_KEY_M] = {KEY_M, 0},
     [APP_KEY_N] = {KEY_N, 0},
     [APP_KEY_O] = {KEY_O, 0},
+    [APP_KEY_P] = {KEY_P, 0},
     [APP_KEY_R] = {KEY_R, 0},
     [APP_KEY_S] = {KEY_S, 0},
     [APP_KEY_T] = {KEY_T, 0},
@@ -521,6 +522,10 @@ static void map_plain(const app_input *in, const aud_engine_status *st, cmd_list
   if (hit(in, APP_KEY_L))
   {
     emit(l, APP_CMD_TOGGLE_LOOP, 0, 0);
+  }
+  if (hit(in, APP_KEY_P))
+  {
+    emit(l, APP_CMD_TOGGLE_PUNCH, 0, 0);
   }
   if (hit(in, APP_KEY_C))
   {

@@ -102,6 +102,7 @@ static const screen_slot screen_transport[SCREEN_TRANSPORT_COUNT] = {
 enum
 {
   SCREEN_OVERDUB = 0,
+  SCREEN_PUNCH,
   SCREEN_SPLIT,
   SCREEN_VIDEO,
   SCREEN_VIDEO_AUDIO,
@@ -110,11 +111,9 @@ enum
 };
 
 static const screen_slot screen_capture[SCREEN_CAPTURE_COUNT] = {
-    {"Overdub", AUD_UI_ICON_NONE, 0},
-    {"Split", AUD_UI_ICON_NONE, 0},
-    {"Video", AUD_UI_ICON_NONE, 1},
-    {"No audio", AUD_UI_ICON_NONE, 1},
-    {"Monitor on", AUD_UI_ICON_NONE, 2}};
+    {"Overdub", AUD_UI_ICON_NONE, 0},  {"Punch", AUD_UI_ICON_NONE, 0},
+    {"Split", AUD_UI_ICON_NONE, 0},    {"Video", AUD_UI_ICON_NONE, 1},
+    {"No audio", AUD_UI_ICON_NONE, 1}, {"Monitor on", AUD_UI_ICON_NONE, 2}};
 
 /*
  * Every button on the edit bar, in order, with what each is for and which of
@@ -693,6 +692,7 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
   Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f, slider_w,
                       22.0f};
   Rectangle overdub;
+  Rectangle punch;
   Rectangle split;
   Rectangle video;
   Rectangle audio;
@@ -720,6 +720,7 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
             group);
   draw_group_rules(screen_capture, group, SCREEN_CAPTURE_COUNT);
   overdub = group[SCREEN_OVERDUB];
+  punch = group[SCREEN_PUNCH];
   split = group[SCREEN_SPLIT];
   video = group[SCREEN_VIDEO];
   audio = group[SCREEN_VIDEO_AUDIO];
@@ -740,6 +741,15 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
           ? "nothing on the timeline to play along to yet"
           : (settable ? "play the project while recording over it - use headphones"
                       : "only settable between takes"));
+
+  if (aud_ui_toggle(punch, "Punch", a->transport.punch, AUD_UI_RECORD, settable))
+  {
+    a->transport.punch = !a->transport.punch;
+  }
+  tip(a, punch,
+      !settable ? "only settable between takes"
+                : "Record replaces only the selection on the selected lane, rolling in "
+                  "from 2 s before it   P");
 
   if (aud_ui_toggle(split, "Split", a->rec.split, AUD_UI_OK,
                     settable && aud_engine_channels(a->engine) > 1u))
@@ -1372,6 +1382,7 @@ static const char *const help_keys[][2] = {
     {"space", "record, or pause and resume a take"},
     {"S", "stop the take, or cancel a video render"},
     {"L", "play the selection round and round"},
+    {"P", "punch in: Record replaces the selection on the selected lane"},
     {"C", "the metronome; it is heard, never recorded"},
     {"G", "count the ruler in bars; alt drops off the grid"},
     {"- / +", "the tempo, a beat at a time; shift for ten"},

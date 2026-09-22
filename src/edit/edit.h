@@ -241,6 +241,9 @@ int aud_edit_comp(aud_doc *d, size_t keep);
  */
 int aud_edit_take_passes(aud_doc *d, size_t index, uint64_t from, uint64_t length);
 
+int aud_edit_punch(aud_doc *d, size_t target, size_t take, uint64_t from, uint64_t to,
+                   size_t fade);
+
 /* Remove track `index` outright. */
 int aud_edit_remove_track(aud_doc *d, size_t index);
 

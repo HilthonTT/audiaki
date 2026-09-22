@@ -883,3 +883,75 @@ int aud_edit_remove_track(aud_doc *d, size_t index)
   aud_doc_remove_track(d, index);
   return 0;
 }
+
+static int land_piece(aud_track *t, const aud_track *piece, uint64_t at)
+{
+  for (size_t i = 0; i < piece->count; i++)
+  {
+    const aud_clip *c = &piece->clips[i];
+    uint64_t start = at + c->start;
+
+    if (aud_track_place(t, c->audio, c->offset, c->frames, start, c->fade_in,
+                        c->fade_out) != 0)
+    {
+      return -1;
+    }
+    aud_track_gain_at(t, start, c->gain);
+    aud_track_mute_at(t, start, c->muted);
+  }
+  return 0;
+}
+
+int aud_edit_punch(aud_doc *d, size_t target, size_t take, uint64_t from, uint64_t to,
+                   size_t fade)
+{
+  aud_track piece;
+  aud_track work;
+  int landed;
+
+  if (d == NULL || target >= d->count || take >= d->count || target == take ||
+      from >= to || d->tracks[target].channels != d->tracks[take].channels)
+  {
+    return -1;
+  }
+
+  if (aud_track_extract(&d->tracks[take], from, to, &piece) != 0)
+  {
+    return -1;
+  }
+  if (piece.count == 0 || aud_track_copy(&work, &d->tracks[target]) != 0)
+  {
+    aud_track_free(&piece);
+    return -1;
+  }
+
+  landed =
+      aud_track_delete(&work, from, to, 0) == 0 && land_piece(&work, &piece, from) == 0;
+  aud_track_free(&piece);
+  if (!landed)
+  {
+    aud_track_free(&work);
+    return -1;
+  }
+
+  aud_track_fade_out_at(&work, from, fade);
+  aud_track_fade_in_at(&work, from, fade);
+  aud_track_fade_out_at(&work, to, fade);
+  aud_track_fade_in_at(&work, to, fade);
+
+  aud_doc_checkpoint(d, "punch-in");
+  aud_track_free(&d->tracks[target]);
+  d->tracks[target] = work;
+
+  aud_doc_remove_track(d, take);
+  if (take < target)
+  {
+    target--;
+  }
+
+  aud_doc_select_tracks(d, 0);
+  d->tracks[target].selected = 1;
+  aud_doc_select(d, from, to);
+  d->dirty = 1;
+  return 0;
+}

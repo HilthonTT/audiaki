@@ -767,6 +767,72 @@ TEST(a_selection_too_short_to_measure_a_loudness_is_left_alone)
   aud_doc_free(&d);
 }
 
+TEST(a_punch_replaces_exactly_the_range_and_nothing_else)
+{
+  aud_doc d;
+  size_t undo_before;
+
+  build(&d, 2, 1000);
+  undo_before = d.undo_count;
+
+  CHECK_EQ_INT(aud_edit_punch(&d, 0, 1, 300, 600, 0), 0);
+  CHECK_EQ_INT(d.count, 1);
+  CHECK_EQ_INT(d.undo_count, undo_before + 1u);
+  CHECK_EQ_DBL(at(&d.tracks[0], 299), 299.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[0], 300), 10300.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[0], 599), 10599.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[0], 600), 600.0, 1e-3);
+  CHECK_EQ_INT(aud_track_end(&d.tracks[0]), 1000);
+  CHECK(d.tracks[0].selected);
+  CHECK_EQ_INT(d.sel_start, 300);
+  CHECK_EQ_INT(d.sel_end, 600);
+
+  CHECK_EQ_INT(aud_doc_undo(&d), 0);
+  CHECK_EQ_INT(d.count, 2);
+  CHECK_EQ_DBL(at(&d.tracks[0], 400), 400.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[1], 400), 10400.0, 1e-3);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_punch_that_never_reached_the_range_changes_nothing)
+{
+  aud_doc d;
+  size_t undo_before;
+
+  build(&d, 2, 1000);
+  CHECK_EQ_INT(aud_track_delete(&d.tracks[1], 200, 1000, 0), 0);
+  undo_before = d.undo_count;
+
+  CHECK_EQ_INT(aud_edit_punch(&d, 0, 1, 300, 600, 0), -1);
+  CHECK_EQ_INT(d.count, 2);
+  CHECK_EQ_INT(d.undo_count, undo_before);
+  CHECK_EQ_INT(d.redo_count, 0);
+  CHECK_EQ_DBL(at(&d.tracks[0], 400), 400.0, 1e-3);
+
+  CHECK_EQ_INT(aud_edit_punch(&d, 0, 0, 300, 600, 0), -1);
+  CHECK_EQ_INT(aud_edit_punch(&d, 0, 1, 600, 300, 0), -1);
+
+  aud_doc_free(&d);
+}
+
+TEST(a_punch_is_faded_in_and_out_so_it_does_not_click)
+{
+  aud_doc d;
+
+  build(&d, 2, 1000);
+  CHECK_EQ_INT(aud_edit_punch(&d, 0, 1, 300, 600, 10), 0);
+
+  CHECK_EQ_DBL(at(&d.tracks[0], 300), 0.0, 1e-3);
+  CHECK(at(&d.tracks[0], 305) < 10305.0f);
+  CHECK(at(&d.tracks[0], 299) < 299.0f);
+  CHECK_EQ_DBL(at(&d.tracks[0], 450), 10450.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[0], 600), 0.0, 1e-3);
+  CHECK_EQ_DBL(at(&d.tracks[0], 700), 700.0, 1e-3);
+
+  aud_doc_free(&d);
+}
+
 int main(void)
 {
   RUN(an_empty_project_has_nothing_to_undo);
@@ -800,6 +866,10 @@ int main(void)
   RUN(normalizing_to_a_loudness_puts_it_on_the_target);
   RUN(silence_has_nothing_to_normalize_and_costs_no_undo_step);
   RUN(a_selection_too_short_to_measure_a_loudness_is_left_alone);
+
+  RUN(a_punch_replaces_exactly_the_range_and_nothing_else);
+  RUN(a_punch_that_never_reached_the_range_changes_nothing);
+  RUN(a_punch_is_faded_in_and_out_so_it_does_not_click);
 
   return TEST_RESULT();
 }

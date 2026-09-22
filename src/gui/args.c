@@ -78,7 +78,7 @@ void app_usage(FILE *out, const app *a)
           "keys: space record or pause, S stop, I import, M monitor, B the\n"
           "      visualiser panel, N the spectrum panel, V style,\n"
           "      1-6 a style outright, F fit,\n"
-          "      L loop, C metronome, G grid, -/+ tempo,\n"
+          "      L loop, P punch, C metronome, G grid, -/+ tempo,\n"
           "      ctrl+X/C/V cut copy paste, del delete, ctrl+Z undo,\n"
           "      ctrl+wheel zoom, ? the list of them in the window\n",
           a->cfg.device, aud_backend_list(), a->cfg.rate, a->cfg.channels, a->rec.prefix,

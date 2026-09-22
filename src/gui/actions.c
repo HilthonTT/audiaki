@@ -838,6 +838,19 @@ void app_cmd_run(app *a, const app_cmd *cmd, const aud_engine_status *st)
     app_set_status(a, "%s", a->transport.loop ? "looping" : "playing straight through");
     return;
 
+  case APP_CMD_TOGGLE_PUNCH:
+    if (a->rec.track >= 0)
+    {
+      app_set_status(a, "stop the take first");
+      return;
+    }
+    a->transport.punch = !a->transport.punch;
+    app_set_status(a, "%s",
+                   a->transport.punch
+                       ? "punch on - Record replaces the selection on the selected lane"
+                       : "punch off - Record starts a take at the cursor");
+    return;
+
   case APP_CMD_TOGGLE_CLICK:
     a->transport.click_on = !a->transport.click_on;
     app_apply_transport(a);

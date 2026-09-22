@@ -445,6 +445,13 @@ typedef struct
    */
   long last_track;
   char last_path[AUD_ENGINE_PATH_MAX];
+
+  int punching;
+  int punch_due;
+  long punch_target;
+  uint64_t punch_in;
+  uint64_t punch_out;
+  uint64_t punch_stop;
   /*
    * Frames to a lap, when the take being recorded is going round a loop, and 0
    * when it is not. Fixed when Record was pressed, like `at` beside it: the
@@ -502,7 +509,8 @@ typedef struct
   int overdub;
   double latency_ms;
 
-  int loop;     /* Play goes round the selection instead of stopping at it */
+  int loop; /* Play goes round the selection instead of stopping at it */
+  int punch;
   int click_on; /* the metronome plays over whatever else is being heard */
   float click_gain;
 } app_transport;
@@ -755,6 +763,8 @@ void app_check_capture_loss(app *a);
 void app_begin_take(app *a);
 void app_stop_take(app *a, const aud_engine_status *st);
 void app_toggle_record(app *a, const aud_engine_status *st);
+
+void app_check_punch(app *a, const aud_engine_status *st);
 
 void app_sync_monitor_ir(app *a);
 

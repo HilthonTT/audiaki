@@ -36,6 +36,10 @@
 #include <stdio.h>
 #include <string.h>
 
+#define APP_PUNCH_LEAD_SECONDS 2.0
+#define APP_PUNCH_TAIL_SECONDS 0.5
+#define APP_PUNCH_FADE_SECONDS 0.005
+
 /* Open the device and build the display for whatever it negotiated. */
 int app_open_engine(app *a)
 {
@@ -257,6 +261,27 @@ static long app_split_targets(app *a, unsigned channels)
   return (long)first;
 }
 
+static long app_punch_lane(const app *a, unsigned channels)
+{
+  for (size_t i = 0; i < a->doc.count; i++)
+  {
+    if (a->doc.tracks[i].selected && a->doc.tracks[i].channels == channels)
+    {
+      return (long)i;
+    }
+  }
+  return -1;
+}
+
+static long app_punch_scratch(app *a, unsigned channels)
+{
+  if (aud_doc_add_track(&a->doc, "Punch", channels) == NULL)
+  {
+    return -1;
+  }
+  return (long)(a->doc.count - 1u);
+}
+
 /*
  * Pick the next free take name and start writing to it. Numbering rather than
  * prompting: pressing record should never be the moment you find out you are
@@ -301,9 +326,11 @@ void app_begin_take(app *a)
   uint64_t skip;
   uint64_t latency;
   long target;
+  long punch_target = -1;
   size_t lanes = 1;
   unsigned channels;
   int along;
+  int punch;
   int fresh_lanes = 0;
 
   if (a->engine == NULL || aud_take_next(path, sizeof(path), a->rec.prefix) != 0)
@@ -333,7 +360,23 @@ void app_begin_take(app *a)
   }
 
   channels = aud_engine_channels(a->engine);
-  if (a->rec.split && channels > 1u)
+  punch = a->transport.punch;
+
+  if (punch)
+  {
+    if (!aud_doc_has_range(&a->doc))
+    {
+      app_set_status(a, "select the stretch to punch in over first");
+      return;
+    }
+    punch_target = app_punch_lane(a, channels);
+    if (punch_target < 0)
+    {
+      app_set_status(a, "select the %u-channel lane to punch into", channels);
+      return;
+    }
+  }
+  else if (a->rec.split && channels > 1u)
   {
     lanes = channels;
   }
@@ -351,10 +394,23 @@ void app_begin_take(app *a)
    * - because tearing the device down and standing it up again at each lap
    * would lose the moment either side of every loop point.
    */
-  a->rec.lap_frames = a->transport.loop && aud_doc_has_range(&a->doc)
+  a->rec.lap_frames = !punch && a->transport.loop && aud_doc_has_range(&a->doc)
                           ? a->doc.sel_end - a->doc.sel_start
                           : 0;
-  at = a->rec.lap_frames > 0 ? a->doc.sel_start : a->doc.cursor;
+
+  if (punch)
+  {
+    uint64_t lead = (uint64_t)(APP_PUNCH_LEAD_SECONDS * a->doc.rate);
+
+    a->rec.punch_in = a->doc.sel_start;
+    a->rec.punch_out = a->doc.sel_end;
+    a->rec.punch_stop = a->doc.sel_end + (uint64_t)(APP_PUNCH_TAIL_SECONDS * a->doc.rate);
+    at = a->doc.sel_start > lead ? a->doc.sel_start - lead : 0;
+  }
+  else
+  {
+    at = a->rec.lap_frames > 0 ? a->doc.sel_start : a->doc.cursor;
+  }
 
   /*
    * Playback first, because whether it started is what decides where the take
@@ -365,9 +421,9 @@ void app_begin_take(app *a)
    * not open, and the take belongs exactly on the line where it was asked for.
    */
   latency = 0;
-  along = a->transport.overdub && aud_doc_end(&a->doc) > at;
+  along = (a->transport.overdub || punch) && aud_doc_end(&a->doc) > at;
 
-  if (along || a->transport.click_on || a->rec.lap_frames > 0)
+  if (along || a->transport.click_on || a->rec.lap_frames > 0 || punch)
   {
     /*
      * A loop take is bounded by the loop, whatever else is on. Otherwise the
@@ -375,6 +431,7 @@ void app_begin_take(app *a)
      * past the end of what is there, so the pass has no end of its own.
      */
     uint64_t until = a->rec.lap_frames > 0   ? a->doc.sel_end
+                     : punch                 ? a->rec.punch_stop
                      : a->transport.click_on ? AUD_PLAYER_OPEN_ENDED
                                              : aud_doc_end(&a->doc);
 
@@ -394,6 +451,11 @@ void app_begin_take(app *a)
   if (lanes > 1u)
   {
     target = app_split_targets(a, channels);
+    fresh_lanes = 1;
+  }
+  else if (punch)
+  {
+    target = app_punch_scratch(a, channels);
     fresh_lanes = 1;
   }
   else
@@ -434,6 +496,9 @@ void app_begin_take(app *a)
   a->rec.lanes = lanes;
   a->rec.at = start;
   a->rec.skip = skip;
+  a->rec.punching = punch;
+  a->rec.punch_due = 0;
+  a->rec.punch_target = punch_target;
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
@@ -450,6 +515,16 @@ void app_begin_take(app *a)
     a->rec.lanes = 0;
     a->rec.skip = 0;
     a->rec.lap_frames = 0;
+    a->rec.punching = 0;
+    return;
+  }
+
+  if (punch)
+  {
+    app_set_status(a, "punching in over %.2f s on %.30s - rolling from %.1f s before",
+                   (double)(a->rec.punch_out - a->rec.punch_in) / a->doc.rate,
+                   a->doc.tracks[punch_target].name,
+                   (double)(a->rec.punch_in - at) / a->doc.rate);
     return;
   }
 
@@ -562,6 +637,19 @@ void app_pump_take(app *a)
       break;
     }
   }
+
+  if (a->rec.punching && aud_track_end(&a->doc.tracks[a->rec.track]) >= a->rec.punch_stop)
+  {
+    a->rec.punch_due = 1;
+  }
+}
+
+void app_check_punch(app *a, const aud_engine_status *st)
+{
+  if (a->rec.punching && a->rec.punch_due && st->state == AUD_ENGINE_RECORDING)
+  {
+    app_stop_take(a, st);
+  }
 }
 
 /*
@@ -671,6 +759,8 @@ static void reset_take(app *a)
   a->rec.lanes = 0;
   a->rec.skip = 0;
   a->rec.lap_frames = 0;
+  a->rec.punching = 0;
+  a->rec.punch_due = 0;
   a->video.note[0] = '\0';
 }
 
@@ -710,6 +800,7 @@ void app_stop_take(app *a, const aud_engine_status *st)
   {
     size_t lanes = take_lanes(a);
     int passes = 1;
+    int punched = -1;
 
     close_lanes(a, take);
 
@@ -741,6 +832,17 @@ void app_stop_take(app *a, const aud_engine_status *st)
       }
     }
 
+    if (a->rec.punching && closed)
+    {
+      punched = aud_edit_punch(&a->doc, (size_t)a->rec.punch_target, (size_t)a->rec.track,
+                               a->rec.punch_in, a->rec.punch_out,
+                               (size_t)(APP_PUNCH_FADE_SECONDS * a->doc.rate));
+      if (punched == 0)
+      {
+        a->rec.last_track = a->rec.punch_target;
+      }
+    }
+
     if (!closed)
     {
       /* the engine's own message stands; this is what happened on the lane */
@@ -749,6 +851,17 @@ void app_stop_take(app *a, const aud_engine_status *st)
     else if (dropped > 0)
     {
       app_set_status(a, "the display fell behind; the take was reloaded from disk");
+    }
+    else if (a->rec.punching && punched == 0)
+    {
+      app_set_status(a, "punched in %.2f s on %.30s - ctrl+Z brings the whole take back",
+                     (double)(a->rec.punch_out - a->rec.punch_in) / a->doc.rate,
+                     a->doc.tracks[a->rec.punch_target].name);
+    }
+    else if (a->rec.punching)
+    {
+      app_set_status(a, "the take never reached the punch-in point - it is on a lane of "
+                        "its own");
     }
     else if (passes > 1)
     {
@@ -847,7 +960,7 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
                "shorter than the file",
                take);
     }
-    else
+    else if (!a->rec.punching)
     {
       a->rec.interrupted.waiting = 1;
       a->rec.interrupted.track = a->rec.track;
@@ -1189,7 +1302,7 @@ void app_toggle_record(app *a, const aud_engine_status *st)
 void app_sync_monitor_ir(app *a)
 {
   aud_ir *want = NULL;
-  long lane = a->rec.track;
+  long lane = a->rec.punching ? a->rec.punch_target : a->rec.track;
 
   if (a->engine == NULL)
   {

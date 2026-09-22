@@ -554,6 +554,7 @@ bool aud_plug_frame(bool close_requested)
   app_handle_keys(a, &st);
   app_pump_audio(a);
   app_pump_take(a);
+  app_check_punch(a, &st);
   app_sync_monitor_ir(a);
 
   /*

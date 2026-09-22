@@ -50,6 +50,7 @@ typedef enum
   APP_KEY_M,
   APP_KEY_N,
   APP_KEY_O,
+  APP_KEY_P,
   APP_KEY_R,
   APP_KEY_S,
   APP_KEY_T,
@@ -135,6 +136,7 @@ typedef enum
   APP_CMD_STOP, /* whichever of the render, the take and the playback is running */
   APP_CMD_TOGGLE_MONITOR,
   APP_CMD_TOGGLE_LOOP,
+  APP_CMD_TOGGLE_PUNCH,
   APP_CMD_TOGGLE_CLICK,
   APP_CMD_TOGGLE_GRID,
   APP_CMD_CYCLE_GRID,
