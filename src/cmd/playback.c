@@ -1,7 +1,9 @@
 /* SPDX-License-Identifier: MIT */
 #include "cmd/playback.h"
 
+#include "audio/convolve.h"
 #include "audio/format.h"
+#include "edit/ir.h"
 #include "take/latency.h"
 #include "util/log.h"
 
@@ -17,6 +19,34 @@ static const char *playback_what(const aud_playback *pb)
     return "monitoring or a metronome";
   }
   return pb->input ? "monitoring" : "a metronome";
+}
+
+#define PLAYBACK_IR_BLOCK 256u
+
+static void open_cab(aud_playback *pb, const char *path, unsigned rate)
+{
+  const char *why = NULL;
+  aud_ir *ir = aud_ir_load(path, rate, &why);
+
+  if (ir == NULL)
+  {
+    aud_warn("cannot use %s as a cab IR (%s) - monitoring dry", path,
+             why != NULL ? why : "unknown");
+    return;
+  }
+
+  pb->fx = aud_convolve_create(ir->data, ir->frames, ir->channels, pb->channels,
+                               PLAYBACK_IR_BLOCK);
+  if (pb->fx == NULL)
+  {
+    aud_warn("not enough memory for the cab IR - monitoring dry");
+  }
+  else
+  {
+    aud_info("monitoring through the cab in %s (%.0f ms)", path,
+             1000.0 * (double)ir->frames / rate);
+  }
+  aud_ir_release(ir);
 }
 
 void aud_playback_start(aud_playback *pb, const aud_device *dev,
@@ -130,6 +160,11 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
              mon_cfg.name);
   }
 
+  if (pb->input && cfg->ir_path != NULL)
+  {
+    open_cab(pb, cfg->ir_path, dev->rate);
+  }
+
   /*
    * The click is heard and not written, which is worth saying outright: the
    * take will not have it in it, unless the room hands it back through the
@@ -145,6 +180,9 @@ void aud_playback_start(aud_playback *pb, const aud_device *dev,
 
 void aud_playback_stop(aud_playback *pb)
 {
+  aud_convolve_destroy(pb->fx);
+  pb->fx = NULL;
+
   if (pb->mon != NULL)
   {
     pb->dropped = aud_monitor_dropped(pb->mon);
@@ -186,6 +224,11 @@ void aud_playback_feed(aud_playback *pb, const unsigned char *buf, size_t frames
       {
         pb->buf[i] *= pb->gain;
       }
+    }
+
+    if (pb->fx != NULL)
+    {
+      aud_convolve_stream(pb->fx, pb->buf, pb->buf, frames);
     }
   }
   else

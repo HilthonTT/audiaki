@@ -275,6 +275,16 @@ either. See
 .B \-\-gain
 for the one that does reach the file.
 .TP
+.BR \-\-ir " " \fIFILE\fR
+Monitor through a cabinet impulse response: a WAV, mono or stereo, up to two
+seconds, resampled to the capture rate if it needs to be. Implies
+.BR \-\-monitor .
+It shapes what is heard and nothing else \(em the take is written dry, so the
+cab can be changed afterwards in
+.BR audiaki\-gui .
+Adds 256 frames of delay to the monitor. An IR that cannot be read is warned
+about and the take is monitored dry.
+.TP
 .BR \-\-gain " " \fIX\fR
 Scale the capture on the way in, from 0.0 (silence) to 16.0 (+24 dB), default
 1.0. Unlike

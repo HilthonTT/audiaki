@@ -85,7 +85,7 @@ _audiaki()
             mapfile -t COMPREPLY < <(compgen -W "1 2 3 4 5 6 7 8 mix" -- "$cur")
             return
             ;;
-        --visualize | --visualise | --info | --play)
+        --visualize | --visualise | --info | --play | --ir)
             _audiaki_files wav
             return
             ;;
@@ -131,7 +131,7 @@ _audiaki()
               --periods --output --force --take --dir --prompt --no-prompt
               --preroll --note --no-metadata
               --spectrum --no-meter
-              --monitor --monitor-device --monitor-gain --gain
+              --monitor --monitor-device --monitor-gain --ir --gain
               --click --click-beats --click-subdiv --click-gain --latency
               --visualize --style --size --fps --bars --tune --a4 --tune-min --tune-max
               --calibrate

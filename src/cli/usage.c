@@ -72,6 +72,8 @@ void cli_print_usage(FILE *out)
           "                        output to monitor through (default: %s)\n"
           "      --monitor-gain X  scale what is monitored, 0.0 to 2.0; the file\n"
           "                        is unaffected (default: 1.0)\n"
+          "      --ir FILE         monitor through a cab impulse response (a WAV,\n"
+          "                        mono or stereo); the file stays dry\n"
           "      --gain X          scale the capture on the way in, 0.0 to 16.0;\n"
           "                        this one does reach the file, so watch the\n"
           "                        meter for CLIP (default: 1.0). Turn the\n"

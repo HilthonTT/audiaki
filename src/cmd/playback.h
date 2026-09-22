@@ -25,6 +25,7 @@ typedef struct
   int input;          /* mix the captured audio in, i.e. --monitor */
   const char *device; /* output to play through; NULL means the default one */
   float gain;         /* scales the input alone - not the click, never the file */
+  const char *ir_path;
   /*
    * Channels that will actually be handed to aud_playback_feed(). That is what
    * goes in the file rather than what the device delivered, so a take made
@@ -54,6 +55,7 @@ typedef struct
   int clicking;
   aud_click click;
   unsigned long dropped;
+  struct aud_convolver *fx;
 } aud_playback;
 
 /* Open the output, if anything was asked to come out of it. Cannot fail. */

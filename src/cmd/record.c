@@ -56,6 +56,7 @@ typedef struct
   int monitor;
   const char *monitor_device;
   float monitor_gain;
+  const char *monitor_ir;
   double click_bpm;
   unsigned click_beats;
   unsigned click_subdiv;
@@ -548,6 +549,7 @@ static void playback_begin(aud_playback *pb, aud_device *dev,
   cfg.input = opts->monitor;
   cfg.device = opts->monitor_device;
   cfg.gain = opts->monitor_gain;
+  cfg.ir_path = opts->monitor_ir;
   cfg.channels = channels;
   cfg.click_bpm = opts->click_bpm;
   cfg.click_beats = opts->click_beats;
@@ -1175,6 +1177,7 @@ int aud_cmd_record(const aud_options *opts)
   rec.monitor = opts->monitor;
   rec.monitor_device = opts->monitor_device;
   rec.monitor_gain = (float)opts->monitor_gain;
+  rec.monitor_ir = opts->monitor_ir;
   rec.click_bpm = opts->click_bpm;
   rec.click_beats = opts->click_beats;
   rec.click_subdiv = opts->click_subdiv;

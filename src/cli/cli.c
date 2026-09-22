@@ -75,6 +75,7 @@ enum
   OPT_REPEAT_ONE,
   OPT_MONITOR_DEVICE,
   OPT_MONITOR_GAIN,
+  OPT_IR,
   OPT_GAIN,
   OPT_NOTE,
   OPT_NO_METADATA,
@@ -113,6 +114,7 @@ static const struct option long_options[] = {
     {"monitor", no_argument, NULL, 'M'},
     {"monitor-device", required_argument, NULL, OPT_MONITOR_DEVICE},
     {"monitor-gain", required_argument, NULL, OPT_MONITOR_GAIN},
+    {"ir", required_argument, NULL, OPT_IR},
     {"gain", required_argument, NULL, OPT_GAIN},
     {"input-gain", required_argument, NULL, OPT_GAIN},
     {"click", required_argument, NULL, OPT_CLICK},
@@ -418,6 +420,10 @@ static scan_result scan_options(int argc, char **argv, aud_options *opts,
         bad_value("--monitor-gain", optarg, "0.0 to 2.0, where 1.0 is unchanged");
         return SCAN_BAD;
       }
+      opts->monitor = 1;
+      break;
+    case OPT_IR:
+      opts->monitor_ir = optarg;
       opts->monitor = 1;
       break;
     /*

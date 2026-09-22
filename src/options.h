@@ -90,6 +90,7 @@ typedef struct
   int monitor;                /* hear the input while it is being recorded */
   const char *monitor_device; /* output to monitor through; NULL = the default */
   double monitor_gain;        /* what the monitor is scaled by, not the file */
+  const char *monitor_ir;
   /*
    * What the capture is scaled by on the way in - and unlike the one above,
    * this one does reach the file. 1.0 leaves the samples exactly as the device

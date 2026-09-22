@@ -70,6 +70,7 @@ audiaki --visualize take01.wav       # render take01.mp4
 | `-M, --monitor` | Hear the input while it is recorded (use headphones) |
 | `--monitor-device NAME` | Output to monitor through (default `default`) |
 | `--monitor-gain X` | Scale what is monitored, 0.0 to 2.0 (default 1.0) |
+| `--ir FILE` | Monitor through a cab impulse response; the take stays dry |
 | `--gain X` | Scale the capture on the way in, 0.0 to 16.0; this one reaches the file (default 1.0) |
 | `--click BPM` | Play a metronome at BPM (20 to 300) while recording |
 | `--click-beats N` | Beats to a bar, accenting the first (default 4; 0 or 1 for a bare pulse) |
@@ -540,6 +541,32 @@ the count at the end.
 What you hear follows `--channel`: a take being written as one channel is
 monitored as one channel, so the headphones carry the take being made rather
 than the pair it was taken out of.
+
+### Through a cab
+
+A guitar recorded straight into an interface sounds thin and fizzy, because
+what makes an amp sound like an amp is mostly the speaker cabinet. `--ir` puts
+one back while you play, from an impulse response of the cabinet:
+
+```sh
+audiaki -M --ir ~/IRs/4x12-sm57.wav di.wav
+```
+
+It changes what you hear and nothing else. **The take is written dry**, so the
+cab is a decision that can be made again afterwards: open the take in
+`audiaki-gui` and give its lane the same IR, or a different one, with **Cab**.
+Naming an IR turns monitoring on by itself, the way `--monitor-gain` does.
+
+An IR is a WAV, mono or stereo, up to two seconds long. One at another rate is
+resampled to the capture rate, silence at the end of it is trimmed off, and it
+is scaled so that noise comes out at the level it went in, so swapping one cab
+for another does not also turn the guitar up. It adds 256 frames of delay to the
+monitor, about 5 ms, on top of the output queue. One that cannot be read is said
+so and the take is monitored dry rather than refused:
+
+```
+audiaki: warning: cannot use cab.wav as a cab IR (cannot open the file) - monitoring dry
+```
 
 ## Playing to a click
 
