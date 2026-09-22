@@ -279,7 +279,7 @@ static int plan_export(const aud_doc *d, const aud_export_options *opts, export_
   }
 
   p->from = opts->from;
-  p->to = opts->to != 0 ? opts->to : aud_doc_end(d);
+  p->to = opts->to != 0 ? opts->to : aud_mix_end(d);
   if (p->to <= p->from)
   {
     say(why, "there is nothing in that range");

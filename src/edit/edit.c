@@ -778,6 +778,7 @@ static long lift_pass(aud_doc *d, size_t index, const char *name, uint64_t from,
     aud_track_free(&lifted);
     return -1;
   }
+  aud_track_set_ir(fresh, d->tracks[index].ir);
 
   if (aud_track_paste(fresh, at, &lifted) != 0)
   {

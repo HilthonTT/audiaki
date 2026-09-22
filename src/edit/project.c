@@ -234,7 +234,24 @@ static int write_markers(FILE *f, const aud_doc *d)
   return 0;
 }
 
-static int write_track(FILE *f, const aud_track *t, const source_table *st)
+static int write_ir(FILE *f, const aud_track *t, const char *dir)
+{
+  char stored[AUD_PATH_MAX];
+
+  if (t->ir == NULL || aud_ir_path(t->ir)[0] == '\0')
+  {
+    return 0;
+  }
+  if (!one_line(aud_ir_path(t->ir)) ||
+      aud_path_relative(stored, sizeof(stored), dir, aud_ir_path(t->ir)) != 0)
+  {
+    return -1;
+  }
+  return fprintf(f, "ir %s\n", stored) < 0 ? -1 : 0;
+}
+
+static int write_track(FILE *f, const aud_track *t, const source_table *st,
+                       const char *dir)
 {
   char name[AUD_TRACK_NAME_MAX];
 
@@ -249,6 +266,10 @@ static int write_track(FILE *f, const aud_track *t, const source_table *st)
   }
   if (fprintf(f, "muted %d\nsoloed %d\ncollapsed %d\nheight %d\n", t->muted ? 1 : 0,
               t->soloed ? 1 : 0, t->collapsed ? 1 : 0, t->height) < 0)
+  {
+    return -1;
+  }
+  if (write_ir(f, t, dir) != 0)
   {
     return -1;
   }
@@ -334,7 +355,7 @@ int aud_project_save(const aud_doc *d, const char *path, const char **why)
 
   for (size_t i = 0; i < d->count; i++)
   {
-    if (write_track(f, &d->tracks[i], &st) != 0)
+    if (write_track(f, &d->tracks[i], &st, dir) != 0)
     {
       goto failed;
     }
@@ -793,6 +814,36 @@ static line_result read_doc_line(aud_doc *d, const char *word, char *args,
   return LINE_OTHER;
 }
 
+static int read_ir(aud_track *track, const char *args, const char *dir, unsigned rate,
+                   const char **why)
+{
+  char full[AUD_PATH_MAX];
+  const char *reason = NULL;
+  aud_ir *ir;
+
+  if (rate == 0)
+  {
+    say(why, "that project names a cab IR before saying what rate it is at");
+    return -1;
+  }
+  if (aud_path_join(full, sizeof(full), dir, args) != 0)
+  {
+    say(why, "that project refers to too long a path");
+    return -1;
+  }
+
+  ir = aud_ir_load(full, rate, &reason);
+  if (ir == NULL)
+  {
+    say_detail(why, "cannot use the cab IR '%s' - has it been moved?", args);
+    return -1;
+  }
+
+  aud_track_set_ir(track, ir);
+  aud_ir_release(ir);
+  return 0;
+}
+
 /*
  * The lines that describe the track most recently opened. An unknown keyword
  * comes back LINE_OTHER for the caller to step over: a file written by a later
@@ -848,6 +899,13 @@ static line_result read_track_line(aud_track *track, const char *word, char *arg
   else if (strcmp(word, "height") == 0)
   {
     take_int(args, &track->height, AUD_TRACK_HEIGHT_MIN, AUD_TRACK_HEIGHT_MAX);
+  }
+  else if (strcmp(word, "ir") == 0)
+  {
+    if (read_ir(track, args, dir, rate, why) != 0)
+    {
+      return LINE_BAD;
+    }
   }
   else if (strcmp(word, "clip") == 0)
   {

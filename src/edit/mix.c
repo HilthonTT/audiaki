@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: MIT */
 #include "edit/mix.h"
 
+#include "audio/convolve.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +18,17 @@ int aud_mix_init(aud_mixer *m, size_t frames)
   return 0;
 }
 
+#define MIX_IR_BLOCK 1024u
+
+static void fx_clear(aud_mix_fx *fx)
+{
+  aud_convolve_destroy(fx->cv);
+  free(fx->in);
+  free(fx->out);
+  aud_ir_release(fx->ir);
+  memset(fx, 0, sizeof(*fx));
+}
+
 void aud_mix_free(aud_mixer *m)
 {
   if (m == NULL)
@@ -23,9 +36,158 @@ void aud_mix_free(aud_mixer *m)
     return;
   }
 
+  for (size_t i = 0; i < m->fx_count; i++)
+  {
+    fx_clear(&m->fx[i]);
+  }
+  free(m->fx);
+  m->fx = NULL;
+  m->fx_count = 0;
+
   free(m->scratch);
   m->scratch = NULL;
   m->channels = 0;
+}
+
+static aud_mix_fx *fx_for(aud_mixer *m, size_t index, const aud_track *t)
+{
+  aud_mix_fx *fx;
+
+  if (index >= m->fx_count)
+  {
+    aud_mix_fx *grown = realloc(m->fx, (index + 1u) * sizeof(*grown));
+
+    if (grown == NULL)
+    {
+      return NULL;
+    }
+    memset(grown + m->fx_count, 0, (index + 1u - m->fx_count) * sizeof(*grown));
+    m->fx = grown;
+    m->fx_count = index + 1u;
+  }
+
+  fx = &m->fx[index];
+  if (fx->cv != NULL && fx->ir == t->ir && fx->channels == t->channels)
+  {
+    return fx;
+  }
+
+  fx_clear(fx);
+  fx->cv = aud_convolve_create(t->ir->data, t->ir->frames, t->ir->channels, t->channels,
+                               MIX_IR_BLOCK);
+  fx->in = malloc(MIX_IR_BLOCK * t->channels * sizeof(float));
+  fx->out = malloc(MIX_IR_BLOCK * t->channels * sizeof(float));
+  if (fx->cv == NULL || fx->in == NULL || fx->out == NULL)
+  {
+    fx_clear(fx);
+    return NULL;
+  }
+
+  fx->ir = aud_ir_retain(t->ir);
+  fx->channels = t->channels;
+  return fx;
+}
+
+static void read_from(const aud_track *t, int64_t at, float *buf, size_t frames)
+{
+  size_t lead;
+
+  if (at >= 0)
+  {
+    aud_track_read(t, (uint64_t)at, buf, frames);
+    return;
+  }
+
+  lead = (size_t)(-at) < frames ? (size_t)(-at) : frames;
+  memset(buf, 0, lead * t->channels * sizeof(float));
+  if (lead < frames)
+  {
+    aud_track_read(t, 0, buf + lead * t->channels, frames - lead);
+  }
+}
+
+static void fx_seek(aud_mix_fx *fx, const aud_track *t, uint64_t at)
+{
+  int64_t block = (int64_t)MIX_IR_BLOCK;
+
+  aud_convolve_reset(fx->cv);
+
+  for (size_t k = aud_convolve_partitions(fx->cv); k > 0; k--)
+  {
+    int64_t from = (int64_t)at - (int64_t)k * block;
+
+    if (from + block <= 0)
+    {
+      continue;
+    }
+    read_from(t, from, fx->in, MIX_IR_BLOCK);
+    aud_convolve_prime(fx->cv, fx->in);
+  }
+
+  read_from(t, (int64_t)at, fx->in, MIX_IR_BLOCK);
+  aud_convolve_run(fx->cv, fx->in, fx->out);
+  fx->at = at;
+  fx->ready = 1;
+}
+
+static void fx_read(aud_mix_fx *fx, const aud_track *t, uint64_t at, float *dst,
+                    size_t frames)
+{
+  while (frames > 0)
+  {
+    size_t offset;
+    size_t n;
+
+    if (!fx->ready || at < fx->at || at > fx->at + MIX_IR_BLOCK)
+    {
+      fx_seek(fx, t, at);
+    }
+    else if (at == fx->at + MIX_IR_BLOCK)
+    {
+      read_from(t, (int64_t)at, fx->in, MIX_IR_BLOCK);
+      aud_convolve_run(fx->cv, fx->in, fx->out);
+      fx->at = at;
+    }
+
+    offset = (size_t)(at - fx->at);
+    n = MIX_IR_BLOCK - offset < frames ? MIX_IR_BLOCK - offset : frames;
+    memcpy(dst, fx->out + offset * t->channels, n * t->channels * sizeof(float));
+    dst += n * t->channels;
+    at += n;
+    frames -= n;
+  }
+}
+
+static uint64_t track_reach(const aud_track *t)
+{
+  uint64_t end = aud_track_end(t);
+
+  if (end > 0 && t->ir != NULL)
+  {
+    end += t->ir->frames;
+  }
+  return end;
+}
+
+uint64_t aud_mix_end(const aud_doc *d)
+{
+  uint64_t end = 0;
+
+  if (d == NULL)
+  {
+    return 0;
+  }
+
+  for (size_t i = 0; i < d->count; i++)
+  {
+    uint64_t reach = track_reach(&d->tracks[i]);
+
+    if (reach > end)
+    {
+      end = reach;
+    }
+  }
+  return end;
 }
 
 /* Room for one track's worth of `frames` frames at `channels`. */
@@ -107,9 +269,10 @@ static void pan_gains(float pan, float *left, float *right)
  * exported stem cannot drift apart: both get here, and there is nowhere else
  * for either of them to go. Returns 0, or -1 when the scratch would not grow.
  */
-static int add_track(aud_mixer *m, const aud_doc *d, const aud_track *t, uint64_t at,
+static int add_track(aud_mixer *m, const aud_doc *d, size_t index, uint64_t at,
                      float *out, size_t frames, unsigned channels)
 {
+  const aud_track *t = &d->tracks[index];
   float left;
   float right;
 
@@ -119,7 +282,7 @@ static int add_track(aud_mixer *m, const aud_doc *d, const aud_track *t, uint64_
   }
 
   /* nothing of this track is anywhere near the window being asked for */
-  if (at >= aud_track_end(t))
+  if (at >= track_reach(t))
   {
     return 0;
   }
@@ -129,7 +292,20 @@ static int add_track(aud_mixer *m, const aud_doc *d, const aud_track *t, uint64_
     return -1;
   }
 
-  aud_track_read(t, at, m->scratch, frames);
+  if (t->ir != NULL)
+  {
+    aud_mix_fx *fx = fx_for(m, index, t);
+
+    if (fx == NULL)
+    {
+      return -1;
+    }
+    fx_read(fx, t, at, m->scratch, frames);
+  }
+  else
+  {
+    aud_track_read(t, at, m->scratch, frames);
+  }
   pan_gains(t->pan, &left, &right);
 
   /*
@@ -193,7 +369,7 @@ int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t
 
   for (size_t i = 0; i < d->count; i++)
   {
-    if (add_track(m, d, &d->tracks[i], at, out, frames, channels) != 0)
+    if (add_track(m, d, i, at, out, frames, channels) != 0)
     {
       memset(out, 0, frames * channels * sizeof(float));
       return -1;
@@ -217,7 +393,7 @@ int aud_mix_read_track(aud_mixer *m, const aud_doc *d, size_t index, uint64_t at
 
   memset(out, 0, frames * channels * sizeof(float));
 
-  if (add_track(m, d, &d->tracks[index], at, out, frames, channels) != 0)
+  if (add_track(m, d, index, at, out, frames, channels) != 0)
   {
     memset(out, 0, frames * channels * sizeof(float));
     return -1;

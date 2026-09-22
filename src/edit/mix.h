@@ -22,9 +22,22 @@
  */
 typedef struct
 {
+  aud_ir *ir;
+  unsigned channels;
+  struct aud_convolver *cv;
+  float *in;
+  float *out;
+  uint64_t at;
+  int ready;
+} aud_mix_fx;
+
+typedef struct
+{
   float *scratch;
   size_t frames;
   unsigned channels; /* what `scratch` has room for per frame */
+  aud_mix_fx *fx;
+  size_t fx_count;
 } aud_mixer;
 
 /*
@@ -68,6 +81,8 @@ int aud_mix_read(aud_mixer *m, const aud_doc *d, uint64_t at, float *out, size_t
  */
 int aud_mix_read_track(aud_mixer *m, const aud_doc *d, size_t index, uint64_t at,
                        float *out, size_t frames, unsigned channels);
+
+uint64_t aud_mix_end(const aud_doc *d);
 
 /*
  * Whether anything would be heard from `t` at all: not muted, and soloed if

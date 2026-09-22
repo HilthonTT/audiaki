@@ -202,6 +202,8 @@ void aud_track_free(aud_track *t)
   t->clips = NULL;
   t->count = 0;
   t->capacity = 0;
+  aud_ir_release(t->ir);
+  t->ir = NULL;
 }
 
 int aud_track_copy(aud_track *dst, const aud_track *src)
@@ -215,6 +217,7 @@ int aud_track_copy(aud_track *dst, const aud_track *src)
   dst->clips = NULL;
   dst->count = 0;
   dst->capacity = 0;
+  aud_ir_retain(dst->ir);
 
   if (src->count == 0)
   {
@@ -223,6 +226,8 @@ int aud_track_copy(aud_track *dst, const aud_track *src)
 
   if (clips_reserve(dst, src->count) != 0)
   {
+    aud_ir_release(dst->ir);
+    dst->ir = NULL;
     return -1;
   }
 
@@ -236,6 +241,18 @@ int aud_track_copy(aud_track *dst, const aud_track *src)
     aud_samples_retain(dst->clips[i].audio);
   }
   return 0;
+}
+
+void aud_track_set_ir(aud_track *t, aud_ir *ir)
+{
+  if (t == NULL || t->ir == ir)
+  {
+    return;
+  }
+
+  aud_ir_retain(ir);
+  aud_ir_release(t->ir);
+  t->ir = ir;
 }
 
 uint64_t aud_track_end(const aud_track *t)

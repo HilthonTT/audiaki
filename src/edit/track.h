@@ -19,6 +19,7 @@
 #ifndef AUDIAKI_EDIT_TRACK_H
 #define AUDIAKI_EDIT_TRACK_H
 
+#include "edit/ir.h"
 #include "edit/samples.h"
 
 #include <stddef.h>
@@ -102,6 +103,8 @@ typedef struct
   float gain; /* linear, 0 to 2 */
   float pan;  /* -1 hard left to +1 hard right; ignored on a mono output */
 
+  aud_ir *ir;
+
   /* how it is shown, which is the track's business and not a parallel table */
   int height;
   int collapsed;
@@ -129,6 +132,8 @@ void aud_track_free(aud_track *t);
  * Returns 0 on success, -1 when the list could not be allocated.
  */
 int aud_track_copy(aud_track *dst, const aud_track *src);
+
+void aud_track_set_ir(aud_track *t, aud_ir *ir);
 
 /* One past the last frame any clip reaches, or 0 for an empty track. */
 uint64_t aud_track_end(const aud_track *t);

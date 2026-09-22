@@ -532,6 +532,207 @@ TEST(a_growing_block_is_summarised_as_it_grows)
   aud_track_free(&t);
 }
 
+static aud_track *ramp(aud_doc *d, size_t frames)
+{
+  aud_samples *s = aud_samples_create(1, frames);
+  aud_track *t = aud_doc_add_track(d, "ramp", 1);
+
+  for (size_t i = 0; i < frames; i++)
+  {
+    s->data[i] = (float)((i * 37u) % 101u) / 101.0f - 0.5f;
+  }
+  aud_track_add(t, s, 0);
+  aud_samples_release(s);
+  return t;
+}
+
+static aud_ir *response(size_t taps)
+{
+  float *h = malloc(taps * sizeof(float));
+  aud_ir *ir;
+
+  for (size_t i = 0; i < taps; i++)
+  {
+    h[i] = (float)((i * 13u) % 7u) / 7.0f - 0.4f;
+  }
+  ir = aud_ir_create(h, taps, 1, 44100, "cab.wav");
+  free(h);
+  return ir;
+}
+
+TEST(a_cab_ir_is_heard_through_the_mix)
+{
+  aud_doc d;
+  aud_mixer m;
+  aud_ir *ir = response(3000);
+  float *out = malloc(6000 * 2 * sizeof(float));
+  aud_track *t;
+  double worst = 0.0;
+
+  aud_doc_init(&d, 44100);
+  t = ramp(&d, 5000);
+  aud_track_set_ir(t, ir);
+
+  aud_mix_init(&m, 6000);
+  CHECK_EQ_INT(aud_mix_read(&m, &d, 0, out, 6000, 2), 0);
+
+  for (size_t n = 0; n < 6000; n += 97)
+  {
+    double want = 0.0;
+
+    for (size_t k = 0; k < 3000 && k <= n; k++)
+    {
+      if (n - k < 5000)
+      {
+        want += (double)ir->data[k] * ((float)(((n - k) * 37u) % 101u) / 101.0f - 0.5f);
+      }
+    }
+    if (fabs(want - out[n * 2]) > worst)
+    {
+      worst = fabs(want - out[n * 2]);
+    }
+  }
+  CHECK(worst < 1e-3);
+
+  aud_mix_free(&m);
+  aud_doc_free(&d);
+  aud_ir_release(ir);
+  free(out);
+}
+
+TEST(a_seek_hears_the_same_as_playing_through)
+{
+  aud_doc d;
+  aud_mixer through;
+  aud_mixer jumping;
+  aud_ir *ir = response(2500);
+  float *all = malloc(8000 * 2 * sizeof(float));
+  float part[700 * 2];
+  size_t at[] = {4321, 17, 0, 6000, 5100, 5800};
+  double worst = 0.0;
+
+  aud_doc_init(&d, 44100);
+  aud_track_set_ir(ramp(&d, 7000), ir);
+
+  aud_mix_init(&through, 8000);
+  aud_mix_init(&jumping, 256);
+  CHECK_EQ_INT(aud_mix_read(&through, &d, 0, all, 8000, 2), 0);
+
+  for (size_t i = 0; i < sizeof(at) / sizeof(at[0]); i++)
+  {
+    CHECK_EQ_INT(aud_mix_read(&jumping, &d, at[i], part, 700, 2), 0);
+    for (size_t f = 0; f < 700 && at[i] + f < 8000; f++)
+    {
+      double diff = fabs((double)part[f * 2] - all[(at[i] + f) * 2]);
+
+      if (diff > worst)
+      {
+        worst = diff;
+      }
+    }
+  }
+  CHECK(worst < 1e-3);
+
+  aud_mix_free(&through);
+  aud_mix_free(&jumping);
+  aud_doc_free(&d);
+  aud_ir_release(ir);
+  free(all);
+}
+
+TEST(the_tail_rings_on_past_the_last_clip)
+{
+  aud_doc d;
+  aud_mixer m;
+  float h[50] = {0};
+  aud_ir *ir;
+  float out[4 * 2];
+
+  h[40] = 1.0f;
+  ir = aud_ir_create(h, 50, 1, 44100, "late.wav");
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 100, 0.25f);
+  CHECK_EQ_INT(aud_mix_end(&d), 100);
+
+  aud_track_set_ir(&d.tracks[0], ir);
+  CHECK_EQ_INT(aud_mix_end(&d), 150);
+
+  aud_mix_init(&m, 4);
+  CHECK_EQ_INT(aud_mix_read(&m, &d, 120, out, 4, 2), 0);
+  CHECK_EQ_DBL(out[0], 0.25, 1e-4);
+  CHECK_EQ_DBL(out[1], 0.25, 1e-4);
+
+  aud_mix_free(&m);
+  aud_doc_free(&d);
+  aud_ir_release(ir);
+}
+
+TEST(undo_brings_the_response_back)
+{
+  aud_doc d;
+  aud_ir *ir = response(10);
+
+  aud_doc_init(&d, 44100);
+  flat(&d, 1, 100, 0.25f);
+
+  aud_doc_checkpoint(&d, "cab");
+  aud_track_set_ir(&d.tracks[0], ir);
+  aud_ir_release(ir);
+  CHECK(d.tracks[0].ir == ir);
+
+  aud_doc_checkpoint(&d, "no cab");
+  aud_track_set_ir(&d.tracks[0], NULL);
+  CHECK(d.tracks[0].ir == NULL);
+
+  CHECK_EQ_INT(aud_doc_undo(&d), 0);
+  CHECK(d.tracks[0].ir == ir);
+  CHECK_EQ_INT(ir->refs, 1);
+
+  CHECK_EQ_INT(aud_doc_undo(&d), 0);
+  CHECK(d.tracks[0].ir == NULL);
+
+  aud_doc_free(&d);
+}
+
+TEST(stems_through_a_cab_still_add_up)
+{
+  aud_doc d;
+  aud_mixer m;
+  aud_ir *ir = response(700);
+  float mix[900 * 2];
+  float one[900 * 2];
+  float sum[900 * 2] = {0};
+  double worst = 0.0;
+
+  aud_doc_init(&d, 44100);
+  aud_track_set_ir(ramp(&d, 800), ir);
+  flat(&d, 1, 500, 0.1f);
+
+  aud_mix_init(&m, 900);
+  CHECK_EQ_INT(aud_mix_read(&m, &d, 0, mix, 900, 2), 0);
+  for (size_t i = 0; i < d.count; i++)
+  {
+    CHECK_EQ_INT(aud_mix_read_track(&m, &d, i, 0, one, 900, 2), 0);
+    for (size_t k = 0; k < 900 * 2; k++)
+    {
+      sum[k] += one[k];
+    }
+  }
+  for (size_t k = 0; k < 900 * 2; k++)
+  {
+    if (fabs((double)sum[k] - mix[k]) > worst)
+    {
+      worst = fabs((double)sum[k] - mix[k]);
+    }
+  }
+  CHECK(worst < 1e-5);
+
+  aud_mix_free(&m);
+  aud_doc_free(&d);
+  aud_ir_release(ir);
+}
+
 int main(void)
 {
   snprintf(g_path, sizeof(g_path), "audiaki-mix-test-%ld.wav", (long)getpid());
@@ -553,6 +754,11 @@ int main(void)
   RUN(a_take_recorded_into_a_track_reads_back_frame_for_frame);
   RUN(recording_nothing_leaves_no_clip_behind);
   RUN(a_growing_block_is_summarised_as_it_grows);
+  RUN(a_cab_ir_is_heard_through_the_mix);
+  RUN(a_seek_hears_the_same_as_playing_through);
+  RUN(the_tail_rings_on_past_the_last_clip);
+  RUN(undo_brings_the_response_back);
+  RUN(stems_through_a_cab_still_add_up);
 
   remove(g_path);
   return TEST_RESULT();

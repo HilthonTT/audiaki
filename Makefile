@@ -238,7 +238,7 @@ GUI_CORE_SRCS := $(filter src/backend/%,$(SRCS)) \
                  src/edit/samples.c src/edit/track.c src/edit/doc.c \
                  src/edit/edit.c src/edit/load.c src/edit/mix.c \
                  src/edit/export.c src/edit/project.c src/edit/repair.c \
-                 src/edit/limit.c \
+                 src/edit/limit.c src/edit/ir.c \
                  src/media/wav.c src/media/ffmpeg_posix.c \
                  src/util/log.c src/util/jsonout.c src/util/ringbuf.c \
                  src/util/parse.c src/util/path.c src/util/config.c

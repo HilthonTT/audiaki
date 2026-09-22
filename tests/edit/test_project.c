@@ -712,6 +712,62 @@ TEST(a_project_that_will_not_open_leaves_the_one_that_is_open_alone)
   remove(path);
 }
 
+static int file_has(const char *path, const char *text)
+{
+  char buf[4096];
+  FILE *f = fopen(path, "rb");
+  size_t got;
+
+  if (f == NULL)
+  {
+    return 0;
+  }
+  got = fread(buf, 1, sizeof(buf) - 1u, f);
+  buf[got] = '\0';
+  fclose(f);
+  return strstr(buf, text) != NULL;
+}
+
+TEST(a_cab_ir_is_saved_with_its_track)
+{
+  aud_doc d;
+  char path[256];
+  char cab[256];
+  char kept[256];
+  const char *why = NULL;
+  aud_ir *ir;
+
+  in_dir(path, sizeof(path), "cabbed" AUD_PROJECT_EXT);
+  in_dir(cab, sizeof(cab), "cab.wav");
+  in_dir(kept, sizeof(kept), "cab.keep");
+  write_wav(cab, 1, 32);
+
+  build(&d);
+  ir = aud_ir_load(cab, d.rate, &why);
+  CHECK(ir != NULL);
+  aud_track_set_ir(&d.tracks[0], ir);
+  aud_ir_release(ir);
+
+  CHECK_EQ_INT(aud_project_save(&d, path, NULL), 0);
+  CHECK(file_has(path, "ir cab.wav"));
+  aud_doc_free(&d);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, NULL), 0);
+  CHECK(d.tracks[0].ir != NULL);
+  CHECK(d.tracks[1].ir == NULL);
+  CHECK(strstr(aud_ir_path(d.tracks[0].ir), "cab.wav") != NULL);
+  aud_doc_free(&d);
+
+  CHECK_EQ_INT(rename(cab, kept), 0);
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, &why), -1);
+  CHECK(why != NULL && strstr(why, "cab.wav") != NULL);
+  aud_doc_free(&d);
+
+  remove(kept);
+}
+
 int main(void)
 {
   char one[256];
@@ -741,6 +797,7 @@ int main(void)
   RUN(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone);
   RUN(a_clip_line_with_no_gain_on_it_opens_at_unity);
   RUN(a_project_that_will_not_open_leaves_the_one_that_is_open_alone);
+  RUN(a_cab_ir_is_saved_with_its_track);
 
   rc = TEST_RESULT();
 
@@ -751,7 +808,7 @@ int main(void)
     static const char *const leftovers[] = {"session",  "shared", "relative", "missing",
                                             "rubbish",  "loose",  "tempo",    "untimed",
                                             "byhand",   "trip1",  "trip2",    "settle",
-                                            "settings", "wreck",  "nogain"};
+                                            "settings", "wreck",  "nogain",   "cabbed"};
 
     for (size_t i = 0; i < sizeof(leftovers) / sizeof(leftovers[0]); i++)
     {
