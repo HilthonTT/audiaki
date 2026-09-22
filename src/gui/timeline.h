@@ -115,6 +115,8 @@ typedef struct
    * question up first. The caller carries it out and puts this back to 0.
    */
   int64_t move_requested;
+
+  long ir_requested;
 } aud_timeline;
 
 void aud_timeline_init(aud_timeline *tl);

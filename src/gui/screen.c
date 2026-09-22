@@ -1697,6 +1697,21 @@ int app_draw_frame(app *a, const aud_engine_status *st)
     app_confirm_close_track(a, (size_t)index);
   }
 
+  if (a->timeline.ir_requested >= 0)
+  {
+    size_t index = (size_t)a->timeline.ir_requested;
+
+    a->timeline.ir_requested = -1;
+    if (index < a->doc.count && a->doc.tracks[index].ir != NULL)
+    {
+      app_clear_ir(a, index);
+    }
+    else if (index < a->doc.count)
+    {
+      app_ir_dialog(a, index);
+    }
+  }
+
   /* and so does a finished drag of the selection, for the same reason */
   if (a->timeline.move_requested != 0)
   {

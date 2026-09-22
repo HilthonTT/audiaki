@@ -84,6 +84,7 @@ static int lists_file(const app_save *s, const char *name)
    */
   case APP_SAVE_MODE_KEEP:
   case APP_SAVE_MODE_OPEN:
+  case APP_SAVE_MODE_IR:
     return is_wav(name);
   /*
    * An export browser lists everything an export could land on, because the
@@ -314,6 +315,14 @@ void app_open_dialog(app *a)
   relist(s);
 }
 
+void app_ir_dialog(app *a, size_t track)
+{
+  app_open_dialog(a);
+  a->save.mode = APP_SAVE_MODE_IR;
+  a->save.ir_track = (long)track;
+  relist(&a->save);
+}
+
 /*
  * ...and asking where the finished thing should be written. It opens on the
  * take folder with a name derived from the take prefix, so the common answer is
@@ -468,6 +477,7 @@ static aud_chooser_mode chooser_mode_of(app_save_mode mode)
     return AUD_CHOOSER_SAVE;
   case APP_SAVE_MODE_OPEN:
   case APP_SAVE_MODE_PROJECT_OPEN:
+  case APP_SAVE_MODE_IR:
   default:
     return AUD_CHOOSER_OPEN;
   }
@@ -687,7 +697,8 @@ static int save_resolve(app_save *s, char *folder, size_t folder_size, char *tar
   {
     const char *ask = "the take needs a name";
 
-    if (s->mode == APP_SAVE_MODE_OPEN || s->mode == APP_SAVE_MODE_PROJECT_OPEN)
+    if (s->mode == APP_SAVE_MODE_OPEN || s->mode == APP_SAVE_MODE_PROJECT_OPEN ||
+        s->mode == APP_SAVE_MODE_IR)
     {
       ask = "pick a file to open";
     }
@@ -902,6 +913,16 @@ static int save_confirm(app *a)
     return 0;
   }
 
+  if (s->mode == APP_SAVE_MODE_IR)
+  {
+    s->open = 0;
+    if (s->ir_track >= 0)
+    {
+      app_load_ir(a, (size_t)s->ir_track, target);
+    }
+    return 0;
+  }
+
   if (s->mode == APP_SAVE_MODE_PROJECT_OPEN)
   {
     return confirm_project_open(a, target);
@@ -927,6 +948,8 @@ static const char *save_title(app_save_mode mode)
   {
   case APP_SAVE_MODE_OPEN:
     return "Open a WAV";
+  case APP_SAVE_MODE_IR:
+    return "Load a cab IR";
   case APP_SAVE_MODE_EXPORT:
     return "Export a mix";
   case APP_SAVE_MODE_STEMS:
@@ -948,6 +971,8 @@ static const char *save_action(app_save_mode mode)
   case APP_SAVE_MODE_OPEN:
   case APP_SAVE_MODE_PROJECT_OPEN:
     return "Open";
+  case APP_SAVE_MODE_IR:
+    return "Load";
   case APP_SAVE_MODE_EXPORT:
   case APP_SAVE_MODE_STEMS:
     return "Export";
@@ -964,6 +989,8 @@ static const char *save_hint(app_save_mode mode)
   {
   case APP_SAVE_MODE_OPEN:
     return "click a folder to go in, a file to pick it; Enter opens";
+  case APP_SAVE_MODE_IR:
+    return "a WAV of the cabinet's impulse response, mono or stereo, up to 2 s";
   case APP_SAVE_MODE_EXPORT:
     return "the extension picks the format: .wav .flac .opus .mp3";
   case APP_SAVE_MODE_STEMS:

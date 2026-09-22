@@ -218,6 +218,7 @@ static app *plug;
 static void app_free(app *a)
 {
   aud_repair_panel_free(&a->repair);
+  aud_ir_release(a->monitor_ir);
   free(a->rec.buf);
   free(a);
 }
@@ -553,6 +554,7 @@ bool aud_plug_frame(bool close_requested)
   app_handle_keys(a, &st);
   app_pump_audio(a);
   app_pump_take(a);
+  app_sync_monitor_ir(a);
 
   /*
    * Before the drawing, so the playhead the frame shows is where playback

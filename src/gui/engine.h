@@ -197,6 +197,9 @@ void aud_engine_set_input_gain(aud_engine *e, float gain);
 
 float aud_engine_input_gain(const aud_engine *e);
 
+int aud_engine_set_monitor_ir(aud_engine *e, const float *ir, size_t frames,
+                              unsigned channels);
+
 int aud_engine_monitor_wanted(const aud_engine *e);
 
 /*

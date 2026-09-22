@@ -4,6 +4,7 @@
 #include "gui/ui.h"
 
 #include "edit/edit.h"
+#include "util/path.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -189,6 +190,7 @@ void aud_timeline_init(aud_timeline *tl)
   memset(tl, 0, sizeof(*tl));
   tl->zoom = AUD_TIMELINE_ZOOM_DEFAULT;
   tl->close_requested = -1;
+  tl->ir_requested = -1;
 }
 
 float aud_timeline_x_of(const aud_timeline *tl, double seconds)
@@ -1209,8 +1211,9 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
   }
 
   {
-    Rectangle mute = {panel.x + 10.0f, y, 54.0f, 22.0f};
-    Rectangle solo = {panel.x + 70.0f, y, 54.0f, 22.0f};
+    Rectangle mute = {panel.x + 10.0f, y, 46.0f, 22.0f};
+    Rectangle solo = {panel.x + 61.0f, y, 46.0f, 22.0f};
+    Rectangle cab = {panel.x + 112.0f, y, 46.0f, 22.0f};
 
     if (aud_ui_toggle(mute, "Mute", t->muted, AUD_UI_WARN, enabled))
     {
@@ -1219,6 +1222,23 @@ static void draw_panel(aud_doc *d, size_t index, Rectangle panel, int enabled,
     if (aud_ui_toggle(solo, "Solo", t->soloed, AUD_UI_OK, enabled))
     {
       t->soloed = !t->soloed;
+    }
+    if (aud_ui_toggle(cab, "Cab", t->ir != NULL, AUD_UI_ACCENT, enabled))
+    {
+      tl->ir_requested = (long)index;
+    }
+    if (CheckCollisionPointRec(GetMousePosition(), cab))
+    {
+      if (t->ir != NULL)
+      {
+        snprintf(tl->hint, sizeof(tl->hint), "heard through %.50s - click to take it off",
+                 aud_path_basename(aud_ir_path(t->ir)));
+      }
+      else
+      {
+        snprintf(tl->hint, sizeof(tl->hint),
+                 "hear this lane through a cab impulse response");
+      }
     }
     y += 28.0f;
   }

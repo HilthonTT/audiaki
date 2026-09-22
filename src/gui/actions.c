@@ -65,6 +65,49 @@ void app_load_track(app *a, const char *path)
                  (double)aud_track_end(&a->doc.tracks[index]) / a->doc.rate, index + 1);
 }
 
+void app_load_ir(app *a, size_t track, const char *path)
+{
+  const char *why = NULL;
+  aud_ir *ir;
+
+  if (track >= a->doc.count)
+  {
+    return;
+  }
+
+  ir = aud_ir_load(path, a->doc.rate, &why);
+  if (ir == NULL)
+  {
+    app_set_status(a, "cannot use %.80s as a cab IR: %s", aud_path_basename(path),
+                   why != NULL ? why : "unknown");
+    return;
+  }
+
+  aud_doc_checkpoint(&a->doc, "cab IR");
+  aud_track_set_ir(&a->doc.tracks[track], ir);
+  aud_ir_release(ir);
+  a->doc.dirty = 1;
+  a->session.dirty = 1;
+
+  app_set_status(a, "%.40s is heard through %.60s (%.0f ms)", a->doc.tracks[track].name,
+                 aud_path_basename(path), 1000.0 * (double)ir->frames / ir->rate);
+}
+
+void app_clear_ir(app *a, size_t track)
+{
+  if (track >= a->doc.count || a->doc.tracks[track].ir == NULL)
+  {
+    return;
+  }
+
+  aud_doc_checkpoint(&a->doc, "no cab IR");
+  aud_track_set_ir(&a->doc.tracks[track], NULL);
+  a->doc.dirty = 1;
+  a->session.dirty = 1;
+  app_set_status(a, "%.60s is dry again - ctrl+Z puts the cab back",
+                 a->doc.tracks[track].name);
+}
+
 /*
  * Every edit, in one place, so the toolbar and the keyboard cannot drift apart
  * about what any of them means or what it says afterwards.

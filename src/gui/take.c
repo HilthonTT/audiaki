@@ -78,6 +78,7 @@ int app_open_engine(app *a)
    */
   channels = aud_engine_channels(a->engine);
   a->rec.buf_frames = channels > 0 ? APP_TAKE_BUF_SAMPLES / channels : 0;
+  a->monitor_ir_known = 0;
 
   /* the style survives a device change; the analyser behind it does not */
   aud_viz_set_mode(a->viz, (aud_viz_mode)a->style_selected);
@@ -983,4 +984,53 @@ void app_toggle_record(app *a, const aud_engine_status *st)
   default:
     return;
   }
+}
+
+void app_sync_monitor_ir(app *a)
+{
+  aud_ir *want = NULL;
+  long lane = a->rec.track;
+
+  if (a->engine == NULL)
+  {
+    return;
+  }
+
+  if (lane >= 0 && (size_t)lane < a->doc.count)
+  {
+    want = a->doc.tracks[lane].ir;
+  }
+  else
+  {
+    for (size_t i = 0; i < a->doc.count; i++)
+    {
+      if (a->doc.tracks[i].selected && a->doc.tracks[i].ir != NULL)
+      {
+        want = a->doc.tracks[i].ir;
+        break;
+      }
+    }
+  }
+
+  if (want != NULL && want->rate != aud_engine_rate(a->engine))
+  {
+    want = NULL;
+  }
+
+  if (a->monitor_ir_known && want == a->monitor_ir)
+  {
+    return;
+  }
+
+  if (aud_engine_set_monitor_ir(a->engine, want != NULL ? want->data : NULL,
+                                want != NULL ? want->frames : 0,
+                                want != NULL ? want->channels : 0) != 0)
+  {
+    return;
+  }
+
+  aud_ir_retain(want);
+  aud_ir_release(a->monitor_ir);
+  a->monitor_ir = want;
+  a->monitor_ir_known = 1;
 }

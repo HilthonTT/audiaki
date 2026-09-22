@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: MIT */
 #include "gui/engine.h"
 
+#include "audio/convolve.h"
 #include "backend/device.h"
 #include "backend/monitor.h"
 #include "media/wav.h"
@@ -56,6 +57,8 @@
  * than setting a comfortable listening level. See audio/format.h.
  */
 #define ENGINE_INPUT_GAIN_MAX ((int)(AUD_GAIN_MAX * ENGINE_GAIN_SCALE))
+
+#define ENGINE_IR_BLOCK 256u
 
 struct aud_engine
 {
@@ -157,6 +160,12 @@ struct aud_engine
   aud_ringbuf take;
   float *take_buf; /* one period, interleaved */
   _Atomic unsigned long take_dropped;
+
+  pthread_mutex_t fxlock;
+  aud_convolver *fx_pending;
+  aud_convolver *fx_retired;
+  int fx_offered;
+  aud_convolver *fx;
 };
 
 void aud_engine_config_defaults(aud_engine_config *cfg)
@@ -424,9 +433,28 @@ static void sync_monitor(aud_engine *e)
   }
 }
 
+static void take_monitor_ir(aud_engine *e)
+{
+  if (pthread_mutex_trylock(&e->fxlock) != 0)
+  {
+    return;
+  }
+
+  if (e->fx_offered)
+  {
+    e->fx_retired = e->fx;
+    e->fx = e->fx_pending;
+    e->fx_pending = NULL;
+    e->fx_offered = 0;
+  }
+  pthread_mutex_unlock(&e->fxlock);
+}
+
 static void feed_monitor(aud_engine *e, size_t frames)
 {
   float gain;
+
+  take_monitor_ir(e);
 
   if (e->monitor == NULL)
   {
@@ -437,6 +465,11 @@ static void feed_monitor(aud_engine *e, size_t frames)
          (float)ENGINE_GAIN_SCALE;
 
   aud_format_to_float(e->inter, e->hw_buf, frames, e->dev.channels, e->dev.format);
+
+  if (e->fx != NULL)
+  {
+    aud_convolve_stream(e->fx, e->inter, e->inter, frames);
+  }
 
   if (aud_monitor_write(e->monitor, e->inter, frames, gain) != 0)
   {
@@ -736,6 +769,16 @@ static int engine_init_locks(aud_engine *e)
     pthread_mutex_destroy(&e->lock);
     return -1;
   }
+
+  if (pthread_mutex_init(&e->fxlock, NULL) != 0)
+  {
+    aud_perror("cannot create the monitor's lock");
+    pthread_cond_destroy(&e->widle);
+    pthread_cond_destroy(&e->wwake);
+    pthread_mutex_destroy(&e->wlock);
+    pthread_mutex_destroy(&e->lock);
+    return -1;
+  }
   return 0;
 }
 
@@ -965,6 +1008,7 @@ fail_buffers:
 fail_device:
   aud_device_close(&e->dev);
 fail_lock:
+  pthread_mutex_destroy(&e->fxlock);
   pthread_cond_destroy(&e->widle);
   pthread_cond_destroy(&e->wwake);
   pthread_mutex_destroy(&e->wlock);
@@ -1014,6 +1058,11 @@ void aud_engine_destroy(aud_engine *e)
   free(e->hw_buf);
   free(e->mono);
   free(e->inter);
+
+  aud_convolve_destroy(e->fx);
+  aud_convolve_destroy(e->fx_pending);
+  aud_convolve_destroy(e->fx_retired);
+  pthread_mutex_destroy(&e->fxlock);
 
   pthread_cond_destroy(&e->widle);
   pthread_cond_destroy(&e->wwake);
@@ -1344,6 +1393,35 @@ float aud_engine_input_gain(const aud_engine *e)
 
   return (float)atomic_load_explicit(&e->input_gain, memory_order_relaxed) /
          (float)ENGINE_GAIN_SCALE;
+}
+
+int aud_engine_set_monitor_ir(aud_engine *e, const float *ir, size_t frames,
+                              unsigned channels)
+{
+  aud_convolver *fresh = NULL;
+
+  if (e == NULL)
+  {
+    return -1;
+  }
+
+  if (ir != NULL && frames > 0)
+  {
+    fresh = aud_convolve_create(ir, frames, channels, e->dev.channels, ENGINE_IR_BLOCK);
+    if (fresh == NULL)
+    {
+      return -1;
+    }
+  }
+
+  pthread_mutex_lock(&e->fxlock);
+  aud_convolve_destroy(e->fx_retired);
+  e->fx_retired = NULL;
+  aud_convolve_destroy(e->fx_pending);
+  e->fx_pending = fresh;
+  e->fx_offered = 1;
+  pthread_mutex_unlock(&e->fxlock);
+  return 0;
 }
 
 int aud_engine_monitor_wanted(const aud_engine *e)

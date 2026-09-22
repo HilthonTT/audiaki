@@ -182,6 +182,7 @@ typedef enum
   APP_SAVE_MODE_STEMS,        /* ...and where should one WAV a track go? */
   APP_SAVE_MODE_PROJECT_SAVE, /* where should the session itself be written? */
   APP_SAVE_MODE_PROJECT_OPEN, /* which session should be opened? */
+  APP_SAVE_MODE_IR,
 } app_save_mode;
 
 /* Whether `mode` writes audio out of the project, as one file or as many. */
@@ -276,6 +277,8 @@ typedef struct
    * replaced by it.
    */
   struct aud_chooser *chooser;
+
+  long ir_track;
 } app_save;
 
 /* What the edit toolbar and the edit keys both stand for. */
@@ -685,6 +688,9 @@ typedef struct
   /* the meter's hold, and the two gain knobs - see app_levels */
   app_levels levels;
 
+  aud_ir *monitor_ir;
+  int monitor_ir_known;
+
   /* the reason the engine could not be created, if it could not be */
   char fatal[AUD_ENGINE_ERROR_MAX];
 
@@ -745,6 +751,8 @@ void app_begin_take(app *a);
 void app_stop_take(app *a, const aud_engine_status *st);
 void app_toggle_record(app *a, const aud_engine_status *st);
 
+void app_sync_monitor_ir(app *a);
+
 /*
  * Move whatever the engine has captured onto the track being recorded into.
  * Called every drawn frame, which is what makes the waveform grow as it is
@@ -778,6 +786,10 @@ void app_load_track(app *a, const char *path);
  */
 void app_edit(app *a, app_edit_action action);
 void app_edit_now(app *a, app_edit_action action);
+
+void app_load_ir(app *a, size_t track, const char *path);
+
+void app_clear_ir(app *a, size_t track);
 
 /* Move the selection along the timeline by `by` frames; see APP_EDIT_MOVE. */
 void app_move_selection(app *a, int64_t by);
@@ -843,6 +855,8 @@ void app_save_project_as(app *a);
 
 /* Open a session, replacing whatever is on the timeline. */
 void app_open_project_dialog(app *a);
+
+void app_ir_dialog(app *a, size_t track);
 
 /*
  * Draw the dialog and carry out what was clicked. Called from the drawing, over
