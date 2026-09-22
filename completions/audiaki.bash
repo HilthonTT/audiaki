@@ -202,7 +202,7 @@ _audiaki_gui()
     $split && return
 
     opts="--device --backend --rate --channels --take --dir --no-dialog --style
-          --preroll --no-overdub --latency
+          --preroll --no-overdub --split --latency
           --tempo --click --click-beats --click-gain --gain --grid --loop
           --video --video-silent --video-size --video-fps --monitor
           --verbose --help"

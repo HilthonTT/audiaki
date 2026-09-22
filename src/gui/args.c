@@ -45,6 +45,7 @@ void app_usage(FILE *out, const app *a)
           "                       starts that far before Record was pressed\n"
           "      --no-overdub     do not play the project while recording over\n"
           "                       it; the default is to play along to it\n"
+          "      --split          record every input onto a mono lane of its own\n"
           "      --tempo BPM      the tempo the ruler counts bars on and the\n"
           "                       metronome plays (default: %.0f, or whatever a\n"
           "                       session names)\n"
@@ -118,6 +119,11 @@ static int parse_flag(app *a, const char *arg)
   if (strcmp(arg, "--no-overdub") == 0)
   {
     a->transport.overdub = 0;
+    return 1;
+  }
+  if (strcmp(arg, "--split") == 0)
+  {
+    a->rec.split = 1;
     return 1;
   }
   if (strcmp(arg, "--grid") == 0)

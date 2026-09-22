@@ -210,6 +210,11 @@ static int write_sources(FILE *f, const source_table *st, const char *dir)
     {
       return -1;
     }
+    if (st->block[i]->source_channel > 0 &&
+        fprintf(f, "source-channel %u\n", st->block[i]->source_channel) < 0)
+    {
+      return -1;
+    }
   }
   return 0;
 }
@@ -497,6 +502,7 @@ typedef struct
 {
   char path[AUD_PROJECT_MAX_SOURCES][AUD_PATH_MAX];
   aud_samples *block[AUD_PROJECT_MAX_SOURCES];
+  unsigned channel[AUD_PROJECT_MAX_SOURCES];
   size_t count;
 } loaded_sources;
 
@@ -537,7 +543,7 @@ static aud_samples *source_block(loaded_sources *ls, size_t index, const char *d
     return NULL;
   }
 
-  ls->block[index] = aud_edit_read_wav(full, &found, &reason);
+  ls->block[index] = aud_edit_read_wav_channel(full, ls->channel[index], &found, &reason);
   if (ls->block[index] == NULL)
   {
     say_detail(why, "cannot open '%s' - has it been moved?", ls->path[index]);
@@ -761,6 +767,19 @@ static line_result read_doc_line(aud_doc *d, const char *word, char *args,
       return LINE_BAD;
     }
     ls->count++;
+    return LINE_TAKEN;
+  }
+
+  if (strcmp(word, "source-channel") == 0)
+  {
+    int value = 0;
+
+    if (ls->count == 0 || take_int(args, &value, 1, 64) != 0)
+    {
+      say(why, "a source channel in that project is malformed");
+      return LINE_BAD;
+    }
+    ls->channel[ls->count - 1u] = (unsigned)value;
     return LINE_TAKEN;
   }
 

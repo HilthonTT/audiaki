@@ -36,8 +36,28 @@ static void say(const char **why, const char *text)
 
 aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char **why)
 {
+  return aud_edit_read_wav_channel(path, 0, out_rate, why);
+}
+
+static long read_one_channel(wav_reader *r, float *dst, size_t want, unsigned channel,
+                             float *spare)
+{
+  long got = wav_read_frames(r, spare, want);
+
+  for (long f = 0; f < got; f++)
+  {
+    dst[f] = spare[(size_t)f * r->channels + (channel - 1u)];
+  }
+  return got;
+}
+
+aud_samples *aud_edit_read_wav_channel(const char *path, unsigned channel,
+                                       unsigned *out_rate, const char **why)
+{
   wav_reader r;
   aud_samples *audio;
+  float *spare = NULL;
+  unsigned width;
   uint64_t done = 0;
 
   say(why, NULL);
@@ -67,9 +87,23 @@ aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char 
     return NULL;
   }
 
-  audio = aud_samples_create(r.channels, (size_t)r.frames);
-  if (audio == NULL)
+  if (channel > r.channels)
   {
+    wav_read_close(&r);
+    say(why, "that file does not have the channel asked for");
+    return NULL;
+  }
+
+  width = channel > 0 ? 1u : r.channels;
+  audio = aud_samples_create(width, (size_t)r.frames);
+  if (channel > 0)
+  {
+    spare = malloc(LOAD_CHUNK * r.channels * sizeof(float));
+  }
+  if (audio == NULL || (channel > 0 && spare == NULL))
+  {
+    aud_samples_release(audio);
+    free(spare);
     wav_read_close(&r);
     say(why, "not enough memory to hold that file");
     return NULL;
@@ -85,7 +119,8 @@ aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char 
       want = LOAD_CHUNK;
     }
 
-    got = wav_read_frames(&r, audio->data + done * r.channels, want);
+    got = channel > 0 ? read_one_channel(&r, audio->data + done, want, channel, spare)
+                      : wav_read_frames(&r, audio->data + done * r.channels, want);
     if (got <= 0)
     {
       break; /* a header that promised more than the file holds; keep what came */
@@ -98,6 +133,7 @@ aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char 
     *out_rate = r.rate;
   }
   wav_read_close(&r);
+  free(spare);
 
   if (done == 0)
   {
@@ -116,6 +152,7 @@ aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char 
    * instead of copying its audio. See project.h.
    */
   aud_samples_set_source(audio, path);
+  audio->source_channel = channel;
   return audio;
 }
 

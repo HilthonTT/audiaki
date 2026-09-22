@@ -102,6 +102,7 @@ static const screen_slot screen_transport[SCREEN_TRANSPORT_COUNT] = {
 enum
 {
   SCREEN_OVERDUB = 0,
+  SCREEN_SPLIT,
   SCREEN_VIDEO,
   SCREEN_VIDEO_AUDIO,
   SCREEN_MONITOR,
@@ -110,6 +111,7 @@ enum
 
 static const screen_slot screen_capture[SCREEN_CAPTURE_COUNT] = {
     {"Overdub", AUD_UI_ICON_NONE, 0},
+    {"Split", AUD_UI_ICON_NONE, 0},
     {"Video", AUD_UI_ICON_NONE, 1},
     {"No audio", AUD_UI_ICON_NONE, 1},
     {"Monitor on", AUD_UI_ICON_NONE, 2}};
@@ -691,6 +693,7 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
   Rectangle slider = {r.x + r.width - slider_w, r.y + (r.height - 22.0f) / 2.0f, slider_w,
                       22.0f};
   Rectangle overdub;
+  Rectangle split;
   Rectangle video;
   Rectangle audio;
   Rectangle monitor;
@@ -717,6 +720,7 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
             group);
   draw_group_rules(screen_capture, group, SCREEN_CAPTURE_COUNT);
   overdub = group[SCREEN_OVERDUB];
+  split = group[SCREEN_SPLIT];
   video = group[SCREEN_VIDEO];
   audio = group[SCREEN_VIDEO_AUDIO];
   monitor = group[SCREEN_MONITOR];
@@ -735,6 +739,17 @@ static void draw_capture_group(app *a, Rectangle r, const aud_engine_status *st,
       a->doc.count == 0
           ? "nothing on the timeline to play along to yet"
           : (settable ? "play the project while recording over it - use headphones"
+                      : "only settable between takes"));
+
+  if (aud_ui_toggle(split, "Split", a->rec.split, AUD_UI_OK,
+                    settable && aud_engine_channels(a->engine) > 1u))
+  {
+    a->rec.split = !a->rec.split;
+  }
+  tip(a, split,
+      a->engine != NULL && aud_engine_channels(a->engine) < 2u
+          ? "one input - nothing to split; -c asks the device for more"
+          : (settable ? "record every input onto a mono lane of its own, from one file"
                       : "only settable between takes"));
 
   if (aud_ui_toggle(video, "Video", a->video.want, AUD_UI_ACCENT, settable))

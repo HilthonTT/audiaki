@@ -217,6 +217,46 @@ static long app_record_target(app *a, uint64_t at)
   return (long)(a->doc.count - 1u);
 }
 
+static size_t take_lanes(const app *a)
+{
+  return a->rec.lanes > 0 ? a->rec.lanes : 1u;
+}
+
+static int lanes_valid(const app *a, long track, size_t lanes)
+{
+  return track >= 0 && (size_t)track + lanes <= a->doc.count;
+}
+
+static void drop_fresh_lanes(app *a, long first, size_t lanes)
+{
+  for (size_t k = lanes; k > 0; k--)
+  {
+    aud_doc_remove_track(&a->doc, (size_t)first + k - 1u);
+  }
+}
+
+static long app_split_targets(app *a, unsigned channels)
+{
+  size_t first = a->doc.count;
+
+  aud_doc_select_tracks(&a->doc, 0);
+  for (unsigned k = 0; k < channels; k++)
+  {
+    char name[AUD_TRACK_NAME_MAX];
+    aud_track *fresh;
+
+    snprintf(name, sizeof(name), "In %u", k + 1u);
+    fresh = aud_doc_add_track(&a->doc, name, 1);
+    if (fresh == NULL)
+    {
+      drop_fresh_lanes(a, (long)first, k);
+      return -1;
+    }
+    fresh->selected = 1;
+  }
+  return (long)first;
+}
+
 /*
  * Pick the next free take name and start writing to it. Numbering rather than
  * prompting: pressing record should never be the moment you find out you are
@@ -261,7 +301,10 @@ void app_begin_take(app *a)
   uint64_t skip;
   uint64_t latency;
   long target;
+  size_t lanes = 1;
+  unsigned channels;
   int along;
+  int fresh_lanes = 0;
 
   if (a->engine == NULL || aud_take_next(path, sizeof(path), a->rec.prefix) != 0)
   {
@@ -287,6 +330,12 @@ void app_begin_take(app *a)
                    "device at the project's rate, or start a new session",
                    a->doc.rate, a->picker.active, aud_engine_rate(a->engine));
     return;
+  }
+
+  channels = aud_engine_channels(a->engine);
+  if (a->rec.split && channels > 1u)
+  {
+    lanes = channels;
   }
 
   aud_player_stop(&a->player);
@@ -342,7 +391,16 @@ void app_begin_take(app *a)
 
   /* the lane has to be free from where the clip really begins, which with a
    * correction applied is earlier than the cursor */
-  target = app_record_target(a, start);
+  if (lanes > 1u)
+  {
+    target = app_split_targets(a, channels);
+    fresh_lanes = 1;
+  }
+  else
+  {
+    target = app_record_target(a, start);
+  }
+
   if (target < 0)
   {
     aud_player_stop(&a->player);
@@ -351,27 +409,54 @@ void app_begin_take(app *a)
     return;
   }
 
-  if (aud_track_record_begin(&a->doc.tracks[target], start,
-                             (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+  for (size_t k = 0; k < lanes; k++)
   {
-    aud_player_stop(&a->player);
-    a->rec.lap_frames = 0;
-    app_set_status(a, "there is already audio there - move the cursor");
-    return;
+    if (aud_track_record_begin(&a->doc.tracks[(size_t)target + k], start,
+                               (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+    {
+      while (k-- > 0)
+      {
+        aud_track_record_end(&a->doc.tracks[(size_t)target + k]);
+      }
+      if (fresh_lanes)
+      {
+        drop_fresh_lanes(a, target, lanes);
+      }
+      aud_player_stop(&a->player);
+      a->rec.lap_frames = 0;
+      app_set_status(a, "there is already audio there - move the cursor");
+      return;
+    }
   }
 
   a->video.note[0] = '\0';
   a->rec.track = target;
+  a->rec.lanes = lanes;
   a->rec.at = start;
   a->rec.skip = skip;
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
     aud_player_stop(&a->player);
-    aud_track_record_end(&a->doc.tracks[target]);
+    for (size_t k = 0; k < lanes; k++)
+    {
+      aud_track_record_end(&a->doc.tracks[(size_t)target + k]);
+    }
+    if (fresh_lanes)
+    {
+      drop_fresh_lanes(a, target, lanes);
+    }
     a->rec.track = -1;
+    a->rec.lanes = 0;
     a->rec.skip = 0;
     a->rec.lap_frames = 0;
+    return;
+  }
+
+  if (lanes > 1u)
+  {
+    app_set_status(a, "recording %zu inputs into %.50s, a lane each", lanes,
+                   aud_path_basename(path));
     return;
   }
 
@@ -402,6 +487,34 @@ void app_begin_take(app *a)
   app_set_status(a, "recording %.60s", aud_path_basename(path));
 }
 
+static void push_lanes(app *a, const float *frames, size_t count, unsigned channels)
+{
+  size_t lanes = take_lanes(a);
+
+  if (lanes <= 1u)
+  {
+    aud_track_record_push(&a->doc.tracks[a->rec.track], frames, count);
+    return;
+  }
+
+  for (size_t k = 0; k < lanes; k++)
+  {
+    aud_track *t = &a->doc.tracks[(size_t)a->rec.track + k];
+
+    for (size_t done = 0; done < count;)
+    {
+      size_t n = count - done < APP_DRAIN ? count - done : APP_DRAIN;
+
+      for (size_t f = 0; f < n; f++)
+      {
+        a->rec.lane_buf[f] = frames[(done + f) * channels + k];
+      }
+      aud_track_record_push(t, a->rec.lane_buf, n);
+      done += n;
+    }
+  }
+}
+
 /*
  * Move whatever the engine has captured onto the track being recorded into.
  * Called every drawn frame, which is what makes the waveform grow as it is
@@ -412,7 +525,7 @@ void app_pump_take(app *a)
   unsigned channels;
   size_t got;
 
-  if (a->rec.track < 0 || (size_t)a->rec.track >= a->doc.count)
+  if (!lanes_valid(a, a->rec.track, take_lanes(a)))
   {
     return;
   }
@@ -440,7 +553,7 @@ void app_pump_take(app *a)
 
     if (take > 0)
     {
-      aud_track_record_push(&a->doc.tracks[a->rec.track], frames, take);
+      push_lanes(a, frames, take, channels);
       a->doc.dirty = 1;
     }
 
@@ -462,14 +575,15 @@ void app_pump_take(app *a)
  * would lose audio that was never in doubt. Returns 0 with the lane as the file
  * has it, or -1 with the lane as it was.
  */
-static int app_reload_take(app *a, size_t index, uint64_t at, const char *path)
+static int app_reload_take(app *a, size_t index, uint64_t at, const char *path,
+                           unsigned channel)
 {
   aud_track *t = &a->doc.tracks[index];
   aud_samples *block;
   unsigned rate = 0;
   const char *why = NULL;
 
-  block = aud_edit_read_wav(path, &rate, &why);
+  block = aud_edit_read_wav_channel(path, channel, &rate, &why);
   if (block == NULL)
   {
     return -1;
@@ -491,6 +605,73 @@ static int app_reload_take(app *a, size_t index, uint64_t at, const char *path)
   aud_samples_release(block); /* the clip holds it now */
   aud_track_tidy(t);
   return 0;
+}
+
+static unsigned lane_channel(const app *a, size_t k)
+{
+  return take_lanes(a) > 1u ? (unsigned)(k + 1u) : 0u;
+}
+
+static void close_lanes(app *a, const char *take)
+{
+  for (size_t k = 0; k < take_lanes(a); k++)
+  {
+    aud_track *t = &a->doc.tracks[(size_t)a->rec.track + k];
+
+    if (aud_track_recording(t))
+    {
+      aud_samples *block = t->clips[t->recording].audio;
+
+      aud_samples_set_source(block, take);
+      block->source_channel = lane_channel(a, k);
+    }
+    aud_track_record_end(t);
+  }
+
+  a->rec.last_track = a->rec.track;
+  snprintf(a->rec.last_path, sizeof(a->rec.last_path), "%s", take);
+}
+
+static int reload_lanes(app *a, const char *take)
+{
+  int rc = 0;
+
+  for (size_t k = 0; k < take_lanes(a); k++)
+  {
+    if (app_reload_take(a, (size_t)a->rec.track + k, a->rec.at, take,
+                        lane_channel(a, k)) != 0)
+    {
+      rc = -1;
+    }
+  }
+  return rc;
+}
+
+static void name_lanes(app *a, const char *take)
+{
+  for (size_t k = 0; k < take_lanes(a); k++)
+  {
+    aud_track *t = &a->doc.tracks[(size_t)a->rec.track + k];
+
+    if (take_lanes(a) > 1u)
+    {
+      snprintf(t->name, sizeof(t->name), "%.48s in %u", aud_path_basename(take),
+               (unsigned)(k + 1u) % 1000u);
+    }
+    else
+    {
+      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+    }
+  }
+}
+
+static void reset_take(app *a)
+{
+  a->rec.track = -1;
+  a->rec.lanes = 0;
+  a->rec.skip = 0;
+  a->rec.lap_frames = 0;
+  a->video.note[0] = '\0';
 }
 
 /*
@@ -525,37 +706,22 @@ void app_stop_take(app *a, const aud_engine_status *st)
 
   a->session.dirty = 1;
 
-  if (a->rec.track >= 0 && (size_t)a->rec.track < a->doc.count)
+  if (lanes_valid(a, a->rec.track, take_lanes(a)))
   {
-    aud_track *t = &a->doc.tracks[a->rec.track];
+    size_t lanes = take_lanes(a);
     int passes = 1;
 
-    /*
-     * Tell the block which file it is, while the clip that holds it is still
-     * open. The timeline's copy of a take and the WAV beside it are the same
-     * audio, and a project saved later refers to the file rather than carrying
-     * the samples - see edit/project.h.
-     */
-    if (aud_track_recording(t))
-    {
-      aud_samples_set_source(t->clips[t->recording].audio, take);
-    }
-    a->rec.last_track = a->rec.track;
-
-    aud_track_record_end(t);
+    close_lanes(a, take);
 
     /* the display fell behind the file; the clip is put right from the file */
-    if (dropped > 0 && closed)
+    if (dropped > 0 && closed && reload_lanes(a, take) != 0)
     {
-      if (app_reload_take(a, (size_t)a->rec.track, a->rec.at, take) != 0)
-      {
-        aud_warn("the display fell behind and %s could not be re-read; the lane is "
-                 "shorter than the file",
-                 take);
-      }
+      aud_warn("the display fell behind and %s could not be re-read; the lane is "
+               "shorter than the file",
+               take);
     }
 
-    snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
+    name_lanes(a, take);
 
     /*
      * A take recorded round a loop, cut into one lane a lap. After the name,
@@ -563,8 +729,16 @@ void app_stop_take(app *a, const aud_engine_status *st)
      */
     if (a->rec.lap_frames > 0 && closed)
     {
-      passes = aud_edit_take_passes(&a->doc, (size_t)a->rec.track, a->rec.at,
-                                    a->rec.lap_frames);
+      for (size_t k = lanes; k > 0; k--)
+      {
+        int made = aud_edit_take_passes(&a->doc, (size_t)a->rec.track + k - 1u, a->rec.at,
+                                        a->rec.lap_frames);
+
+        if (made > passes)
+        {
+          passes = made;
+        }
+      }
     }
 
     if (!closed)
@@ -581,15 +755,17 @@ void app_stop_take(app *a, const aud_engine_status *st)
       app_set_status(a, "%d passes of %.2f s - K walks them, alt+K mutes one", passes,
                      (double)a->rec.lap_frames / a->doc.rate);
     }
+    else if (lanes > 1u)
+    {
+      app_set_status(a, "%.50s: %.1f s, %zu inputs on a lane each",
+                     aud_path_basename(take), seconds, lanes);
+    }
     else
     {
       app_set_status(a, "%.60s: %.1f s", aud_path_basename(take), seconds);
     }
   }
-  a->rec.track = -1;
-  a->rec.skip = 0;
-  a->rec.lap_frames = 0;
-  a->video.note[0] = '\0';
+  reset_take(a);
 
   /* a file that did not close is not one to move about or render a video from */
   if (!closed)
@@ -653,16 +829,10 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
   memset(&a->rec.interrupted, 0, sizeof(a->rec.interrupted));
   a->rec.interrupted.track = -1;
 
-  if (a->rec.track >= 0 && (size_t)a->rec.track < a->doc.count)
+  if (lanes_valid(a, a->rec.track, take_lanes(a)))
   {
-    aud_track *t = &a->doc.tracks[a->rec.track];
-
-    if (aud_track_recording(t))
-    {
-      aud_samples_set_source(t->clips[t->recording].audio, take);
-    }
-    a->rec.last_track = a->rec.track;
-    aud_track_record_end(t);
+    close_lanes(a, take);
+    name_lanes(a, take);
 
     /*
      * The display fell behind as well as the device going, so the lane is not
@@ -671,22 +841,20 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
      * carried on: the second half would land where the lane ends rather than
      * where the file does, and the two would disagree for good.
      */
-    if (dropped > 0 && app_reload_take(a, (size_t)a->rec.track, a->rec.at, take) != 0)
+    if (dropped > 0 && reload_lanes(a, take) != 0)
     {
-      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
       aud_warn("the display fell behind and %s could not be re-read; the lane is "
                "shorter than the file",
                take);
     }
     else
     {
-      snprintf(t->name, sizeof(t->name), "%s", aud_path_basename(take));
-
       a->rec.interrupted.waiting = 1;
       a->rec.interrupted.track = a->rec.track;
+      a->rec.interrupted.lanes = take_lanes(a);
       /* one past the last frame that arrived, so a second half butts up
        * against the first rather than being refused for overlapping it */
-      a->rec.interrupted.at = aud_track_end(t);
+      a->rec.interrupted.at = aud_track_end(&a->doc.tracks[a->rec.track]);
       a->rec.interrupted.lost_at = GetTime();
       a->rec.interrupted.rate = aud_engine_rate(a->engine);
       a->rec.interrupted.channels = aud_engine_channels(a->engine);
@@ -694,8 +862,6 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
     }
   }
 
-  a->rec.track = -1;
-  a->rec.skip = 0;
   /*
    * A loop take that was cut short is not cut into passes. What is on the lane
    * is however many laps got through before the cable went, and a second half
@@ -703,8 +869,7 @@ static void app_take_interrupted(app *a, const aud_engine_status *st)
    * rather than at the top of a lap - so the laps are no longer a fixed number
    * of frames apart and there is nothing honest to cut on. It stays one take.
    */
-  a->rec.lap_frames = 0;
-  a->video.note[0] = '\0';
+  reset_take(a);
 
   app_set_status(a, "the device went during %.40s - %.1f s kept%s",
                  aud_path_basename(take), seconds,
@@ -757,7 +922,8 @@ void app_check_capture_loss(app *a)
 static void app_resume_take(app *a)
 {
   char path[AUD_ENGINE_PATH_MAX];
-  aud_track *t;
+  size_t lanes = a->rec.interrupted.lanes > 0 ? a->rec.interrupted.lanes : 1u;
+  size_t first;
 
   if (!a->rec.interrupted.waiting || a->engine == NULL)
   {
@@ -773,7 +939,7 @@ static void app_resume_take(app *a)
     return;
   }
 
-  if (a->rec.interrupted.track < 0 || (size_t)a->rec.interrupted.track >= a->doc.count)
+  if (!lanes_valid(a, a->rec.interrupted.track, lanes))
   {
     return; /* the lane was edited away while the device was gone */
   }
@@ -794,7 +960,7 @@ static void app_resume_take(app *a)
     return;
   }
 
-  t = &a->doc.tracks[a->rec.interrupted.track];
+  first = (size_t)a->rec.interrupted.track;
 
   /*
    * The rest of the take on the end of the same file and the same clip, when
@@ -802,12 +968,23 @@ static void app_resume_take(app *a)
    * files, or two clips over one file, would each be a lane that plays back
    * wrong once the project is saved and reloaded.
    */
-  if (a->rec.interrupted.path[0] != '\0' &&
-      aud_track_record_continue(t, a->rec.interrupted.at) == 0)
+  if (a->rec.interrupted.path[0] != '\0')
   {
-    if (aud_engine_continue(a->engine, a->rec.interrupted.path) == 0)
+    size_t k;
+
+    for (k = 0; k < lanes; k++)
+    {
+      if (aud_track_record_continue(&a->doc.tracks[first + k], a->rec.interrupted.at) !=
+          0)
+      {
+        break;
+      }
+    }
+
+    if (k == lanes && aud_engine_continue(a->engine, a->rec.interrupted.path) == 0)
     {
       a->rec.track = a->rec.interrupted.track;
+      a->rec.lanes = lanes;
       a->rec.at = a->rec.interrupted.at;
       a->rec.skip = 0;
       a->video.note[0] = '\0';
@@ -815,8 +992,12 @@ static void app_resume_take(app *a)
                      aud_path_basename(a->rec.interrupted.path));
       return;
     }
-    /* the file would not take it; put the clip back and fall through */
-    aud_track_record_end(t);
+
+    /* the file would not take it; put the clips back and fall through */
+    while (k-- > 0)
+    {
+      aud_track_record_end(&a->doc.tracks[first + k]);
+    }
   }
 
   /*
@@ -830,21 +1011,33 @@ static void app_resume_take(app *a)
     return;
   }
 
-  if (aud_track_record_begin(t, a->rec.interrupted.at,
-                             (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+  for (size_t k = 0; k < lanes; k++)
   {
-    return;
+    if (aud_track_record_begin(&a->doc.tracks[first + k], a->rec.interrupted.at,
+                               (size_t)aud_engine_rate(a->engine) * 8u) != 0)
+    {
+      while (k-- > 0)
+      {
+        aud_track_record_end(&a->doc.tracks[first + k]);
+      }
+      return;
+    }
   }
 
   a->rec.track = a->rec.interrupted.track;
+  a->rec.lanes = lanes;
   a->rec.at = a->rec.interrupted.at;
   a->rec.skip = 0;
   a->video.note[0] = '\0';
 
   if (aud_engine_start(a->engine, path, 0) != 0)
   {
-    aud_track_record_end(t);
+    for (size_t k = 0; k < lanes; k++)
+    {
+      aud_track_record_end(&a->doc.tracks[first + k]);
+    }
     a->rec.track = -1;
+    a->rec.lanes = 0;
     return;
   }
 
@@ -874,15 +1067,22 @@ void app_finish_take(app *a, const char *path)
    * afterwards has to point at the take rather than at the name it was
    * recorded under.
    */
-  if (a->rec.last_track >= 0 && (size_t)a->rec.last_track < a->doc.count &&
-      take[0] != '\0')
+  if (a->rec.last_path[0] != '\0' && take[0] != '\0' &&
+      strcmp(a->rec.last_path, take) != 0)
   {
-    const aud_track *t = &a->doc.tracks[a->rec.last_track];
-
-    for (size_t c = 0; c < t->count; c++)
+    for (size_t i = 0; i < a->doc.count; i++)
     {
-      aud_samples_set_source(t->clips[c].audio, take);
+      const aud_track *t = &a->doc.tracks[i];
+
+      for (size_t c = 0; c < t->count; c++)
+      {
+        if (strcmp(aud_samples_source(t->clips[c].audio), a->rec.last_path) == 0)
+        {
+          aud_samples_set_source(t->clips[c].audio, take);
+        }
+      }
     }
+    snprintf(a->rec.last_path, sizeof(a->rec.last_path), "%s", take);
   }
 
   if (!a->video.want || take[0] == '\0' || a->video.render != NULL)

@@ -217,6 +217,7 @@ typedef struct
   double lost_at; /* GetTime() when the stream went, for the window below */
   unsigned rate;
   unsigned channels;
+  size_t lanes;
   /*
    * The file it was being written to, so the rest of it can go on the end
    * rather than into a second one beside it. Empty when there is nothing to
@@ -434,6 +435,8 @@ typedef struct
    */
   long track;
   uint64_t at;
+  size_t lanes;
+  int split;
   /*
    * The lane the last take landed on, kept after `track` has been let go. A
    * take that is moved by the dialog has to have its block told where it ended
@@ -441,6 +444,7 @@ typedef struct
    * there - see edit/project.h.
    */
   long last_track;
+  char last_path[AUD_ENGINE_PATH_MAX];
   /*
    * Frames to a lap, when the take being recorded is going round a loop, and 0
    * when it is not. Fixed when Record was pressed, like `at` beside it: the
@@ -464,6 +468,7 @@ typedef struct
   app_interrupted interrupted;
 
   float *buf; /* APP_TAKE_BUF_SAMPLES floats, interleaved */
+  float lane_buf[APP_DRAIN];
   /* frames of those the current engine's channel count fits; 0 without one */
   size_t buf_frames;
 

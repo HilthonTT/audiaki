@@ -32,6 +32,9 @@
  */
 aud_samples *aud_edit_read_wav(const char *path, unsigned *out_rate, const char **why);
 
+aud_samples *aud_edit_read_wav_channel(const char *path, unsigned channel,
+                                       unsigned *out_rate, const char **why);
+
 /*
  * Read `path` and append it to `d` as a new track named after the file.
  *

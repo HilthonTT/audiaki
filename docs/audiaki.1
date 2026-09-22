@@ -1196,6 +1196,10 @@ Do not play the project while recording over it. The default is to play along
 to whatever is already on the timeline, which is what a second take is usually
 for.
 .TP
+.B \-\-split
+Record every input onto a mono lane of its own. One WAV is still written, with
+every channel in it; each lane refers to its channel of that file.
+.TP
 .B \-\-latency MS
 Round\-trip latency to place an overdub by, 0 to 500 milliseconds. Playing along
 to what is already there means hearing it late \(em the output holds a buffer,

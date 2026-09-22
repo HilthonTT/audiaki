@@ -27,6 +27,7 @@ complete -c audiaki-gui -l no-dialog -d 'Do not ask where a take should be kept 
 complete -c audiaki-gui -s s -l style -d 'Visualiser style to start on' -x -a 'bars mirror radial scope waterfall tuner'
 complete -c audiaki-gui -l preroll -d 'Keep SECS of audio while idle, so takes start earlier' -x
 complete -c audiaki-gui -l no-overdub -d 'Do not play the project while recording over it'
+complete -c audiaki-gui -l split -d 'Record every input onto a mono lane of its own'
 complete -c audiaki-gui -l latency -d 'Round-trip latency to place an overdub by' -x
 complete -c audiaki-gui -l gain -d 'Gain added to the recording itself, 0.0 to 16.0' -x
 

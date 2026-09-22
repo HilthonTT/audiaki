@@ -31,6 +31,7 @@ _audiaki_gui() {
     '(-s --style)'{-s,--style}'[visualiser style to start on]:style:(bars mirror radial scope waterfall tuner)'
     '--preroll[keep SECS of audio while idle, so takes start earlier]:seconds:'
     '--no-overdub[do not play the project while recording over it]'
+    '--split[record every input onto a mono lane of its own]'
     '--latency[round-trip latency to place an overdub by]:milliseconds:'
     '--gain[gain added to the recording itself, 0.0 to 16.0]:gain:'
     '--tempo[tempo the ruler counts bars on]:bpm:(60 80 90 100 110 120 140 160 180)'

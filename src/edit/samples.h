@@ -102,6 +102,7 @@ typedef struct
    * take has the WAV the recorder wrote beside it. See project.h.
    */
   char *source;
+  unsigned source_channel;
 } aud_samples;
 
 /*

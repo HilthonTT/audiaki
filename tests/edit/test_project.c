@@ -728,6 +728,45 @@ static int file_has(const char *path, const char *text)
   return strstr(buf, text) != NULL;
 }
 
+TEST(a_split_take_comes_back_one_channel_a_lane)
+{
+  aud_doc d;
+  char two[256];
+  char path[256];
+  unsigned rate = 0;
+
+  in_dir(two, sizeof(two), "take-002.wav");
+  in_dir(path, sizeof(path), "split" AUD_PROJECT_EXT);
+
+  aud_doc_init(&d, TEST_RATE);
+  for (unsigned ch = 1; ch <= 2; ch++)
+  {
+    aud_samples *block = aud_edit_read_wav_channel(two, ch, &rate, NULL);
+    aud_track *t = aud_doc_add_track(&d, "in", 1);
+
+    CHECK(block != NULL);
+    CHECK_EQ_INT(block->channels, 1);
+    CHECK_EQ_INT(block->source_channel, ch);
+    CHECK_EQ_INT(aud_track_add(t, block, 0), 0);
+    aud_samples_release(block);
+  }
+  CHECK_EQ_DBL(at(&d.tracks[1], 5), (5.0 + 1000.0) / 32768.0, 1e-6);
+
+  CHECK_EQ_INT(aud_project_save(&d, path, NULL), 0);
+  CHECK(file_has(path, "source-channel 2"));
+  aud_doc_free(&d);
+
+  aud_doc_init(&d, 0);
+  CHECK_EQ_INT(aud_project_load(&d, path, NULL), 0);
+  CHECK_EQ_INT(d.count, 2);
+  CHECK_EQ_INT(d.tracks[0].channels, 1);
+  CHECK_EQ_DBL(at(&d.tracks[0], 5), 5.0 / 32768.0, 1e-6);
+  CHECK_EQ_DBL(at(&d.tracks[1], 5), (5.0 + 1000.0) / 32768.0, 1e-6);
+  aud_doc_free(&d);
+
+  CHECK(aud_edit_read_wav_channel(two, 3, &rate, NULL) == NULL);
+}
+
 TEST(a_cab_ir_is_saved_with_its_track)
 {
   aud_doc d;
@@ -797,6 +836,7 @@ int main(void)
   RUN(everything_the_session_holds_survives_the_trip_rather_than_the_tracks_alone);
   RUN(a_clip_line_with_no_gain_on_it_opens_at_unity);
   RUN(a_project_that_will_not_open_leaves_the_one_that_is_open_alone);
+  RUN(a_split_take_comes_back_one_channel_a_lane);
   RUN(a_cab_ir_is_saved_with_its_track);
 
   rc = TEST_RESULT();
@@ -805,10 +845,10 @@ int main(void)
   remove(one);
   remove(two);
   {
-    static const char *const leftovers[] = {"session",  "shared", "relative", "missing",
-                                            "rubbish",  "loose",  "tempo",    "untimed",
-                                            "byhand",   "trip1",  "trip2",    "settle",
-                                            "settings", "wreck",  "nogain",   "cabbed"};
+    static const char *const leftovers[] = {
+        "session",  "shared",  "relative", "missing", "rubbish", "loose",
+        "tempo",    "untimed", "byhand",   "trip1",   "trip2",   "settle",
+        "settings", "wreck",   "nogain",   "split",   "cabbed"};
 
     for (size_t i = 0; i < sizeof(leftovers) / sizeof(leftovers[0]); i++)
     {
