@@ -89,6 +89,7 @@ audiaki --channel 1 take03.wav       # a stereo interface, one instrument -> mon
 audiaki --preroll 10 take04.wav      # keep the 10 seconds before Enter
 audiaki -M take05.wav                # hear it while it records (headphones!)
 audiaki -M --click 120 take05.wav    # ...in time with a metronome
+audiaki -M --ir cab.wav di.wav       # ...through a guitar cab, the take left dry
 audiaki --note "clean tone" take06.wav  # ...and say what it was
 audiaki --info take01.wav            # how did that take come out?
 audiaki --info session-*.wav         # ...and the rest of them, a row each
@@ -101,6 +102,7 @@ audiaki --render session.aki --stems # ...as one file a track instead
 audiaki-gui                          # the multi-track recorder and editor
 audiaki-gui take01.wav take02.wav    # ...opened on those takes
 audiaki-gui session.aki              # ...or on a saved session
+audiaki-gui -c 4 --split             # ...every input onto a lane of its own
 ```
 
 When a take finishes, audiaki asks where to keep it and what to call it — Enter
@@ -114,14 +116,16 @@ take_dir = ~/Takes
 
 The window records at the cursor onto whichever track is free, draws the
 waveform as it arrives, plays the project back while you record over it, counts
-it out with a metronome and rules it into bars you can snap to, loops a passage
-while you learn it and records round that loop with every lap on a lane of its
-own to choose between a bar at a time, marks the places worth coming back to,
-cuts, copies, pastes, splits, trims, drags a take along its lane onto the beat,
-fades, normalizes and holds a lane under a true-peak ceiling with 64 steps of
-undo, meters the mix in LUFS as it plays, saves the session as a `.aki` file and
-exports a WAV, FLAC, Opus or MP3 — or one file a track, which add back up to
-that mix. While there
+it out with a metronome and rules it into bars you can snap to, punches in over
+a mistake without touching either side of it, records every input of an
+interface onto a lane of its own, plays a DI guitar through a cab impulse
+response, loops a passage while you learn it and records round that loop with
+every lap on a lane of its own to choose between a bar at a time, marks the
+places worth coming back to, cuts, copies, pastes, splits, trims, drags a take
+along its lane onto the beat, fades, normalizes and holds a lane under a
+true-peak ceiling with 64 steps of undo, meters the mix in LUFS as it plays,
+saves the session as a `.aki` file and exports a WAV, FLAC, Opus or MP3 — or one
+file a track, which add back up to that mix. While there
 are edits it has not been asked to save it keeps a recovery file beside the
 session and opens it again after a crash, so what a kill costs is a minute
 rather than an afternoon. A session

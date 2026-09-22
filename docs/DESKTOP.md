@@ -64,6 +64,7 @@ audiaki-gui -V --video-silent        # ...with no audio track in it
 audiaki-gui -M                       # come up already monitoring
 audiaki-gui --preroll 10             # start each take 10 s before Record
 audiaki-gui --no-overdub             # do not play the project while recording
+audiaki-gui -c 4 --split             # every input onto a mono lane of its own
 audiaki-gui --latency 14             # place overdubs by a measured round trip
 audiaki-gui --tempo 96               # count the ruler in bars at 96 BPM
 audiaki-gui --click 96               # ...and play a metronome at it
@@ -792,6 +793,84 @@ There is no crossfade at a seam, because clips here do not overlap. Two passes
 joined across a note want a fade on either side of the join, `[` and `]`, the
 same as any other cut.
 
+## Punching in
+
+Select the bar with the mistake in it, select the lane it is on, turn **Punch**
+on (`P`) and press **Record**. The project starts playing two seconds before the
+selection so you can come in with it, and the take stops by itself half a second
+after the selection ends. Only the selected stretch of the lane is replaced;
+everything either side of it is exactly as it was.
+
+It is recorded like any other take, into a file of its own and onto a lane of
+its own while it runs, so you can watch it arrive. When it stops, the part inside
+the selection is moved onto the lane you were fixing and the rest is dropped from
+the timeline. The file keeps all of it. There is a 5 ms fade at each edge of the
+punch so the join does not click.
+
+**One press of `ctrl+Z` brings the whole take back** on its own lane, lead-in and
+tail included, with the lane you were fixing as it was before. That is also what
+happens if you stop before the take reaches the selection: nothing is replaced,
+and what you played is left on a lane of its own rather than thrown away.
+
+The lane has to match the device: a mono lane is punched with a mono device.
+Punch takes precedence over Loop, since both use the selection. It records one
+lane, so **Split** is ignored while it is on.
+
+## Recording several inputs at once
+
+An interface with more than two inputs is asked for all of them with `-c`, and
+**Split** (or `--split`) puts each one on a mono lane of its own:
+
+```sh
+audiaki-gui -c 4 --split
+```
+
+Every input is still written to **one WAV**, from one clock, so the lanes line up
+to the sample and a device that disappears mid-take is carried on in the same
+file the way a single input is. Each lane refers to its own channel of that file,
+and the session says which:
+
+```
+source take-003.wav
+source-channel 2
+```
+
+A session written like this and opened by an older audiaki does not know what
+`source-channel` means, and reads the whole file onto each lane.
+
+With Loop on as well, every input is cut into passes of its own.
+
+## Hearing it through a cab
+
+**Cab** on a lane loads an impulse response of a speaker cabinet, and the lane is
+heard through it. It is how a guitar recorded straight into the interface ends up
+sounding like a guitar through an amp. **Cab** lights up while one is loaded;
+pressing it again takes it off, and `ctrl+Z` puts it back.
+
+It applies to playback, to Export and Stems, and to `audiaki --render`, and the
+IR is saved with the session as a line of its own, relative to the session like
+the takes are:
+
+```
+ir ../IRs/4x12-sm57.wav
+```
+
+**The audio underneath is never changed.** The IR is applied as the lane is
+heard, so the waveform on the timeline is what you played and trying another cab
+costs nothing. It rings on past the end of the last clip on the lane by the
+length of the IR, and an export of the whole project includes that tail.
+
+While you record, the monitor goes through the cab of the lane being recorded
+onto, or of the first selected lane that has one, so a DI guitar can be played
+through the cab it will be heard through. That adds about 5 ms to the monitor.
+The take is still written dry.
+
+An IR is a WAV, mono or stereo, up to two seconds long. It is resampled to the
+session rate if it needs to be, the silence at its end is trimmed off, and it is
+scaled so that noise comes out at the level it went in. A stereo IR on a mono
+lane uses its left channel. The passes of a take recorded round a loop keep the
+IR of the lane they came from.
+
 ## Marking a place
 
 `ctrl+M` drops a marker where the cursor is, and takes it away again when the
@@ -872,6 +951,9 @@ way through takes back the stems it had already written.
 | **Limit** | Holds the selection under −1 dBTP, riding the peaks rather than clipping |
 | **Mute** | Stops the selection being heard without moving or removing it |
 | **Overdub** | Plays the project while recording over it |
+| **Punch** | Record replaces only the selection on the selected lane, rolling in from 2 s before it |
+| **Split** | Records every input onto a mono lane of its own, from one file |
+| **Cab** (on each lane) | Loads a cab impulse response for the lane; pressed again, takes it off |
 | **Video** | Also render an MP4 of the visualiser when the take stops |
 | **Audio** | Whether that MP4 carries the take's audio; off renders it silent |
 | **Monitor** | Plays the input back through the default output |
@@ -885,6 +967,7 @@ way through takes back the stems it had already written.
 | `R`, `ctrl+space` | Record from the cursor |
 | `S` | Stop the take or playback, or cancel a video render |
 | `L` | Loop what Play is given, and what Record goes round |
+| `P` | Punch in: Record replaces the selection on the selected lane |
 | `C` | The metronome |
 | `G` | The bar grid; `alt` steps off it while it is on |
 | `shift+G` | Divides the grid: bars, beats, halves, thirds, quarters |

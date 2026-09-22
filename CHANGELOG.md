@@ -9,6 +9,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Punching in.** Select the stretch with the mistake in it and the lane it is
+  on, turn **Punch** on (`P`) and press **Record**. The project rolls in from two
+  seconds before the selection, the take stops by itself half a second after it,
+  and only the selection is replaced, with a 5 ms fade at each edge. The take is
+  a file of its own like any other, and one press of `ctrl+Z` brings all of it
+  back on its own lane.
+
+- **Several inputs at once, a lane each.** **Split** (or `--split`) puts every
+  input of a multi-input interface on a mono lane of its own. It is still one WAV
+  from one clock, so the lanes line up to the sample; each lane names its channel
+  of the file with a new `source-channel` line in the session.
+
+- **Cab impulse responses.** **Cab** on a lane loads a WAV of a speaker
+  cabinet's impulse response, and the lane is heard through it: in playback,
+  Export, Stems and `audiaki --render`, and in the monitor while recording onto
+  it. The audio underneath is never touched, so the cab can be changed or taken
+  off at any time, and it is saved with the session as an `ir` line.
+  `audiaki -M --ir cab.wav` does the same for monitoring in the terminal, with
+  the take written dry.
+
 - **The window is drawn in a real typeface.** raylib carries one font and it is
   a bitmap, which is what made this look like a program written against a game
   library rather than a program that belongs on a desktop. It now finds a sans,
