@@ -155,6 +155,7 @@ typedef enum
 } aud_ui_icon;
 
 void aud_ui_logo(Rectangle bounds, float alpha);
+void aud_ui_hit_clip(const Rectangle *clip);
 
 /* The room a glyph and its gap ask for beside a label lettered at `font`. */
 float aud_ui_icon_width(int font);

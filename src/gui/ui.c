@@ -119,9 +119,27 @@ static Color lit_fill(Color tint, float toward)
   return mix(AUD_UI_SURFACE, base, toward);
 }
 
+static Rectangle ui_hit_clip;
+static int ui_hit_clipped;
+
+void aud_ui_hit_clip(const Rectangle *clip)
+{
+  ui_hit_clipped = clip != NULL;
+  if (clip != NULL)
+  {
+    ui_hit_clip = *clip;
+  }
+}
+
 static int hovering(Rectangle bounds)
 {
-  return CheckCollisionPointRec(GetMousePosition(), bounds);
+  Vector2 mouse = GetMousePosition();
+
+  if (ui_hit_clipped && !CheckCollisionPointRec(mouse, ui_hit_clip))
+  {
+    return 0;
+  }
+  return CheckCollisionPointRec(mouse, bounds);
 }
 
 /*

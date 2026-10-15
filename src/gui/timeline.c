@@ -1326,6 +1326,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
   Rectangle wave = wave_bounds(area);
   Rectangle rows = area;
   float y;
+  int in_rows;
   float total_h = 0.0f;
 
   tl->hint[0] = '\0';
@@ -1400,6 +1401,8 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
 
   BeginScissorMode((int)rows.x, (int)rows.y, (int)rows.width, (int)rows.height);
 
+  in_rows = CheckCollisionPointRec(GetMousePosition(), rows);
+  aud_ui_hit_clip(&rows);
   y = rows.y - tl->rows;
   for (size_t i = 0; i < d->count; i++)
   {
@@ -1485,7 +1488,8 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       Rectangle grip = {rows.x, y + h - TL_RESIZE_GRIP, rows.width,
                         TL_RESIZE_GRIP * 2.0f};
 
-      if (enabled && !t->collapsed && CheckCollisionPointRec(GetMousePosition(), grip))
+      if (enabled && in_rows && !t->collapsed &&
+          CheckCollisionPointRec(GetMousePosition(), grip))
       {
         SetMouseCursor(MOUSE_CURSOR_RESIZE_NS);
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
@@ -1504,9 +1508,9 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
      * reselecting it. Ctrl is left out of it: that is how a second lane is
      * added to the selection, and adding one is not grabbing it.
      */
-    grab = enabled && !tl->resizing && !tl->scrubbing && !tl->selecting && !tl->moving &&
-           t->selected && !IsKeyDown(KEY_LEFT_CONTROL) && !IsKeyDown(KEY_RIGHT_CONTROL) &&
-           over_selection(tl, d, lane);
+    grab = enabled && in_rows && !tl->resizing && !tl->scrubbing && !tl->selecting &&
+           !tl->moving && t->selected && !IsKeyDown(KEY_LEFT_CONTROL) &&
+           !IsKeyDown(KEY_RIGHT_CONTROL) && over_selection(tl, d, lane);
 
     if (grab)
     {
@@ -1520,7 +1524,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
     }
 
     /* a click in the waveform picks the track and starts a selection */
-    if (enabled && !tl->resizing && !tl->scrubbing && !tl->moving &&
+    if (enabled && in_rows && !tl->resizing && !tl->scrubbing && !tl->moving &&
         CheckCollisionPointRec(GetMousePosition(), lane) &&
         IsMouseButtonPressed(MOUSE_BUTTON_LEFT))
     {
@@ -1534,8 +1538,8 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
       aud_doc_set_cursor(d, tl->anchor);
     }
 
-    if (enabled && CheckCollisionPointRec(GetMousePosition(), lane) && !tl->selecting &&
-        !tl->moving)
+    if (enabled && in_rows && CheckCollisionPointRec(GetMousePosition(), lane) &&
+        !tl->selecting && !tl->moving)
     {
       snprintf(tl->hint, sizeof(tl->hint),
                grab ? "drag to move the selection along the lane"
@@ -1544,6 +1548,7 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
 
     y += h + 1.0f;
   }
+  aud_ui_hit_clip(NULL);
 
   /*
    * The grid, over every lane at once and under the cursor.
