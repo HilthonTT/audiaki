@@ -247,7 +247,7 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
   {
     if (i < target_count)
     {
-      if (aud_track_paste(&d->tracks[targets[i]], at, &c->tracks[i]) != 0)
+      if (aud_track_paste(&d->tracks[targets[i]], at, &c->tracks[i], c->frames) != 0)
       {
         return -1;
       }
@@ -259,7 +259,7 @@ int aud_edit_paste(aud_doc *d, const aud_clipboard *c)
     {
       aud_track *fresh = aud_doc_add_track(d, c->tracks[i].name, c->tracks[i].channels);
 
-      if (fresh == NULL || aud_track_paste(fresh, at, &c->tracks[i]) != 0)
+      if (fresh == NULL || aud_track_paste(fresh, at, &c->tracks[i], c->frames) != 0)
       {
         return -1;
       }
@@ -396,7 +396,7 @@ int aud_edit_duplicate(aud_doc *d)
 
     /* at the same place on the timeline, so it lines up with what it came
      * from rather than jumping to the start of the project */
-    if (aud_track_paste(fresh, d->sel_start, &piece) != 0)
+    if (aud_track_paste(fresh, d->sel_start, &piece, 0) != 0)
     {
       aud_track_free(&piece);
       return -1;
@@ -780,7 +780,7 @@ static long lift_pass(aud_doc *d, size_t index, const char *name, uint64_t from,
   }
   aud_track_set_ir(fresh, d->tracks[index].ir);
 
-  if (aud_track_paste(fresh, at, &lifted) != 0)
+  if (aud_track_paste(fresh, at, &lifted, 0) != 0)
   {
     aud_track_free(&lifted);
     aud_doc_remove_track(d, d->count - 1u);

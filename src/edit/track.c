@@ -1105,16 +1105,17 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
   return 0;
 }
 
-int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src)
+int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src, uint64_t length)
 {
-  uint64_t length;
-
-  if (t == NULL || src == NULL || src->count == 0)
+  if (t == NULL || src == NULL)
   {
     return 0;
   }
 
-  length = aud_track_end(src);
+  if (length < aud_track_end(src))
+  {
+    length = aud_track_end(src);
+  }
   if (aud_track_insert_gap(t, at, length) != 0)
   {
     return -1;

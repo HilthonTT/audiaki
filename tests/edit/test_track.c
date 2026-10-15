@@ -274,7 +274,7 @@ TEST(pasting_opens_room_and_puts_the_clips_in_it)
   aud_track_init(&piece, "p", 1);
   aud_track_add(&piece, b, 0);
 
-  CHECK_EQ_INT(aud_track_paste(&t, 50, &piece), 0);
+  CHECK_EQ_INT(aud_track_paste(&t, 50, &piece, 0), 0);
   CHECK_EQ_INT((int)aud_track_end(&t), 110);
   CHECK(well_formed(&t));
 
@@ -301,7 +301,7 @@ TEST(cut_and_paste_back_is_the_take_it_started_as)
   CHECK_EQ_INT(aud_track_extract(&t, 40, 90, &piece), 0);
   CHECK_EQ_INT(aud_track_delete(&t, 40, 90, 1), 0);
   CHECK_EQ_INT((int)aud_track_end(&t), 150);
-  CHECK_EQ_INT(aud_track_paste(&t, 40, &piece), 0);
+  CHECK_EQ_INT(aud_track_paste(&t, 40, &piece, 0), 0);
 
   CHECK_EQ_INT((int)aud_track_end(&t), 200);
   for (uint64_t f = 0; f < 200; f++)
@@ -1247,6 +1247,28 @@ TEST(a_carried_on_take_keeps_the_peaks_it_already_had)
   aud_track_free(&t);
 }
 
+TEST(a_paste_opens_the_gap_it_is_given_even_past_its_audio)
+{
+  aud_track t;
+  aud_track piece;
+  aud_samples *s = counted(100, 0.0f);
+  aud_samples *later = counted(100, 500.0f);
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_track_add(&t, later, 1000);
+  aud_samples_release(s);
+  aud_samples_release(later);
+
+  CHECK_EQ_INT(aud_track_extract(&t, 0, 500, &piece), 0);
+  CHECK_EQ_INT(aud_track_paste(&t, 600, &piece, 500), 0);
+  CHECK(at(&t, 1500) == 500.0f);
+  CHECK(well_formed(&t));
+
+  aud_track_free(&piece);
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -1300,6 +1322,7 @@ int main(void)
   RUN(a_take_that_is_still_running_is_not_moved);
   RUN(a_take_split_and_joined_again_keeps_recording);
   RUN(a_carried_on_take_keeps_the_peaks_it_already_had);
+  RUN(a_paste_opens_the_gap_it_is_given_even_past_its_audio);
 
   return TEST_RESULT();
 }

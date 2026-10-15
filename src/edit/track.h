@@ -334,9 +334,10 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
 
 /*
  * Insert `src`'s clips into `t` at `at`, moving whatever was there along by
- * `src`'s length. Returns 0 on success, -1 on failure.
+ * `length`, or by `src`'s own length if that is longer. Returns 0 on success,
+ * -1 on failure.
  */
-int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src);
+int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src, uint64_t length);
 
 /*
  * Open a clip at `start` that will grow as audio arrives, so a take appears on
