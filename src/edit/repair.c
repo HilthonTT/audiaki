@@ -221,8 +221,7 @@ int aud_repair_apply(aud_doc *d, size_t index, uint64_t from, uint64_t to,
 
   t = lane(d, index); /* the checkpoint copied the lists; take the pointer again */
 
-  aud_track_delete(t, from, to, 0);
-  if (aud_track_place(t, block, 0, length, from, 0, 0) != 0)
+  if (aud_track_replace(t, from, from + length, block) != 0)
   {
     /*
      * Only reachable if the clip list would not grow, and the range has just

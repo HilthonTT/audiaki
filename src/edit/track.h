@@ -332,6 +332,8 @@ int aud_track_move(aud_track *t, uint64_t from, uint64_t to, int64_t by);
  */
 int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_track *dst);
 
+int aud_track_replace(aud_track *t, uint64_t from, uint64_t to, aud_samples *audio);
+
 /*
  * Insert `src`'s clips into `t` at `at`, moving whatever was there along by
  * `length`, or by `src`'s own length if that is longer. Returns 0 on success,

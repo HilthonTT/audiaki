@@ -163,8 +163,7 @@ int aud_limit_selection(aud_doc *d, double ceiling_db, const char *dir,
       aud_doc_checkpoint(d, AUD_LIMIT_LABEL);
     }
 
-    aud_track_delete(&d->tracks[i], d->sel_start, d->sel_end, 0);
-    if (aud_track_place(&d->tracks[i], block, 0, length, d->sel_start, 0, 0) != 0)
+    if (aud_track_replace(&d->tracks[i], d->sel_start, d->sel_start + length, block) != 0)
     {
       /*
        * Only reachable if the clip list would not grow, and the range has just

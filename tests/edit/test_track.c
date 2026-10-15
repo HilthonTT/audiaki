@@ -1269,6 +1269,35 @@ TEST(a_paste_opens_the_gap_it_is_given_even_past_its_audio)
   aud_track_free(&t);
 }
 
+TEST(replacing_a_range_keeps_the_muted_clips_in_it)
+{
+  aud_track t;
+  aud_samples *s = counted(100, 0.0f);
+  aud_samples *flat_block = aud_samples_create(1, 100);
+
+  for (size_t i = 0; i < 100; i++)
+  {
+    flat_block->data[i] = -1.0f;
+  }
+
+  aud_track_init(&t, "t", 1);
+  aud_track_add(&t, s, 0);
+  aud_samples_release(s);
+  CHECK_EQ_INT(aud_track_mute_range(&t, 20, 40, 1), 0);
+
+  CHECK_EQ_INT(aud_track_replace(&t, 0, 100, flat_block), 0);
+  aud_samples_release(flat_block);
+  CHECK(well_formed(&t));
+  CHECK(at(&t, 10) == -1.0f);
+  CHECK(at(&t, 60) == -1.0f);
+  CHECK(aud_track_muted_at(&t, 30));
+
+  CHECK_EQ_INT(aud_track_mute_range(&t, 20, 40, 0), 0);
+  CHECK(at(&t, 30) == 30.0f);
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -1323,6 +1352,7 @@ int main(void)
   RUN(a_take_split_and_joined_again_keeps_recording);
   RUN(a_carried_on_take_keeps_the_peaks_it_already_had);
   RUN(a_paste_opens_the_gap_it_is_given_even_past_its_audio);
+  RUN(replacing_a_range_keeps_the_muted_clips_in_it);
 
   return TEST_RESULT();
 }

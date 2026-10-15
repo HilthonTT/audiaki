@@ -1105,6 +1105,57 @@ int aud_track_extract(const aud_track *src, uint64_t from, uint64_t to, aud_trac
   return 0;
 }
 
+int aud_track_replace(aud_track *t, uint64_t from, uint64_t to, aud_samples *audio)
+{
+  aud_track kept;
+  int rc = 0;
+
+  if (t == NULL || audio == NULL || to <= from || to - from > (uint64_t)audio->frames)
+  {
+    return -1;
+  }
+  if (aud_track_extract(t, from, to, &kept) != 0)
+  {
+    return -1;
+  }
+
+  if (aud_track_delete(t, from, to, 0) != 0 ||
+      aud_track_place(t, audio, 0, (size_t)(to - from), from, 0, 0) != 0)
+  {
+    aud_track_free(&kept);
+    return -1;
+  }
+
+  for (size_t i = 0; i < kept.count && rc == 0; i++)
+  {
+    const aud_clip *c = &kept.clips[i];
+    uint64_t at = from + c->start;
+    aud_clip *slot;
+
+    if (!c->muted)
+    {
+      continue;
+    }
+    if (aud_track_delete(t, at, at + c->frames, 0) != 0)
+    {
+      rc = -1;
+      break;
+    }
+    slot = clip_insert(t, clip_at_or_after(t, at));
+    if (slot == NULL)
+    {
+      rc = -1;
+      break;
+    }
+    *slot = *c;
+    slot->start = at;
+    aud_samples_retain(slot->audio);
+  }
+
+  aud_track_free(&kept);
+  return rc;
+}
+
 int aud_track_paste(aud_track *t, uint64_t at, const aud_track *src, uint64_t length)
 {
   if (t == NULL || src == NULL)
