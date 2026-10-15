@@ -293,6 +293,12 @@ void app_open_dialog(app *a)
 {
   app_save *s = &a->save;
 
+  if (a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before importing");
+    return;
+  }
+
   memset(s, 0, sizeof(*s));
   s->mode = APP_SAVE_MODE_OPEN;
   s->focus = APP_SAVE_FIELD_NAME;
@@ -317,6 +323,12 @@ void app_open_dialog(app *a)
 
 void app_ir_dialog(app *a, size_t track)
 {
+  if (a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before loading a cab");
+    return;
+  }
+
   app_open_dialog(a);
   a->save.mode = APP_SAVE_MODE_IR;
   a->save.ir_track = (long)track;

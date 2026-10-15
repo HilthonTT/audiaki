@@ -54,6 +54,7 @@ static app *project(double seconds, int tracks)
   }
 
   aud_doc_init(&a->doc, TEST_RATE);
+  a->rec.track = -1;
 
   for (int i = 0; i < tracks; i++)
   {
@@ -313,6 +314,24 @@ TEST(one_question_at_a_time)
   discard(a);
 }
 
+TEST(a_lane_is_not_closed_under_a_take)
+{
+  app *a = project(2.0, 2);
+
+  CHECK(a != NULL);
+  if (a == NULL)
+  {
+    return;
+  }
+
+  a->rec.track = 1;
+  CHECK_EQ_INT(app_confirm_close_track(a, 0), 1);
+  CHECK(!a->confirm.open);
+  CHECK_EQ_INT((int)a->doc.count, 2);
+
+  discard(a);
+}
+
 TEST(closing_a_lane_always_asks)
 {
   app *a = project(2.0, 2);
@@ -385,6 +404,7 @@ int main(void)
   RUN(the_actions_that_discard_nothing_never_ask);
   RUN(one_question_at_a_time);
   RUN(closing_a_lane_always_asks);
+  RUN(a_lane_is_not_closed_under_a_take);
   RUN(quitting_asks_only_when_something_would_be_lost);
   return TEST_RESULT();
 }

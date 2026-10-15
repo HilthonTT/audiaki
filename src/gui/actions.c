@@ -118,6 +118,12 @@ void app_clear_ir(app *a, size_t track)
  */
 void app_edit(app *a, app_edit_action action)
 {
+  if ((action == APP_EDIT_UNDO || action == APP_EDIT_REDO) && a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before undoing or redoing");
+    return;
+  }
+
   /*
    * The one gate, so nothing can reach an edit without having been offered the
    * question - the toolbar, the keys and the timeline all come through here.
@@ -329,6 +335,12 @@ void app_edit_now(app *a, app_edit_action action)
 {
   aud_doc *d = &a->doc;
   int ok = -1;
+
+  if ((action == APP_EDIT_UNDO || action == APP_EDIT_REDO) && a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before undoing or redoing");
+    return;
+  }
 
   switch (action)
   {

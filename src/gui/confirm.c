@@ -355,6 +355,11 @@ int app_confirm_close_track(app *a, size_t index)
   {
     return 0;
   }
+  if (a->rec.track >= 0)
+  {
+    app_set_status(a, "stop the take before closing a track");
+    return 1;
+  }
 
   t = &a->doc.tracks[index];
   seconds = a->doc.rate > 0 ? (double)aud_track_end(t) / (double)a->doc.rate : 0.0;
@@ -581,7 +586,11 @@ int app_confirm_draw(app *a)
       app_edit_now(a, action);
       break;
     case APP_CONFIRM_CLOSE_TRACK:
-      if (track >= 0 && (size_t)track < a->doc.count)
+      if (a->rec.track >= 0)
+      {
+        app_set_status(a, "stop the take before closing a track");
+      }
+      else if (track >= 0 && (size_t)track < a->doc.count)
       {
         char name[AUD_TRACK_NAME_MAX];
 
