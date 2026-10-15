@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 /*
@@ -793,6 +794,10 @@ static int recorder_run(aud_device *dev, const aud_recorder_options *opts,
       rc = 0;
       goto out;
     }
+    if (pb.clicking)
+    {
+      aud_click_seek(&pb.click, aud_preroll_filled(&pre));
+    }
   }
 
   if (open_take(&wav, dev, opts, &shape) != 0)
@@ -1043,6 +1048,15 @@ static int should_ask(const aud_options *opts)
   return opts->log_level != AUD_LOG_QUIET && aud_prompt_available();
 }
 
+static int same_file(const char *a, const char *b)
+{
+  struct stat sa;
+  struct stat sb;
+
+  return stat(a, &sa) == 0 && stat(b, &sb) == 0 && sa.st_dev == sb.st_dev &&
+         sa.st_ino == sb.st_ino;
+}
+
 /*
  * Ask where the finished take should be kept, and put it there.
  *
@@ -1103,7 +1117,7 @@ static void store_take(char *path, size_t size)
       return;
     }
 
-    if (strcmp(target, path) == 0)
+    if (strcmp(target, path) == 0 || same_file(target, path))
     {
       aud_info("kept %s", path);
       return;
