@@ -1195,6 +1195,29 @@ TEST(a_take_that_is_still_running_is_not_moved)
   aud_track_free(&t);
 }
 
+TEST(a_take_split_and_joined_again_keeps_recording)
+{
+  aud_track t;
+  float buf[500];
+
+  for (size_t i = 0; i < 500; i++)
+  {
+    buf[i] = 0.1f;
+  }
+
+  aud_track_init(&t, "t", 1);
+  CHECK_EQ_INT(aud_track_record_begin(&t, 0, 1024), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 500), 500);
+  CHECK_EQ_INT(aud_track_split(&t, 200), 0);
+  CHECK_EQ_INT(aud_track_delete(&t, 5000, 6000, 0), 0);
+  CHECK(aud_track_recording(&t));
+  CHECK_EQ_INT((int)aud_track_record_push(&t, buf, 100), 100);
+  aud_track_record_end(&t);
+  CHECK_EQ_INT((int)aud_track_end(&t), 600);
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -1246,6 +1269,7 @@ int main(void)
   RUN(a_move_cannot_go_back_past_the_start_of_the_timeline);
   RUN(a_move_keeps_the_fades_on_the_piece_that_moved);
   RUN(a_take_that_is_still_running_is_not_moved);
+  RUN(a_take_split_and_joined_again_keeps_recording);
 
   return TEST_RESULT();
 }

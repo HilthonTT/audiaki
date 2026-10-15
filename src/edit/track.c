@@ -1178,6 +1178,10 @@ void aud_track_tidy(aud_track *t)
     {
       a->frames += b->frames;
       a->fade_out = b->fade_out;
+      if (t->recording == (long)(i + 1u))
+      {
+        t->recording = (long)i;
+      }
       clip_remove(t, i + 1u);
       clip_clamp_fades(a);
       continue;
