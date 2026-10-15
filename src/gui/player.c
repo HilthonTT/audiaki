@@ -213,7 +213,31 @@ int aud_player_pump(aud_player *p, const aud_doc *d)
 
     if (span > 0 && !looping && p->written >= span)
     {
-      break;
+      uint64_t end = span + (uint64_t)p->latency;
+
+      if (p->written >= end)
+      {
+        break;
+      }
+      if (want > AUD_PLAYER_CHUNK)
+      {
+        want = AUD_PLAYER_CHUNK;
+      }
+      if ((uint64_t)want > end - p->written)
+      {
+        want = (size_t)(end - p->written);
+      }
+
+      memset(p->buf, 0, want * p->channels * sizeof(float));
+      if (aud_monitor_write(p->out, p->buf, want, 1.0f) != 0)
+      {
+        aud_warn("playback stopped: the output stream failed");
+        aud_player_stop(p);
+        return 1;
+      }
+      p->written += want;
+      space -= (long)want;
+      continue;
     }
 
     /*
