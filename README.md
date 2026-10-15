@@ -191,15 +191,6 @@ overlap, so passes comped together butt up rather than crossfading and a seam
 across a note wants a fade either side of it. The full list is in
 [docs/USAGE.md](docs/USAGE.md#limitations).
 
-## Credits
-
-The logo is the
-[teriyaki icon](https://www.flaticon.com/free-icon/teriyaki_6632525) by
-**AUTHOR** from [Flaticon](https://www.flaticon.com/), used under the
-[Flaticon Free License](https://www.freepikcompany.com/legal#nav-flaticon-agreement)
-with attribution.
-
 ## License
 
-MIT. See [LICENSE](LICENSE) — this covers the source code. The logo in
-`assets/` is licensed separately, as noted under [Credits](#credits).
+MIT. See [LICENSE](LICENSE).

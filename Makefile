@@ -607,6 +607,7 @@ format-check:
 
 APPDIR    ?= $(PREFIX)/share/applications
 ICONDIR   ?= $(PREFIX)/share/icons/hicolor/256x256/apps
+SVGICONDIR ?= $(PREFIX)/share/icons/hicolor/scalable/apps
 
 install: all
 ifeq ($(HOTRELOAD),1)
@@ -625,10 +626,11 @@ endif
 	$(INSTALL) -m 0644 completions/$(PROJECT).fish \
 	           $(DESTDIR)$(FISHCOMPDIR)/$(PROJECT).fish
 ifneq ($(BUILD_GUI),)
-	$(INSTALL) -d $(DESTDIR)$(APPDIR) $(DESTDIR)$(ICONDIR)
+	$(INSTALL) -d $(DESTDIR)$(APPDIR) $(DESTDIR)$(ICONDIR) $(DESTDIR)$(SVGICONDIR)
 	$(INSTALL) -m 0755 $(GUI_BIN) $(DESTDIR)$(BINDIR)/$(PROJECT)-gui
 	$(INSTALL) -m 0644 assets/$(PROJECT).desktop $(DESTDIR)$(APPDIR)/$(PROJECT).desktop
 	$(INSTALL) -m 0644 assets/logo.png $(DESTDIR)$(ICONDIR)/$(PROJECT).png
+	$(INSTALL) -m 0644 assets/logo.svg $(DESTDIR)$(SVGICONDIR)/$(PROJECT).svg
 	# bash-completion loads by command name, and both commands are in the one
 	# file, so the window gets a link to it rather than a copy of it.
 	ln -sf $(PROJECT) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)-gui
@@ -644,6 +646,7 @@ uninstall:
 	$(RM) $(DESTDIR)$(MANDIR)/$(PROJECT).1
 	$(RM) $(DESTDIR)$(APPDIR)/$(PROJECT).desktop
 	$(RM) $(DESTDIR)$(ICONDIR)/$(PROJECT).png
+	$(RM) $(DESTDIR)$(SVGICONDIR)/$(PROJECT).svg
 	$(RM) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)
 	$(RM) $(DESTDIR)$(BASHCOMPDIR)/$(PROJECT)-gui
 	$(RM) $(DESTDIR)$(ZSHCOMPDIR)/_$(PROJECT)
