@@ -157,8 +157,38 @@ int aud_path_join(char *dst, size_t size, const char *dir, const char *name)
   return 0;
 }
 
+static const char *absolute(char *dst, size_t size, const char *p)
+{
+  char cwd[AUD_PATH_MAX];
+  int n;
+
+  if (p == NULL || p[0] == '/' || p[0] == '\0' || getcwd(cwd, sizeof(cwd)) == NULL)
+  {
+    return p;
+  }
+  while (p[0] == '.' && p[1] == '/')
+  {
+    p += 2;
+    while (*p == '/')
+    {
+      p++;
+    }
+  }
+  if (strcmp(p, ".") == 0 || *p == '\0')
+  {
+    n = snprintf(dst, size, "%s", cwd);
+  }
+  else
+  {
+    n = snprintf(dst, size, "%s%s%s", cwd, strcmp(cwd, "/") == 0 ? "" : "/", p);
+  }
+  return (n < 0 || (size_t)n >= size) ? p : dst;
+}
+
 int aud_path_relative(char *dst, size_t size, const char *dir, const char *path)
 {
+  char dir_abs[AUD_PATH_MAX];
+  char path_abs[AUD_PATH_MAX];
   size_t dir_len;
   const char *rest;
   int written;
@@ -167,6 +197,9 @@ int aud_path_relative(char *dst, size_t size, const char *dir, const char *path)
   {
     return -1;
   }
+
+  path = absolute(path_abs, sizeof(path_abs), path);
+  dir = absolute(dir_abs, sizeof(dir_abs), dir);
 
   if (dir == NULL || *dir == '\0')
   {
