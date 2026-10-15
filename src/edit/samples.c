@@ -224,6 +224,8 @@ static int index_reserve(aud_samples *s, size_t want)
  */
 static void index_upto(aud_samples *s, int last)
 {
+  s->indexed -= s->indexed % AUD_PEAK_BUCKET;
+
   while (s->indexed + AUD_PEAK_BUCKET <= s->frames)
   {
     size_t b = s->indexed / AUD_PEAK_BUCKET;

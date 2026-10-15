@@ -1218,6 +1218,35 @@ TEST(a_take_split_and_joined_again_keeps_recording)
   aud_track_free(&t);
 }
 
+TEST(a_carried_on_take_keeps_the_peaks_it_already_had)
+{
+  aud_track t;
+  float first[300];
+  float second[300];
+  aud_peak p;
+
+  for (size_t i = 0; i < 300; i++)
+  {
+    first[i] = i == 280 ? 0.9f : 0.1f;
+    second[i] = 0.1f;
+  }
+
+  aud_track_init(&t, "t", 1);
+  CHECK_EQ_INT(aud_track_record_begin(&t, 0, 1024), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, first, 300), 300);
+  aud_track_record_end(&t);
+  CHECK_EQ_INT(aud_track_record_continue(&t, 300), 0);
+  CHECK_EQ_INT((int)aud_track_record_push(&t, second, 300), 300);
+  aud_track_record_end(&t);
+
+  aud_samples_range(t.clips[0].audio, 0, 0, 600, &p);
+  CHECK(p.max > 0.89f);
+  aud_samples_range(t.clips[0].audio, 0, 256, 512, &p);
+  CHECK(p.max > 0.89f);
+
+  aud_track_free(&t);
+}
+
 int main(void)
 {
   RUN(a_track_starts_empty);
@@ -1270,6 +1299,7 @@ int main(void)
   RUN(a_move_keeps_the_fades_on_the_piece_that_moved);
   RUN(a_take_that_is_still_running_is_not_moved);
   RUN(a_take_split_and_joined_again_keeps_recording);
+  RUN(a_carried_on_take_keeps_the_peaks_it_already_had);
 
   return TEST_RESULT();
 }
