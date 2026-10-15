@@ -1606,6 +1606,12 @@ void aud_timeline_draw(aud_timeline *tl, aud_doc *d, Rectangle ruler, Rectangle 
 
     line.height = 24.0f;
     line.y = rows.y + rows.height / 2.0f - 24.0f;
+    if (rows.height > 160.0f)
+    {
+      aud_ui_logo(
+          (Rectangle){rows.x + rows.width / 2.0f - 32.0f, line.y - 84.0f, 64.0f, 64.0f},
+          0.55f);
+    }
     aud_ui_text_centred(line, 20, AUD_UI_MUTED, "no tracks yet");
     line.y += 28.0f;
     aud_ui_text_centred(line, 16, AUD_UI_EDGE,

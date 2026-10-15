@@ -322,6 +322,28 @@ static void plug_pick_backend(app *a)
   }
 }
 
+static void plug_set_icon(void)
+{
+  RenderTexture2D canvas = LoadRenderTexture(64, 64);
+  Image icon;
+
+  if (canvas.id == 0)
+  {
+    return;
+  }
+
+  BeginTextureMode(canvas);
+  ClearBackground(BLANK);
+  aud_ui_logo((Rectangle){2.0f, 2.0f, 60.0f, 60.0f}, 1.0f);
+  EndTextureMode();
+
+  icon = LoadImageFromTexture(canvas.texture);
+  ImageFlipVertical(&icon);
+  SetWindowIcon(icon);
+  UnloadImage(icon);
+  UnloadRenderTexture(canvas);
+}
+
 static void plug_open_window(void)
 {
   /* raylib is chatty on stdout by default; audiaki reports through log.h */
@@ -331,6 +353,7 @@ static void plug_open_window(void)
   SetWindowMinSize(APP_MIN_WIDTH, APP_MIN_HEIGHT);
   SetTargetFPS(60);
   SetExitKey(KEY_NULL); /* Escape closing an open take would be unforgivable */
+  plug_set_icon();
 }
 
 static void plug_start_device(app *a)

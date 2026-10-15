@@ -154,6 +154,8 @@ typedef enum
   AUD_UI_ICON_CLOSE
 } aud_ui_icon;
 
+void aud_ui_logo(Rectangle bounds, float alpha);
+
 /* The room a glyph and its gap ask for beside a label lettered at `font`. */
 float aud_ui_icon_width(int font);
 

@@ -223,13 +223,13 @@ static void draw_header(app *a, Rectangle r)
   float mid = r.y + r.height / 2.0f;
 
   /*
-   * The name, and a dot in the accent beside it. It is the only mark this
-   * program has and it costs one circle - but a window that opens with a
+   * The name, and the logo beside it, drawn rather than loaded so there is no
+   * file to find at run time - and a window that opens with a
    * wordmark rather than with a line of text looks like something somebody
    * made on purpose.
    */
-  DrawCircleV((Vector2){r.x + 5.0f, mid + 1.0f}, 5.0f, AUD_UI_ACCENT);
-  aud_ui_write(AUD_UI_STRONG, r.x + 18.0f, mid - 13.0f, 25, AUD_UI_TEXT, AUDIAKI_NAME);
+  aud_ui_logo((Rectangle){r.x, mid - 14.0f, 28.0f, 28.0f}, 1.0f);
+  aud_ui_write(AUD_UI_STRONG, r.x + 38.0f, mid - 13.0f, 25, AUD_UI_TEXT, AUDIAKI_NAME);
 
   /*
    * The keys are the fast way to drive this and they are invisible, so there is

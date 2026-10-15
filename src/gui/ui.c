@@ -608,13 +608,14 @@ static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Colo
   Color fill;
   Color edge;
   Color text;
+  Color glyph;
   float highlight = 1.0f;
 
   if (!enabled)
   {
-    fill = mix(AUD_UI_PANEL, AUD_UI_BG, 0.45f);
-    edge = fade_to(AUD_UI_EDGE_SOFT, 0.7f);
-    text = fade_to(AUD_UI_MUTED, 0.40f);
+    fill = fade_to(AUD_UI_PANEL, 0.55f);
+    edge = fade_to(AUD_UI_EDGE_SOFT, 0.55f);
+    text = fade_to(AUD_UI_MUTED, 0.38f);
     highlight = 0.0f;
   }
   else if (lit)
@@ -657,6 +658,7 @@ static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Colo
 
   aud_ui_panel(inner, UI_CORNER, fill, edge);
   top_highlight(inner, UI_CORNER, highlight);
+  glyph = (enabled && !lit) ? tint : text;
 
   if (icon == AUD_UI_ICON_NONE)
   {
@@ -665,7 +667,7 @@ static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Colo
   else if (label == NULL || *label == '\0')
   {
     draw_icon(icon, inner.x + inner.width / 2.0f, inner.y + inner.height / 2.0f,
-              0.62f * (float)ui_label_size, text);
+              0.62f * (float)ui_label_size, glyph);
   }
   else
   {
@@ -694,7 +696,7 @@ static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Colo
     }
 
     draw_icon(icon, start + room / 2.0f - 3.0f, inner.y + inner.height / 2.0f,
-              0.62f * (float)size, text);
+              0.62f * (float)size, glyph);
     aud_ui_write(AUD_UI_STRONG, start + room,
                  inner.y + (inner.height - (float)size) / 2.0f, size, text,
                  shortened(AUD_UI_STRONG, label, size, most));
@@ -706,6 +708,42 @@ static int clickable(Rectangle bounds, aud_ui_icon icon, const char *label, Colo
   }
 
   return hover && IsMouseButtonReleased(MOUSE_BUTTON_LEFT);
+}
+
+void aud_ui_logo(Rectangle bounds, float alpha)
+{
+  const Color amber = AUD_UI_WARN;
+  const Color red = AUD_UI_RECORD;
+  float s = bounds.width < bounds.height ? bounds.width : bounds.height;
+  float x0 = bounds.x + (bounds.width - s) / 2.0f;
+  float y0 = bounds.y + (bounds.height - s) / 2.0f;
+  float cy = y0 + s * 0.51f;
+  float thick = s * 0.1f;
+  Vector2 prev = {0};
+  int steps = 48;
+
+  aud_ui_panel((Rectangle){x0, y0, s, s}, s * 0.24f, fade_to(AUD_UI_SURFACE, alpha),
+               fade_to(AUD_UI_EDGE, alpha));
+  DrawRing((Vector2){x0 + s * 0.5f, cy}, s * 0.33f, s * 0.33f + fmaxf(1.0f, s * 0.01f),
+           0.0f, 360.0f, 48, fade_to(AUD_UI_EDGE, 0.8f * alpha));
+
+  for (int i = 0; i <= steps; i++)
+  {
+    float t = (float)i / (float)steps;
+    float env = powf(sinf(PI * t), 0.7f);
+    Vector2 p = {x0 + s * (0.17f + 0.66f * t),
+                 cy + s * 0.2f * env * sinf(2.0f * PI * 3.25f * t)};
+    Color c = fade_to(mix(amber, red, t), alpha);
+
+    if (i > 0)
+    {
+      DrawLineEx(prev, p, thick, c);
+    }
+    DrawCircleV(p, thick / 2.0f, c);
+    prev = p;
+  }
+
+  DrawCircleV((Vector2){x0 + s * 0.78f, y0 + s * 0.22f}, s * 0.075f, fade_to(red, alpha));
 }
 
 int aud_ui_button(Rectangle bounds, const char *label, Color tint, int enabled)
